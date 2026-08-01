@@ -1,0 +1,25 @@
+Prompt: sunken temple
+Negative prompt: 
+Steps: 35, CFG scale: 7.0, Seed: 969799509, Size: 960x540, Batch size: 1, Batch count: 1
+Sampler: kes, Scheduler: simple_kes, Model: C:\Software_Development\core\image_gen2\sandbox_testing\image_gen\image_gen\models\StableDiffusion\CheckPoints\FusionX-Realistic_v3_float16.safetensors
+Requested model path: C:\Software_Development\core\image_gen2\sandbox_testing\image_gen\image_gen\models\StableDiffusion\CheckPoints\FusionX-Realistic_v3_float16.safetensors
+Resolved model path: C:\Software_Development\core\image_gen2\sandbox_testing\image_gen\image_gen\models\StableDiffusion\CheckPoints\FusionX-Realistic_v3_float16.safetensors
+Loaded model path: C:\Software_Development\core\image_gen2\sandbox_testing\image_gen\image_gen\models\StableDiffusion\CheckPoints\FusionX-Realistic_v3_float16.safetensors
+Loaded model SHA-256: 86758142dad7fafb5e5370265154986fd58a99cac989e433e7e78b3efa48fc4a
+Loaded model architecture: sd1.x
+Model cache reused: False
+Compatibility mode: fixed_steps
+Guidance rescale: 0.0
+Scheduler kwargs: {"decay_pattern": "harmonic", "rho": 6.0, "tail_steps": 5}
+Sampler kwargs: {"verbose": false}
+Optional extras: {"vae_path": null, "parser_kwargs": {}}
+Effective steps: 35
+Scheduler override applied: False
+Active blend methods: ["karras", "exponential"]
+Active blend weights: [0.8, 0.5]
+Tail features used: {"tail_steps_applied": false, "decay_tail_applied": false, "blended_tail_applied": false, "progressive_decay_applied": false, "auto_stabilization_applied": false, "step_expansion_applied": false}
+Predicted stop step: 35
+Device: cuda
+Generation time sec: 11.731586199981393
+Timestamp: 2026-07-27T02:14:02
+Base model asset: FusionX-Realistic_v3_float16.safetensors [status=loaded]

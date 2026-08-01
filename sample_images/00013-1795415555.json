@@ -1,0 +1,2653 @@
+{
+  "manifest_version": "1.0",
+  "manifest_type": "generation_manifest",
+  "required_for_rerun": {
+    "prompt": "forgotten library",
+    "negative_prompt": "",
+    "seed": 1795415555,
+    "width": 960,
+    "height": 540,
+    "steps": 35,
+    "cfg_scale": 7.0,
+    "batch_size": 1,
+    "batch_count": 1,
+    "sampler_name": "kes",
+    "scheduler_name": "simple_kes",
+    "model_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors"
+  },
+  "optional_for_rerun": {
+    "scheduler_kwargs": {
+      "decay_pattern": "harmonic",
+      "rho": 6.0,
+      "tail_steps": 5
+    },
+    "sampler_kwargs": {
+      "verbose": false
+    },
+    "compatibility_mode": "fixed_steps",
+    "clip_skip": null,
+    "guidance_rescale": 0.0,
+    "tiling": null,
+    "extra": {
+      "vae_path": null,
+      "parser_kwargs": {}
+    }
+  },
+  "runtime_info": {
+    "effective_steps": 35,
+    "scheduler_step_override_applied": false,
+    "active_blend_methods": [
+      "karras",
+      "exponential"
+    ],
+    "active_blend_weights": [
+      0.8,
+      0.5
+    ],
+    "tail_features_used": {
+      "tail_steps_applied": false,
+      "decay_tail_applied": false,
+      "blended_tail_applied": false,
+      "progressive_decay_applied": false,
+      "auto_stabilization_applied": false,
+      "step_expansion_applied": false
+    },
+    "predicted_stop_step": 35,
+    "timestamp": "2026-07-27T02:15:03",
+    "device": "cuda",
+    "generation_time_sec": 11.881217899994226,
+    "output_image_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\output\\txt2image\\00013-1795415555.png",
+    "output_txt_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\output\\txt2image\\00013-1795415555.txt",
+    "output_json_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\output\\txt2image\\00013-1795415555.json",
+    "extra": {}
+  },
+  "base_model": {
+    "asset_type": "base_model",
+    "provider": "local",
+    "requested_display_name": "",
+    "requested_filename": "FusionX-Realistic_v3_float16.safetensors",
+    "requested_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+    "requested_identifier": "",
+    "requested_version": "",
+    "requested_hash": "",
+    "requested_hash_type": "",
+    "resolved_display_name": "",
+    "resolved_filename": "FusionX-Realistic_v3_float16.safetensors",
+    "resolved_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+    "resolved_identifier": "",
+    "resolved_version": "",
+    "resolved_hash": "86758142dad7fafb5e5370265154986fd58a99cac989e433e7e78b3efa48fc4a",
+    "resolved_hash_type": "sha256",
+    "resolution_status": "loaded",
+    "resolution_method": "runtime_model_loader",
+    "action_taken": "loaded_for_generation",
+    "was_found": true,
+    "was_used_for_generation": true,
+    "is_required_for_rerun": true,
+    "is_optional": false,
+    "should_autoload": true,
+    "allow_ui_fallback": true,
+    "allow_online_search": false,
+    "user_override_allowed": true,
+    "source_url": "",
+    "repo_id": "",
+    "repo_revision": "",
+    "search_locations": [],
+    "warning_messages": [],
+    "info_messages": [],
+    "candidate_matches": [],
+    "extra": {}
+  },
+  "vae": {
+    "asset_type": "vae",
+    "provider": "local",
+    "requested_display_name": "",
+    "requested_filename": "",
+    "requested_path": "",
+    "requested_identifier": "",
+    "requested_version": "",
+    "requested_hash": "",
+    "requested_hash_type": "",
+    "resolved_display_name": "",
+    "resolved_filename": "",
+    "resolved_path": "",
+    "resolved_identifier": "",
+    "resolved_version": "",
+    "resolved_hash": "",
+    "resolved_hash_type": "",
+    "resolution_status": "unresolved",
+    "resolution_method": "",
+    "action_taken": "",
+    "was_found": false,
+    "was_used_for_generation": false,
+    "is_required_for_rerun": false,
+    "is_optional": false,
+    "should_autoload": true,
+    "allow_ui_fallback": true,
+    "allow_online_search": false,
+    "user_override_allowed": true,
+    "source_url": "",
+    "repo_id": "",
+    "repo_revision": "",
+    "search_locations": [],
+    "warning_messages": [],
+    "info_messages": [],
+    "candidate_matches": [],
+    "extra": {}
+  },
+  "loras": [],
+  "embeddings": [],
+  "hypernetworks": [],
+  "extras": [],
+  "extra": {
+    "resolved_seeds": [
+      1795415555
+    ],
+    "live_sampler_map": {
+      "sampler.dpmpp_2m": {
+        "plugin_id": "sampler.dpmpp_2m",
+        "kind": "sampler",
+        "name": "dpmpp_2m",
+        "label": "DPM++ 2M",
+        "description": "Pipeline-facing DPM++ 2M-style deterministic sampler for standard fixed-step schedules.",
+        "version": "1",
+        "module": "modules.ss_registry.samplers.simple_samplers.dpmpp_2m_sampler",
+        "adapter_class": "DPMPlusPlus2MSamplerAdapter",
+        "aliases": [
+          "dpmpp2m",
+          "dpm plus plus 2m"
+        ],
+        "capabilities": {
+          "sampler_name": "dpmpp_2m",
+          "guidance_owner": "pipeline",
+          "uses_raw_model_fn": false,
+          "uses_guided_model_fn": true,
+          "supports_step_expansion": false,
+          "supports_tail_metadata": false,
+          "requires_requested_step_schedule": true,
+          "strict_validation": true,
+          "forced_pipeline_mode": "fixed_steps"
+        },
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "solver_dtype": {
+              "type": "string",
+              "enum": [
+                "latent",
+                "model",
+                "input",
+                "float16",
+                "fp16",
+                "float32",
+                "fp32"
+              ]
+            },
+            "history_policy": {
+              "type": "string",
+              "enum": [
+                "model_timestep_guarded",
+                "multistep",
+                "first_order_only"
+              ]
+            },
+            "prediction_mode": {
+              "type": "string",
+              "enum": [
+                "canonical_predicted_x0",
+                "legacy_sampler_local_epsilon"
+              ]
+            },
+            "phase08d_validation_mode": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": true
+        },
+        "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\samplers\\simple_samplers\\dpmpp_2m_sampler.py",
+        "id": "sampler.dpmpp_2m",
+        "preferred_entry": "adapter",
+        "entry_type": "class",
+        "entry_class": "DPMPlusPlus2MSamplerAdapter",
+        "source_type": "plugin_descriptor"
+      },
+      "sampler.kes": {
+        "plugin_id": "sampler.kes",
+        "kind": "sampler",
+        "name": "kes",
+        "label": "KES Sampler",
+        "description": "Pipeline-facing Euler/Heun sampler with config-driven CFG strategy support.",
+        "version": "1",
+        "module": "modules.ss_registry.samplers.kes_sampler",
+        "adapter_class": "KESSamplerAdapter",
+        "aliases": [
+          "kes_sampler",
+          "simple_kes_sampler"
+        ],
+        "capabilities": {
+          "sampler_name": "kes",
+          "guidance_owner": "sampler",
+          "uses_raw_model_fn": true,
+          "uses_guided_model_fn": false,
+          "supports_step_expansion": true,
+          "supports_tail_metadata": true,
+          "requires_requested_step_schedule": false,
+          "strict_validation": true,
+          "forced_pipeline_mode": "extended_steps"
+        },
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "config_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "preset_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "verbose": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": true
+        },
+        "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\samplers\\kes_sampler\\__init__.py",
+        "id": "sampler.kes",
+        "preferred_entry": "adapter",
+        "entry_type": "class",
+        "entry_class": "KESSamplerAdapter",
+        "source_type": "plugin_descriptor"
+      },
+      "sampler.simple_euler": {
+        "plugin_id": "sampler.simple_euler",
+        "kind": "sampler",
+        "name": "simple_euler",
+        "label": "Simple Euler",
+        "description": "Minimal standard Euler sampler using pipeline-guided CFG.",
+        "version": "1",
+        "module": "modules.ss_registry.samplers.simple_samplers.simple_euler",
+        "adapter_class": "SimpleEulerSamplerAdapter",
+        "aliases": [
+          "euler"
+        ],
+        "capabilities": {
+          "sampler_name": "simple_euler",
+          "guidance_owner": "pipeline",
+          "uses_raw_model_fn": false,
+          "uses_guided_model_fn": true,
+          "supports_step_expansion": false,
+          "supports_tail_metadata": false,
+          "requires_requested_step_schedule": true,
+          "strict_validation": true,
+          "forced_pipeline_mode": "fixed_steps"
+        },
+        "config_schema": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\samplers\\simple_samplers\\simple_euler.py",
+        "id": "sampler.simple_euler",
+        "preferred_entry": "adapter",
+        "entry_type": "class",
+        "entry_class": "SimpleEulerSamplerAdapter",
+        "source_type": "plugin_descriptor"
+      }
+    },
+    "live_scheduler_map": {
+      "scheduler.simple_kes": {
+        "plugin_id": "scheduler.simple_kes",
+        "kind": "scheduler",
+        "name": "simple_kes",
+        "label": "Simple Karras Exponential Scheduler",
+        "description": "Custom KES scheduler with scheduler blending.",
+        "version": "1",
+        "module": "modules.ss_registry.schedulers.simple_kes_sched",
+        "adapter_class": "SimpleKESSchedulerAdapter",
+        "aliases": [
+          "simple kes",
+          "karras exponential",
+          "kes scheduler"
+        ],
+        "capabilities": {
+          "pipeline_modes": [
+            "fixed_steps",
+            "extended_steps",
+            "compatible"
+          ],
+          "supports_fixed_steps": true,
+          "supports_step_expansion": true,
+          "supports_tail_metadata": true,
+          "supports_tail_steps": true,
+          "supports_decay_tail": true,
+          "supports_blended_tail": true,
+          "supports_progressive_decay": true,
+          "scheduler_family": "kes"
+        },
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "type": "int",
+              "default": 25,
+              "short_desc": "Number of denoising steps",
+              "long_desc": "",
+              "choices": null,
+              "range": [
+                1,
+                150
+              ],
+              "required": true,
+              "name": "steps"
+            },
+            "sigma_min": {
+              "type": "Optional[float]",
+              "default": 0.2,
+              "short_desc": "Minimum sigma value",
+              "long_desc": "",
+              "choices": null,
+              "range": [
+                0.0,
+                50.0
+              ],
+              "required": false,
+              "name": "sigma_min"
+            },
+            "sigma_max": {
+              "type": "Optional[float]",
+              "default": 50,
+              "short_desc": "Maximum sigma value",
+              "long_desc": "",
+              "choices": null,
+              "range": [
+                15,
+                60
+              ],
+              "required": false,
+              "name": "sigma_max"
+            },
+            "decay_mode": {
+              "type": "Optional[str]",
+              "default": "blend",
+              "short_desc": "Tail behavior",
+              "long_desc": "",
+              "choices": [
+                "blend",
+                "append",
+                "replace"
+              ],
+              "range": null,
+              "required": false,
+              "name": "decay_mode"
+            },
+            "decay_pattern": {
+              "type": "Optional[str]",
+              "default": "extrapolate",
+              "short_desc": "Decay pattern",
+              "long_desc": "",
+              "choices": [
+                null,
+                "linear",
+                "harmonic"
+              ],
+              "range": null,
+              "required": false,
+              "name": "decay_pattern"
+            },
+            "rho": {
+              "type": "Optional[float]",
+              "default": 7,
+              "short_desc": "Rho value for Karras noise schedule curvature",
+              "long_desc": "Only applies to Karras schedules",
+              "choices": null,
+              "range": [],
+              "required": false,
+              "name": "rho"
+            },
+            "tail_steps": {
+              "type": "Optional[int]",
+              "default": 1,
+              "short_desc": "Number of tail-end steps used for blending or decay control",
+              "long_desc": "",
+              "choices": null,
+              "range": [],
+              "required": false,
+              "name": "tail_steps"
+            }
+          },
+          "required": [
+            "steps"
+          ],
+          "additionalProperties": true
+        },
+        "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\simple_kes_sched\\__init__.py",
+        "id": "scheduler.simple_kes",
+        "preferred_entry": "adapter",
+        "entry_type": "class",
+        "entry_class": "SimpleKESSchedulerAdapter",
+        "source_type": "plugin_descriptor"
+      },
+      "scheduler.standard_karras": {
+        "plugin_id": "scheduler.standard_karras",
+        "kind": "scheduler",
+        "name": "standard_karras",
+        "label": "Standard Karras",
+        "description": "Plain model-bounded Karras sigma schedule for DPM++/Euler control tests.",
+        "version": "1",
+        "module": "modules.ss_registry.schedulers.standard_karras_sched",
+        "adapter_class": "StandardKarrasSchedulerAdapter",
+        "aliases": [
+          "karras",
+          "dpm karras"
+        ],
+        "capabilities": {
+          "pipeline_modes": [
+            "fixed_steps",
+            "compatible"
+          ],
+          "supports_fixed_steps": true,
+          "supports_step_expansion": false,
+          "supports_tail_metadata": false,
+          "supports_tail_steps": false,
+          "supports_decay_tail": false,
+          "supports_blended_tail": false,
+          "supports_progressive_decay": false,
+          "scheduler_family": "standard"
+        },
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "sigma_min": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "default": null
+            },
+            "sigma_max": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "default": null
+            },
+            "rho": {
+              "type": "number",
+              "default": 7.0
+            },
+            "num_train_timesteps": {
+              "type": "integer",
+              "default": 1000
+            },
+            "beta_start": {
+              "type": "number",
+              "default": 0.00085
+            },
+            "beta_end": {
+              "type": "number",
+              "default": 0.012
+            },
+            "allow_out_of_range": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\standard_karras_sched\\__init__.py",
+        "id": "scheduler.standard_karras",
+        "preferred_entry": "adapter",
+        "entry_type": "class",
+        "entry_class": "StandardKarrasSchedulerAdapter",
+        "source_type": "plugin_descriptor"
+      }
+    },
+    "model_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+    "lora_paths": [],
+    "live_preview_enabled": true,
+    "live_preview_mode": "fast",
+    "live_preview_interval": 1,
+    "live_preview_width": 384,
+    "live_preview_format": "webp",
+    "live_preview_keep_history": "current_job",
+    "live_preview_batch_index": 0,
+    "live_preview_quality": 78,
+    "live_preview_adaptive_throttle": true,
+    "live_preview_adaptive_target_ratio": 0.75,
+    "live_preview_adaptive_recovery_ratio": 0.4,
+    "live_preview_adaptive_max_interval": 8,
+    "live_preview_adaptive_window": 6,
+    "live_preview_root": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\data\\webui\\jobs\\7ac32bc5e00d\\live-preview",
+    "live_preview_clone_tensors": false,
+    "live_preview_async": true,
+    "batch_number": 1,
+    "batch_count": 1,
+    "unlimited": false,
+    "generation_mode": "batch_count",
+    "progress_reporter": {
+      "runtime_type": "modules.pipeline.progress_reporter.ProgressReporter"
+    },
+    "resolved_sampler_descriptor": {
+      "plugin_id": "sampler.kes",
+      "kind": "sampler",
+      "name": "kes",
+      "label": "KES Sampler",
+      "description": "Pipeline-facing Euler/Heun sampler with config-driven CFG strategy support.",
+      "version": "1",
+      "module": "modules.ss_registry.samplers.kes_sampler",
+      "adapter_class": "KESSamplerAdapter",
+      "aliases": [
+        "kes_sampler",
+        "simple_kes_sampler"
+      ],
+      "capabilities": {
+        "sampler_name": "kes",
+        "guidance_owner": "sampler",
+        "uses_raw_model_fn": true,
+        "uses_guided_model_fn": false,
+        "supports_step_expansion": true,
+        "supports_tail_metadata": true,
+        "requires_requested_step_schedule": false,
+        "strict_validation": true,
+        "forced_pipeline_mode": "extended_steps"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "config_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preset_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verbose": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\samplers\\kes_sampler\\__init__.py"
+    },
+    "resolved_scheduler_descriptor": {
+      "plugin_id": "scheduler.simple_kes",
+      "kind": "scheduler",
+      "name": "simple_kes",
+      "label": "Simple Karras Exponential Scheduler",
+      "description": "Custom KES scheduler with scheduler blending.",
+      "version": "1",
+      "module": "modules.ss_registry.schedulers.simple_kes_sched",
+      "adapter_class": "SimpleKESSchedulerAdapter",
+      "aliases": [
+        "simple kes",
+        "karras exponential",
+        "kes scheduler"
+      ],
+      "capabilities": {
+        "pipeline_modes": [
+          "fixed_steps",
+          "extended_steps",
+          "compatible"
+        ],
+        "supports_fixed_steps": true,
+        "supports_step_expansion": true,
+        "supports_tail_metadata": true,
+        "supports_tail_steps": true,
+        "supports_decay_tail": true,
+        "supports_blended_tail": true,
+        "supports_progressive_decay": true,
+        "scheduler_family": "kes"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "int",
+            "default": 25,
+            "short_desc": "Number of denoising steps",
+            "long_desc": "",
+            "choices": null,
+            "range": [
+              1,
+              150
+            ],
+            "required": true,
+            "name": "steps"
+          },
+          "sigma_min": {
+            "type": "Optional[float]",
+            "default": 0.2,
+            "short_desc": "Minimum sigma value",
+            "long_desc": "",
+            "choices": null,
+            "range": [
+              0.0,
+              50.0
+            ],
+            "required": false,
+            "name": "sigma_min"
+          },
+          "sigma_max": {
+            "type": "Optional[float]",
+            "default": 50,
+            "short_desc": "Maximum sigma value",
+            "long_desc": "",
+            "choices": null,
+            "range": [
+              15,
+              60
+            ],
+            "required": false,
+            "name": "sigma_max"
+          },
+          "decay_mode": {
+            "type": "Optional[str]",
+            "default": "blend",
+            "short_desc": "Tail behavior",
+            "long_desc": "",
+            "choices": [
+              "blend",
+              "append",
+              "replace"
+            ],
+            "range": null,
+            "required": false,
+            "name": "decay_mode"
+          },
+          "decay_pattern": {
+            "type": "Optional[str]",
+            "default": "extrapolate",
+            "short_desc": "Decay pattern",
+            "long_desc": "",
+            "choices": [
+              null,
+              "linear",
+              "harmonic"
+            ],
+            "range": null,
+            "required": false,
+            "name": "decay_pattern"
+          },
+          "rho": {
+            "type": "Optional[float]",
+            "default": 7,
+            "short_desc": "Rho value for Karras noise schedule curvature",
+            "long_desc": "Only applies to Karras schedules",
+            "choices": null,
+            "range": [],
+            "required": false,
+            "name": "rho"
+          },
+          "tail_steps": {
+            "type": "Optional[int]",
+            "default": 1,
+            "short_desc": "Number of tail-end steps used for blending or decay control",
+            "long_desc": "",
+            "choices": null,
+            "range": [],
+            "required": false,
+            "name": "tail_steps"
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": true
+      },
+      "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\simple_kes_sched\\__init__.py"
+    },
+    "resolved_sampler_entry": {
+      "plugin_id": "sampler.kes",
+      "kind": "sampler",
+      "name": "kes",
+      "label": "KES Sampler",
+      "description": "Pipeline-facing Euler/Heun sampler with config-driven CFG strategy support.",
+      "version": "1",
+      "module": "modules.ss_registry.samplers.kes_sampler",
+      "adapter_class": "KESSamplerAdapter",
+      "aliases": [
+        "kes_sampler",
+        "simple_kes_sampler"
+      ],
+      "capabilities": {
+        "sampler_name": "kes",
+        "guidance_owner": "sampler",
+        "uses_raw_model_fn": true,
+        "uses_guided_model_fn": false,
+        "supports_step_expansion": true,
+        "supports_tail_metadata": true,
+        "requires_requested_step_schedule": false,
+        "strict_validation": true,
+        "forced_pipeline_mode": "extended_steps"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "config_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preset_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verbose": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\samplers\\kes_sampler\\__init__.py",
+      "id": "sampler.kes",
+      "preferred_entry": "adapter",
+      "entry_type": "class",
+      "entry_class": "KESSamplerAdapter",
+      "source_type": "plugin_descriptor"
+    },
+    "resolved_sampler_name": "kes",
+    "resolved_sampler_label": "KES Sampler",
+    "resolved_scheduler_entry": {
+      "plugin_id": "scheduler.simple_kes",
+      "kind": "scheduler",
+      "name": "simple_kes",
+      "label": "Simple Karras Exponential Scheduler",
+      "description": "Custom KES scheduler with scheduler blending.",
+      "version": "1",
+      "module": "modules.ss_registry.schedulers.simple_kes_sched",
+      "adapter_class": "SimpleKESSchedulerAdapter",
+      "aliases": [
+        "simple kes",
+        "karras exponential",
+        "kes scheduler"
+      ],
+      "capabilities": {
+        "pipeline_modes": [
+          "fixed_steps",
+          "extended_steps",
+          "compatible"
+        ],
+        "supports_fixed_steps": true,
+        "supports_step_expansion": true,
+        "supports_tail_metadata": true,
+        "supports_tail_steps": true,
+        "supports_decay_tail": true,
+        "supports_blended_tail": true,
+        "supports_progressive_decay": true,
+        "scheduler_family": "kes"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "int",
+            "default": 25,
+            "short_desc": "Number of denoising steps",
+            "long_desc": "",
+            "choices": null,
+            "range": [
+              1,
+              150
+            ],
+            "required": true,
+            "name": "steps"
+          },
+          "sigma_min": {
+            "type": "Optional[float]",
+            "default": 0.2,
+            "short_desc": "Minimum sigma value",
+            "long_desc": "",
+            "choices": null,
+            "range": [
+              0.0,
+              50.0
+            ],
+            "required": false,
+            "name": "sigma_min"
+          },
+          "sigma_max": {
+            "type": "Optional[float]",
+            "default": 50,
+            "short_desc": "Maximum sigma value",
+            "long_desc": "",
+            "choices": null,
+            "range": [
+              15,
+              60
+            ],
+            "required": false,
+            "name": "sigma_max"
+          },
+          "decay_mode": {
+            "type": "Optional[str]",
+            "default": "blend",
+            "short_desc": "Tail behavior",
+            "long_desc": "",
+            "choices": [
+              "blend",
+              "append",
+              "replace"
+            ],
+            "range": null,
+            "required": false,
+            "name": "decay_mode"
+          },
+          "decay_pattern": {
+            "type": "Optional[str]",
+            "default": "extrapolate",
+            "short_desc": "Decay pattern",
+            "long_desc": "",
+            "choices": [
+              null,
+              "linear",
+              "harmonic"
+            ],
+            "range": null,
+            "required": false,
+            "name": "decay_pattern"
+          },
+          "rho": {
+            "type": "Optional[float]",
+            "default": 7,
+            "short_desc": "Rho value for Karras noise schedule curvature",
+            "long_desc": "Only applies to Karras schedules",
+            "choices": null,
+            "range": [],
+            "required": false,
+            "name": "rho"
+          },
+          "tail_steps": {
+            "type": "Optional[int]",
+            "default": 1,
+            "short_desc": "Number of tail-end steps used for blending or decay control",
+            "long_desc": "",
+            "choices": null,
+            "range": [],
+            "required": false,
+            "name": "tail_steps"
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": true
+      },
+      "source_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\simple_kes_sched\\__init__.py",
+      "id": "scheduler.simple_kes",
+      "preferred_entry": "adapter",
+      "entry_type": "class",
+      "entry_class": "SimpleKESSchedulerAdapter",
+      "source_type": "plugin_descriptor"
+    },
+    "resolved_scheduler_name": "simple_kes",
+    "resolved_scheduler_label": "Simple Karras Exponential Scheduler",
+    "plugin_compatibility": {
+      "sampler_id": "sampler.kes",
+      "scheduler_id": "scheduler.simple_kes",
+      "is_compatible": true,
+      "reasons": [],
+      "warnings": [],
+      "negotiated_pipeline_mode": "extended_steps",
+      "step_expansion_clamped": false,
+      "tail_metadata_clamped": false
+    },
+    "model_provenance": {
+      "requested_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+      "resolved_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+      "loaded_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+      "file_name": "FusionX-Realistic_v3_float16.safetensors",
+      "file_size_bytes": 3177154802,
+      "modified_ns": 1731498548985466500,
+      "sha256": "86758142dad7fafb5e5370265154986fd58a99cac989e433e7e78b3efa48fc4a",
+      "architecture": "sd1.x",
+      "prediction_type": "epsilon",
+      "conditioning_dimension": 768,
+      "architecture_summary": "SD 1.x / epsilon / 768",
+      "architecture_source": "architecture_default",
+      "architecture_contract": {
+        "family": "SD 1.x",
+        "prediction_type": "epsilon",
+        "conditioning_dimension": 768,
+        "summary": "SD 1.x / epsilon / 768",
+        "source": "architecture_default"
+      },
+      "checkpoint_kind": "full",
+      "cache_reused": false,
+      "loader": "ModelLoadingSystem.load",
+      "device": "cuda",
+      "dtype": "torch.float16"
+    },
+    "pipeline_metadata": {
+      "model_prediction_type": "epsilon",
+      "component_placement": {
+        "unet": {
+          "component": "unet",
+          "owner": "ComponentBuilder",
+          "requested_device": "cuda",
+          "requested_dtype": "torch.float16",
+          "before_device": "cpu",
+          "before_dtypes": [
+            "torch.float32"
+          ],
+          "after_device": "cuda:0",
+          "after_dtypes": [
+            "torch.float16"
+          ],
+          "keep_in_fp32_patterns": [],
+          "kept_in_fp32_names": [],
+          "device_move_applied": true,
+          "dtype_cast_applied": true,
+          "verified": true
+        },
+        "vae": {
+          "component": "vae",
+          "owner": "LDMVAEBuilder",
+          "requested_device": "cuda",
+          "requested_dtype": "torch.float16",
+          "before_device": "cpu",
+          "before_dtypes": [
+            "torch.float32"
+          ],
+          "after_device": "cuda:0",
+          "after_dtypes": [
+            "torch.float16"
+          ],
+          "keep_in_fp32_patterns": [],
+          "kept_in_fp32_names": [],
+          "device_move_applied": true,
+          "dtype_cast_applied": true,
+          "verified": true
+        },
+        "text_encoder": {
+          "component": "text_encoder",
+          "owner": "ComponentBuilder",
+          "requested_device": "cuda",
+          "requested_dtype": "torch.float16",
+          "before_device": "cpu",
+          "before_dtypes": [
+            "torch.float32"
+          ],
+          "after_device": "cuda:0",
+          "after_dtypes": [
+            "torch.float16"
+          ],
+          "keep_in_fp32_patterns": [],
+          "kept_in_fp32_names": [],
+          "device_move_applied": true,
+          "dtype_cast_applied": true,
+          "verified": true
+        }
+      },
+      "attention_backend": {
+        "requested_backend": "eager",
+        "applied": true,
+        "processor_types_before": [
+          "AttnProcessor2_0"
+        ],
+        "processor_types_after": [
+          "AttnProcessor"
+        ],
+        "environment_variable": "IMAGE_GEN_ATTENTION_BACKEND",
+        "xformers_installation_changed": false
+      },
+      "denoising_contract": {
+        "prediction_type": "epsilon",
+        "prediction_type_source": "checkpoint_report",
+        "prediction_conversion": "x0 = solver_sample - sigma * guided_epsilon",
+        "model_input_preconditioning": "sample / sqrt(sigma^2 + 1)",
+        "cfg_rescale": 0.0,
+        "model_dtype": "torch.float16",
+        "solver_dtype": "torch.float32"
+      },
+      "initial_noise_sigma": 53.84294128417969,
+      "output_owner": "txt2img.output_saver",
+      "output_system": "image_gen.systems.output.OutputSystem",
+      "runtime": "image_gen.runtime.GenerationPipeline",
+      "live_preview": {
+        "enabled": true,
+        "mode": "fast",
+        "interval": 1,
+        "width": 384,
+        "format": "webp",
+        "keep_history": "current_job",
+        "batch_index": 0,
+        "root": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\data\\webui\\jobs\\7ac32bc5e00d\\live-preview",
+        "frame_count": 36,
+        "preview_frames_emitted": 36,
+        "preview_frames_failed": 0,
+        "preview_decode_time_total_ms": 61.869,
+        "preview_encode_time_total_ms": 411.222,
+        "preview_work_time_total_ms": 473.09,
+        "preview_last_step": 35,
+        "preview_decode_time_average_ms": 1.719,
+        "preview_encode_time_average_ms": 11.423,
+        "frame_latency_average_ms": 13.394,
+        "frame_latency_p95_ms": 17.395,
+        "frame_latency_max_ms": 74.695,
+        "queue_latency_average_ms": 0.412,
+        "queue_latency_p95_ms": 0.526,
+        "sampler_step_duration_average_ms": 308.107,
+        "sampler_step_duration_p95_ms": 319.882,
+        "preview_to_sampler_ratio_average": 0.0348,
+        "preview_to_sampler_ratio_p95": 0.0425,
+        "adaptive_throttle_enabled": true,
+        "adaptive_effective_interval": 1,
+        "adaptive_target_ratio": 0.75,
+        "adaptive_recovery_ratio": 0.4,
+        "adaptive_rolling_overhead_ratio": 0.0372,
+        "adaptive_skipped_frames": 0,
+        "adaptive_adjustment_count": 0,
+        "adaptive_max_interval": 8,
+        "adaptive_window": 6,
+        "adaptive_throttle_events": [],
+        "finalized": true,
+        "latest": {
+          "step": 35,
+          "step_index": 34,
+          "total_steps": 35,
+          "progress_percent": 100.0,
+          "filename": "final.webp",
+          "decode_mode": "final",
+          "preview_mode": "fast",
+          "preview_width": 384,
+          "image_format": "webp",
+          "batch_index": 0,
+          "image_width": 384,
+          "image_height": 216,
+          "sigma": null,
+          "model_timestep": null,
+          "sampler_name": "",
+          "scheduler_name": "",
+          "is_final": true,
+          "updated_at": "2026-07-27T06:15:03.412747+00:00",
+          "decode_time_ms": 16.068,
+          "encode_time_ms": 11.764,
+          "atomic_write_time_ms": 8.099,
+          "preview_work_time_ms": 27.832,
+          "queue_latency_ms": 0.0,
+          "frame_latency_ms": 27.832,
+          "sampler_step_duration_ms": null,
+          "preview_to_sampler_ratio": 0.0,
+          "adaptive_throttle_enabled": true,
+          "adaptive_effective_interval": 1,
+          "adaptive_target_ratio": 0.75,
+          "adaptive_recovery_ratio": 0.4,
+          "adaptive_rolling_overhead_ratio": 0.0372,
+          "adaptive_skipped_frames": 0,
+          "adaptive_adjustment_count": 0,
+          "final_step_replace_time_ms": 6.605
+        },
+        "performance_warning": null,
+        "queue_mode": "latest_only",
+        "frames_enqueued": 35,
+        "frames_processed": 35,
+        "frames_replaced": 0,
+        "coalesced_frames": 0,
+        "worker_failures": 0
+      },
+      "dimension_plan": {
+        "requested_width": 960,
+        "requested_height": 540,
+        "generation_width": 960,
+        "generation_height": 544,
+        "latent_scale_factor": 8,
+        "crop_required": true,
+        "crop_mode": "center",
+        "crop_left": 0,
+        "crop_top": 2,
+        "crop_right": 0,
+        "crop_bottom": 2
+      },
+      "diagnostics": {
+        "run_id": "20260727T061441_2d50dc67",
+        "started_utc": "2026-07-27T06:14:41.843178+00:00",
+        "verbosity": "normal",
+        "timings": [
+          {
+            "system": "configuration",
+            "operation": "validate_generation_paths",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 1.752
+          },
+          {
+            "system": "registry",
+            "operation": "resolve_plugins",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 0.092
+          },
+          {
+            "system": "model_loading",
+            "operation": "load_tokenizer",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 115.133
+          },
+          {
+            "system": "model_loading",
+            "operation": "load_checkpoint",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 9554.364
+          },
+          {
+            "system": "runtime",
+            "operation": "compose_pipeline",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 9710.259
+          },
+          {
+            "system": "latent_preparation",
+            "operation": "plan_dimensions",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 0.028
+          },
+          {
+            "system": "conditioning",
+            "operation": "encode",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 335.704
+          },
+          {
+            "system": "scheduling",
+            "operation": "build",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 188.919
+          },
+          {
+            "system": "latent_preparation",
+            "operation": "prepare",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 1.453
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 433.084
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 2,
+            "status": "passed",
+            "duration_ms": 144.391
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 3,
+            "status": "passed",
+            "duration_ms": 144.454
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 4,
+            "status": "passed",
+            "duration_ms": 144.456
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 5,
+            "status": "passed",
+            "duration_ms": 146.31
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 6,
+            "status": "passed",
+            "duration_ms": 152.454
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 7,
+            "status": "passed",
+            "duration_ms": 175.85
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 8,
+            "status": "passed",
+            "duration_ms": 158.656
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 9,
+            "status": "passed",
+            "duration_ms": 148.801
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 10,
+            "status": "passed",
+            "duration_ms": 147.451
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 11,
+            "status": "passed",
+            "duration_ms": 146.59
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 12,
+            "status": "passed",
+            "duration_ms": 149.463
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 13,
+            "status": "passed",
+            "duration_ms": 159.062
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 14,
+            "status": "passed",
+            "duration_ms": 165.814
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 15,
+            "status": "passed",
+            "duration_ms": 155.244
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 16,
+            "status": "passed",
+            "duration_ms": 151.13
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 17,
+            "status": "passed",
+            "duration_ms": 149.441
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 18,
+            "status": "passed",
+            "duration_ms": 148.29
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 19,
+            "status": "passed",
+            "duration_ms": 150.503
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 20,
+            "status": "passed",
+            "duration_ms": 158.556
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 21,
+            "status": "passed",
+            "duration_ms": 160.284
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 22,
+            "status": "passed",
+            "duration_ms": 153.641
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 23,
+            "status": "passed",
+            "duration_ms": 151.933
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 24,
+            "status": "passed",
+            "duration_ms": 150.149
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 25,
+            "status": "passed",
+            "duration_ms": 150.201
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 26,
+            "status": "passed",
+            "duration_ms": 156.168
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 27,
+            "status": "passed",
+            "duration_ms": 160.502
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 28,
+            "status": "passed",
+            "duration_ms": 154.576
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 29,
+            "status": "passed",
+            "duration_ms": 154.64
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 30,
+            "status": "passed",
+            "duration_ms": 151.295
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 31,
+            "status": "passed",
+            "duration_ms": 150.459
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 32,
+            "status": "passed",
+            "duration_ms": 150.187
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 33,
+            "status": "passed",
+            "duration_ms": 154.522
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 34,
+            "status": "passed",
+            "duration_ms": 154.859
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 35,
+            "status": "passed",
+            "duration_ms": 153.094
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 36,
+            "status": "passed",
+            "duration_ms": 151.539
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 37,
+            "status": "passed",
+            "duration_ms": 150.832
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 38,
+            "status": "passed",
+            "duration_ms": 149.481
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 39,
+            "status": "passed",
+            "duration_ms": 151.929
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 40,
+            "status": "passed",
+            "duration_ms": 154.482
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 41,
+            "status": "passed",
+            "duration_ms": 154.117
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 42,
+            "status": "passed",
+            "duration_ms": 152.283
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 43,
+            "status": "passed",
+            "duration_ms": 152.21
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 44,
+            "status": "passed",
+            "duration_ms": 151.585
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 45,
+            "status": "passed",
+            "duration_ms": 151.867
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 46,
+            "status": "passed",
+            "duration_ms": 155.107
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 47,
+            "status": "passed",
+            "duration_ms": 154.579
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 48,
+            "status": "passed",
+            "duration_ms": 154.218
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 49,
+            "status": "passed",
+            "duration_ms": 151.51
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 50,
+            "status": "passed",
+            "duration_ms": 152.17
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 51,
+            "status": "passed",
+            "duration_ms": 151.749
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 52,
+            "status": "passed",
+            "duration_ms": 153.604
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 53,
+            "status": "passed",
+            "duration_ms": 153.635
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 54,
+            "status": "passed",
+            "duration_ms": 154.903
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 55,
+            "status": "passed",
+            "duration_ms": 154.357
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 56,
+            "status": "passed",
+            "duration_ms": 153.684
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 57,
+            "status": "passed",
+            "duration_ms": 152.428
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 58,
+            "status": "passed",
+            "duration_ms": 153.479
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 59,
+            "status": "passed",
+            "duration_ms": 154.277
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 60,
+            "status": "passed",
+            "duration_ms": 154.557
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 61,
+            "status": "passed",
+            "duration_ms": 156.665
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 62,
+            "status": "passed",
+            "duration_ms": 155.936
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 63,
+            "status": "passed",
+            "duration_ms": 153.618
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 64,
+            "status": "passed",
+            "duration_ms": 152.116
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 65,
+            "status": "passed",
+            "duration_ms": 153.423
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 66,
+            "status": "passed",
+            "duration_ms": 153.226
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 67,
+            "status": "passed",
+            "duration_ms": 153.614
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 68,
+            "status": "passed",
+            "duration_ms": 153.162
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 69,
+            "status": "passed",
+            "duration_ms": 153.508
+          },
+          {
+            "system": "denoising",
+            "operation": "predict_raw_noise",
+            "occurrence": 70,
+            "status": "passed",
+            "duration_ms": 152.43
+          },
+          {
+            "system": "sampling",
+            "operation": "sample",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 11059.852
+          },
+          {
+            "system": "decoding",
+            "operation": "decode",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 236.054
+          },
+          {
+            "system": "decoding",
+            "operation": "center_crop",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 0.074
+          },
+          {
+            "system": "runtime",
+            "operation": "result_validation",
+            "occurrence": 1,
+            "status": "passed",
+            "duration_ms": 0.638
+          }
+        ],
+        "tensor_summaries": {},
+        "trace_exports": {},
+        "failure_bundle": null
+      },
+      "model_provenance": {
+        "requested_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+        "resolved_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+        "loaded_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\models\\StableDiffusion\\CheckPoints\\FusionX-Realistic_v3_float16.safetensors",
+        "file_name": "FusionX-Realistic_v3_float16.safetensors",
+        "file_size_bytes": 3177154802,
+        "modified_ns": 1731498548985466500,
+        "sha256": "86758142dad7fafb5e5370265154986fd58a99cac989e433e7e78b3efa48fc4a",
+        "architecture": "sd1.x",
+        "prediction_type": "epsilon",
+        "conditioning_dimension": 768,
+        "architecture_summary": "SD 1.x / epsilon / 768",
+        "architecture_source": "architecture_default",
+        "architecture_contract": {
+          "family": "SD 1.x",
+          "prediction_type": "epsilon",
+          "conditioning_dimension": 768,
+          "summary": "SD 1.x / epsilon / 768",
+          "source": "architecture_default"
+        },
+        "checkpoint_kind": "full",
+        "cache_reused": false,
+        "loader": "ModelLoadingSystem.load",
+        "device": "cuda",
+        "dtype": "torch.float16"
+      }
+    },
+    "denoising_contract": {
+      "prediction_type": "epsilon",
+      "prediction_type_source": "checkpoint_report",
+      "prediction_conversion": "x0 = solver_sample - sigma * guided_epsilon",
+      "model_input_preconditioning": "sample / sqrt(sigma^2 + 1)",
+      "cfg_rescale": 0.0,
+      "model_dtype": "torch.float16",
+      "solver_dtype": "torch.float32"
+    },
+    "prediction_type": "epsilon",
+    "prediction_conversion": "x0 = solver_sample - sigma * guided_epsilon",
+    "model_input_preconditioning": "sample / sqrt(sigma^2 + 1)",
+    "cfg_rescale": 0.0,
+    "model_dtype": "torch.float16",
+    "solver_dtype": "torch.float32",
+    "cfg_scale": 7.0,
+    "sigma_used_for_prediction": null,
+    "model_timestep": null,
+    "schedule": {
+      "scheduler_name": "simple_kes",
+      "schedule_mode": "smooth_blend",
+      "active_blend_methods": [
+        "karras",
+        "exponential"
+      ],
+      "active_blend_weights": [
+        0.8,
+        0.5
+      ],
+      "tail_features_used": {
+        "tail_steps_applied": false,
+        "decay_tail_applied": false,
+        "blended_tail_applied": false,
+        "progressive_decay_applied": false,
+        "auto_stabilization_applied": false,
+        "step_expansion_applied": false
+      },
+      "prepass_used": false,
+      "predicted_stop_step": 35,
+      "validated_settings": {
+        "blending_mode": "default",
+        "blending_style": "softmax",
+        "step_progress_mode": "sigmoid",
+        "sigma_auto_enabled": false,
+        "sigma_auto_mode": "sigma_min",
+        "sigma_scale_factor": 900.0,
+        "sigma_min": 0.13757067353874633,
+        "sigma_max": 47.95768510805332,
+        "rho": 6.0,
+        "steps": 35,
+        "device": "cuda",
+        "exp_power": 2,
+        "min_visual_sigma": 10.0,
+        "sigma_save_subfolder": "saved_sigmas",
+        "decay_pattern": "harmonic",
+        "decay_mode": "append",
+        "tail_steps": 5,
+        "allow_step_expansion": false,
+        "apply_tail_steps": false,
+        "apply_decay_tail": false,
+        "apply_blended_tail": false,
+        "apply_progressive_decay": false,
+        "auto_tail_smoothing": true,
+        "auto_tail_threshold": 0.05,
+        "jaggedness_threshold": 0.01,
+        "auto_stabilization_sequence": [
+          "smooth_interpolation",
+          "append_tail",
+          "blend_tail",
+          "apply_decay",
+          "progressive_decay"
+        ],
+        "start_blend": 0.05,
+        "end_blend": 0.4,
+        "blend_midpoint": 0.5,
+        "smooth_blend_factor": 5.0,
+        "initial_step_size": 0.9,
+        "final_step_size": 0.2,
+        "step_size_factor": 0.80814932869181,
+        "initial_noise_scale": 1.25,
+        "final_noise_scale": 0.8,
+        "noise_scale_factor": 0.8113992828873163,
+        "early_stopping_threshold": 0.06,
+        "early_stopping_method": "max",
+        "sigma_variance_scale": 0.1,
+        "safety_minimum_stop_step": 10,
+        "recent_change_convergence_delta": 0.6,
+        "sharpen_variance_threshold": 0.01,
+        "sharpen_last_n_steps": 10,
+        "sharpen_mode": "full",
+        "sharpness": 0.85,
+        "skip_prepass": true,
+        "load_prepass_sigmas": false,
+        "save_prepass_sigmas": false,
+        "load_sigma_cache": false,
+        "save_sigma_cache": false,
+        "graph_save_enable": false,
+        "graph_save_directory": "modules/sd_simple_kes/image_generation_data",
+        "log_save_directory": "modules/sd_simple_kes/image_generation_data",
+        "debug": true,
+        "verbose": false,
+        "global_randomize": false,
+        "blend_methods": {
+          "karras": {
+            "weight": 0.8,
+            "decay_pattern": "exponential",
+            "decay_mode": "blend",
+            "tail_steps": 1
+          },
+          "exponential": {
+            "weight": 0.5,
+            "decay_pattern": "geometric",
+            "decay_mode": "blend",
+            "tail_steps": 1
+          }
+        },
+        "compatibility": {
+          "pipeline_mode": "fixed_steps",
+          "truncate_to_requested_steps": true,
+          "warn_on_feature_downgrade": true
+        },
+        "history_window": 10,
+        "repair_steps": 4,
+        "auto_history": false,
+        "rho_rand": false,
+        "rho_rand_min": 3.0,
+        "rho_rand_max": 8.0,
+        "rho_enable_randomization_type": false,
+        "rho_randomization_type": "logarithmic",
+        "rho_randomization_percent": 0.1,
+        "sigma_min_rand": false,
+        "sigma_min_rand_min": 0.001,
+        "sigma_min_rand_max": 0.02,
+        "sigma_min_enable_randomization_type": false,
+        "sigma_min_randomization_type": "asymmetric",
+        "sigma_min_randomization_percent": 0.2,
+        "sigma_max_rand": false,
+        "sigma_max_rand_min": 25,
+        "sigma_max_rand_max": 60,
+        "sigma_max_enable_randomization_type": false,
+        "sigma_max_randomization_type": "logarithmic",
+        "sigma_max_randomization_percent": 0.25,
+        "start_blend_rand": false,
+        "start_blend_rand_min": 0.04,
+        "start_blend_rand_max": 0.11,
+        "start_blend_enable_randomization_type": false,
+        "start_blend_randomization_type": "asymmetric",
+        "start_blend_randomization_percent": 0.1,
+        "end_blend_rand": false,
+        "end_blend_rand_min": 0.4,
+        "end_blend_rand_max": 0.6,
+        "end_blend_enable_randomization_type": false,
+        "end_blend_randomization_type": "asymmetric",
+        "end_blend_randomization_percent": 0.2,
+        "sharpness_rand": false,
+        "sharpness_rand_min": 0.75,
+        "sharpness_rand_max": 0.95,
+        "sharpness_enable_randomization_type": false,
+        "sharpness_randomization_type": "asymmetric",
+        "sharpness_randomization_percent": 0.2,
+        "smooth_blend_factor_rand": false,
+        "smooth_blend_factor_rand_min": 6,
+        "smooth_blend_factor_rand_max": 11,
+        "smooth_blend_factor_enable_randomization_type": false,
+        "smooth_blend_factor_randomization_type": "asymmetric",
+        "smooth_blend_factor_randomization_percent": 0.2,
+        "initial_step_size_rand": false,
+        "initial_step_size_rand_min": 0.7,
+        "initial_step_size_rand_max": 1.0,
+        "initial_step_size_enable_randomization_type": false,
+        "initial_step_size_randomization_type": "asymmetric",
+        "initial_step_size_randomization_percent": 0.2,
+        "final_step_size_rand": false,
+        "final_step_size_rand_min": 0.1,
+        "final_step_size_rand_max": 0.3,
+        "final_step_size_enable_randomization_type": false,
+        "final_step_size_randomization_type": "asymmetric",
+        "final_step_size_randomization_percent": 0.2,
+        "step_size_factor_rand": false,
+        "step_size_factor_rand_min": 0.65,
+        "step_size_factor_rand_max": 0.85,
+        "step_size_factor_enable_randomization_type": false,
+        "step_size_factor_randomization_type": "asymmetric",
+        "step_size_factor_randomization_percent": 0.2,
+        "initial_noise_scale_rand": false,
+        "initial_noise_scale_rand_min": 1.0,
+        "initial_noise_scale_rand_max": 1.5,
+        "initial_noise_scale_enable_randomization_type": false,
+        "initial_noise_scale_randomization_type": "asymmetric",
+        "initial_noise_scale_randomization_percent": 0.2,
+        "final_noise_scale_rand": false,
+        "final_noise_scale_rand_min": 0.6,
+        "final_noise_scale_rand_max": 1.0,
+        "final_noise_scale_enable_randomization_type": false,
+        "final_noise_scale_randomization_type": "asymmetric",
+        "final_noise_scale_randomization_percent": 0.2,
+        "noise_scale_factor_rand": false,
+        "noise_scale_factor_rand_min": 0.75,
+        "noise_scale_factor_rand_max": 0.95,
+        "noise_scale_factor_enable_randomization_type": false,
+        "noise_scale_factor_randomization_type": "asymmetric",
+        "noise_scale_factor_randomization_percent": 0.2,
+        "early_stopping_threshold_rand": false,
+        "early_stopping_threshold_rand_min": 0.001,
+        "early_stopping_threshold_rand_max": 0.02,
+        "early_stopping_threshold_enable_randomization_type": false,
+        "early_stopping_threshold_randomization_type": "asymmetric",
+        "early_stopping_threshold_randomization_percent": 0.2,
+        "prefer_config": false,
+        "_config_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\config\\simple_kes\\default.yaml",
+        "_config_source": "default",
+        "_policy": {
+          "allow_step_expansion": false,
+          "allow_tail_append": false,
+          "allow_decay_append": false,
+          "truncate_to_requested_steps": true,
+          "warn_on_feature_downgrade": true,
+          "compatibility_mode": "fixed_steps"
+        },
+        "_validation_warnings": []
+      },
+      "validation_warnings": [],
+      "scheduler_settings": {
+        "blending_mode": "default",
+        "blending_style": "softmax",
+        "step_progress_mode": "sigmoid",
+        "sigma_auto_enabled": false,
+        "sigma_auto_mode": "sigma_min",
+        "sigma_scale_factor": 900.0,
+        "sigma_min": 0.13757067353874633,
+        "sigma_max": 47.95768510805332,
+        "rho": 6.0,
+        "steps": 35,
+        "device": "cuda",
+        "exp_power": 2,
+        "min_visual_sigma": 10.0,
+        "sigma_save_subfolder": "saved_sigmas",
+        "decay_pattern": "harmonic",
+        "decay_mode": "append",
+        "tail_steps": 5,
+        "allow_step_expansion": false,
+        "apply_tail_steps": false,
+        "apply_decay_tail": false,
+        "apply_blended_tail": false,
+        "apply_progressive_decay": false,
+        "auto_tail_smoothing": true,
+        "auto_tail_threshold": 0.05,
+        "jaggedness_threshold": 0.01,
+        "auto_stabilization_sequence": [
+          "smooth_interpolation",
+          "append_tail",
+          "blend_tail",
+          "apply_decay",
+          "progressive_decay"
+        ],
+        "start_blend": 0.05,
+        "end_blend": 0.4,
+        "blend_midpoint": 0.5,
+        "smooth_blend_factor": 5.0,
+        "initial_step_size": 0.9,
+        "final_step_size": 0.2,
+        "step_size_factor": 0.80814932869181,
+        "initial_noise_scale": 1.25,
+        "final_noise_scale": 0.8,
+        "noise_scale_factor": 0.8113992828873163,
+        "early_stopping_threshold": 0.06,
+        "early_stopping_method": "max",
+        "sigma_variance_scale": 0.1,
+        "safety_minimum_stop_step": 10,
+        "recent_change_convergence_delta": 0.6,
+        "sharpen_variance_threshold": 0.01,
+        "sharpen_last_n_steps": 10,
+        "sharpen_mode": "full",
+        "sharpness": 0.85,
+        "skip_prepass": true,
+        "load_prepass_sigmas": false,
+        "save_prepass_sigmas": false,
+        "load_sigma_cache": false,
+        "save_sigma_cache": false,
+        "graph_save_enable": false,
+        "graph_save_directory": "modules/sd_simple_kes/image_generation_data",
+        "log_save_directory": "modules/sd_simple_kes/image_generation_data",
+        "debug": true,
+        "verbose": false,
+        "global_randomize": false,
+        "blend_methods": {
+          "karras": {
+            "weight": 0.8,
+            "decay_pattern": "exponential",
+            "decay_mode": "blend",
+            "tail_steps": 1
+          },
+          "exponential": {
+            "weight": 0.5,
+            "decay_pattern": "geometric",
+            "decay_mode": "blend",
+            "tail_steps": 1
+          }
+        },
+        "compatibility": {
+          "pipeline_mode": "fixed_steps",
+          "truncate_to_requested_steps": true,
+          "warn_on_feature_downgrade": true
+        },
+        "history_window": 10,
+        "repair_steps": 4,
+        "auto_history": false,
+        "rho_rand": false,
+        "rho_rand_min": 3.0,
+        "rho_rand_max": 8.0,
+        "rho_enable_randomization_type": false,
+        "rho_randomization_type": "logarithmic",
+        "rho_randomization_percent": 0.1,
+        "sigma_min_rand": false,
+        "sigma_min_rand_min": 0.001,
+        "sigma_min_rand_max": 0.02,
+        "sigma_min_enable_randomization_type": false,
+        "sigma_min_randomization_type": "asymmetric",
+        "sigma_min_randomization_percent": 0.2,
+        "sigma_max_rand": false,
+        "sigma_max_rand_min": 25,
+        "sigma_max_rand_max": 60,
+        "sigma_max_enable_randomization_type": false,
+        "sigma_max_randomization_type": "logarithmic",
+        "sigma_max_randomization_percent": 0.25,
+        "start_blend_rand": false,
+        "start_blend_rand_min": 0.04,
+        "start_blend_rand_max": 0.11,
+        "start_blend_enable_randomization_type": false,
+        "start_blend_randomization_type": "asymmetric",
+        "start_blend_randomization_percent": 0.1,
+        "end_blend_rand": false,
+        "end_blend_rand_min": 0.4,
+        "end_blend_rand_max": 0.6,
+        "end_blend_enable_randomization_type": false,
+        "end_blend_randomization_type": "asymmetric",
+        "end_blend_randomization_percent": 0.2,
+        "sharpness_rand": false,
+        "sharpness_rand_min": 0.75,
+        "sharpness_rand_max": 0.95,
+        "sharpness_enable_randomization_type": false,
+        "sharpness_randomization_type": "asymmetric",
+        "sharpness_randomization_percent": 0.2,
+        "smooth_blend_factor_rand": false,
+        "smooth_blend_factor_rand_min": 6,
+        "smooth_blend_factor_rand_max": 11,
+        "smooth_blend_factor_enable_randomization_type": false,
+        "smooth_blend_factor_randomization_type": "asymmetric",
+        "smooth_blend_factor_randomization_percent": 0.2,
+        "initial_step_size_rand": false,
+        "initial_step_size_rand_min": 0.7,
+        "initial_step_size_rand_max": 1.0,
+        "initial_step_size_enable_randomization_type": false,
+        "initial_step_size_randomization_type": "asymmetric",
+        "initial_step_size_randomization_percent": 0.2,
+        "final_step_size_rand": false,
+        "final_step_size_rand_min": 0.1,
+        "final_step_size_rand_max": 0.3,
+        "final_step_size_enable_randomization_type": false,
+        "final_step_size_randomization_type": "asymmetric",
+        "final_step_size_randomization_percent": 0.2,
+        "step_size_factor_rand": false,
+        "step_size_factor_rand_min": 0.65,
+        "step_size_factor_rand_max": 0.85,
+        "step_size_factor_enable_randomization_type": false,
+        "step_size_factor_randomization_type": "asymmetric",
+        "step_size_factor_randomization_percent": 0.2,
+        "initial_noise_scale_rand": false,
+        "initial_noise_scale_rand_min": 1.0,
+        "initial_noise_scale_rand_max": 1.5,
+        "initial_noise_scale_enable_randomization_type": false,
+        "initial_noise_scale_randomization_type": "asymmetric",
+        "initial_noise_scale_randomization_percent": 0.2,
+        "final_noise_scale_rand": false,
+        "final_noise_scale_rand_min": 0.6,
+        "final_noise_scale_rand_max": 1.0,
+        "final_noise_scale_enable_randomization_type": false,
+        "final_noise_scale_randomization_type": "asymmetric",
+        "final_noise_scale_randomization_percent": 0.2,
+        "noise_scale_factor_rand": false,
+        "noise_scale_factor_rand_min": 0.75,
+        "noise_scale_factor_rand_max": 0.95,
+        "noise_scale_factor_enable_randomization_type": false,
+        "noise_scale_factor_randomization_type": "asymmetric",
+        "noise_scale_factor_randomization_percent": 0.2,
+        "early_stopping_threshold_rand": false,
+        "early_stopping_threshold_rand_min": 0.001,
+        "early_stopping_threshold_rand_max": 0.02,
+        "early_stopping_threshold_enable_randomization_type": false,
+        "early_stopping_threshold_randomization_type": "asymmetric",
+        "early_stopping_threshold_randomization_percent": 0.2,
+        "prefer_config": false,
+        "_config_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\config\\simple_kes\\default.yaml",
+        "_config_source": "default",
+        "_policy": {
+          "allow_step_expansion": false,
+          "allow_tail_append": false,
+          "allow_decay_append": false,
+          "truncate_to_requested_steps": true,
+          "warn_on_feature_downgrade": true,
+          "compatibility_mode": "fixed_steps"
+        },
+        "_validation_warnings": []
+      },
+      "skip_prepass": true,
+      "load_prepass_sigmas": false,
+      "load_sigma_cache": false,
+      "terminal_sigma_added": true,
+      "timestep_mapping": {
+        "type": "sd_scaled_linear_beta_log_sigma_interpolation",
+        "num_train_timesteps": 1000,
+        "beta_start": 0.00085,
+        "beta_end": 0.012,
+        "training_sigma_min": 0.029167158151720367,
+        "training_sigma_max": 14.614641229333632,
+        "clipped_low_count": 4,
+        "clipped_high_count": 9
+      },
+      "validated_for_sampler": "kes",
+      "schedule_is_compatible": true,
+      "schedule_validation_reasons": [],
+      "requested_steps": 35,
+      "effective_steps": 35,
+      "scheduler_step_override_applied": false,
+      "compatibility_mode": "fixed_steps"
+    },
+    "sampler": {
+      "sampler_name": "kes_sampler",
+      "sampler_settings": {
+        "prefer_config": false,
+        "sampler": {
+          "sampler_type": "euler",
+          "eta": 0.0,
+          "add_noise": true,
+          "verbose": false
+        },
+        "rescale_cfg": false,
+        "rescale_cfg_factor": 1.0,
+        "clamp_range": [
+          -1.0,
+          1.0
+        ],
+        "initial_noise_strength": 0.0,
+        "eta_scale_factor": 1.0,
+        "eta_schedule_mode": "none",
+        "use_adaptive_eta": false,
+        "noise_schedule_scaling": "none",
+        "adaptive_time_mode": "none",
+        "adaptive_delta_low_floor": 0.1,
+        "adaptive_delta_high_floor": 1.0,
+        "adaptive_low_adjustment_multiplier": 1.5,
+        "adaptive_high_adjustment_multiplier": 0.5,
+        "adaptive_denoised_floor": 0.05,
+        "adaptive_denoised_adjustment_multiplier": 1.25,
+        "adaptive_manual_low_adjustment": 1.0,
+        "adaptive_manual_high_adjustment": 1.0,
+        "_config_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\samplers\\config\\kes\\default.yaml",
+        "_config_source": "default"
+      },
+      "sampler_type_used": "euler",
+      "sigma_transitions": 35,
+      "requested_steps": 35,
+      "effective_steps": 35,
+      "scheduler_step_override_applied": false,
+      "stepwise_conditioning_used": true,
+      "model_prediction_type": "epsilon",
+      "integration_prediction_type": "epsilon_to_denoised",
+      "schedule_extra": {
+        "scheduler_name": "simple_kes",
+        "schedule_mode": "smooth_blend",
+        "active_blend_methods": [
+          "karras",
+          "exponential"
+        ],
+        "active_blend_weights": [
+          0.8,
+          0.5
+        ],
+        "tail_features_used": {
+          "tail_steps_applied": false,
+          "decay_tail_applied": false,
+          "blended_tail_applied": false,
+          "progressive_decay_applied": false,
+          "auto_stabilization_applied": false,
+          "step_expansion_applied": false
+        },
+        "prepass_used": false,
+        "predicted_stop_step": 35,
+        "validated_settings": {
+          "blending_mode": "default",
+          "blending_style": "softmax",
+          "step_progress_mode": "sigmoid",
+          "sigma_auto_enabled": false,
+          "sigma_auto_mode": "sigma_min",
+          "sigma_scale_factor": 900.0,
+          "sigma_min": 0.13757067353874633,
+          "sigma_max": 47.95768510805332,
+          "rho": 6.0,
+          "steps": 35,
+          "device": "cuda",
+          "exp_power": 2,
+          "min_visual_sigma": 10.0,
+          "sigma_save_subfolder": "saved_sigmas",
+          "decay_pattern": "harmonic",
+          "decay_mode": "append",
+          "tail_steps": 5,
+          "allow_step_expansion": false,
+          "apply_tail_steps": false,
+          "apply_decay_tail": false,
+          "apply_blended_tail": false,
+          "apply_progressive_decay": false,
+          "auto_tail_smoothing": true,
+          "auto_tail_threshold": 0.05,
+          "jaggedness_threshold": 0.01,
+          "auto_stabilization_sequence": [
+            "smooth_interpolation",
+            "append_tail",
+            "blend_tail",
+            "apply_decay",
+            "progressive_decay"
+          ],
+          "start_blend": 0.05,
+          "end_blend": 0.4,
+          "blend_midpoint": 0.5,
+          "smooth_blend_factor": 5.0,
+          "initial_step_size": 0.9,
+          "final_step_size": 0.2,
+          "step_size_factor": 0.80814932869181,
+          "initial_noise_scale": 1.25,
+          "final_noise_scale": 0.8,
+          "noise_scale_factor": 0.8113992828873163,
+          "early_stopping_threshold": 0.06,
+          "early_stopping_method": "max",
+          "sigma_variance_scale": 0.1,
+          "safety_minimum_stop_step": 10,
+          "recent_change_convergence_delta": 0.6,
+          "sharpen_variance_threshold": 0.01,
+          "sharpen_last_n_steps": 10,
+          "sharpen_mode": "full",
+          "sharpness": 0.85,
+          "skip_prepass": true,
+          "load_prepass_sigmas": false,
+          "save_prepass_sigmas": false,
+          "load_sigma_cache": false,
+          "save_sigma_cache": false,
+          "graph_save_enable": false,
+          "graph_save_directory": "modules/sd_simple_kes/image_generation_data",
+          "log_save_directory": "modules/sd_simple_kes/image_generation_data",
+          "debug": true,
+          "verbose": false,
+          "global_randomize": false,
+          "blend_methods": {
+            "karras": {
+              "weight": 0.8,
+              "decay_pattern": "exponential",
+              "decay_mode": "blend",
+              "tail_steps": 1
+            },
+            "exponential": {
+              "weight": 0.5,
+              "decay_pattern": "geometric",
+              "decay_mode": "blend",
+              "tail_steps": 1
+            }
+          },
+          "compatibility": {
+            "pipeline_mode": "fixed_steps",
+            "truncate_to_requested_steps": true,
+            "warn_on_feature_downgrade": true
+          },
+          "history_window": 10,
+          "repair_steps": 4,
+          "auto_history": false,
+          "rho_rand": false,
+          "rho_rand_min": 3.0,
+          "rho_rand_max": 8.0,
+          "rho_enable_randomization_type": false,
+          "rho_randomization_type": "logarithmic",
+          "rho_randomization_percent": 0.1,
+          "sigma_min_rand": false,
+          "sigma_min_rand_min": 0.001,
+          "sigma_min_rand_max": 0.02,
+          "sigma_min_enable_randomization_type": false,
+          "sigma_min_randomization_type": "asymmetric",
+          "sigma_min_randomization_percent": 0.2,
+          "sigma_max_rand": false,
+          "sigma_max_rand_min": 25,
+          "sigma_max_rand_max": 60,
+          "sigma_max_enable_randomization_type": false,
+          "sigma_max_randomization_type": "logarithmic",
+          "sigma_max_randomization_percent": 0.25,
+          "start_blend_rand": false,
+          "start_blend_rand_min": 0.04,
+          "start_blend_rand_max": 0.11,
+          "start_blend_enable_randomization_type": false,
+          "start_blend_randomization_type": "asymmetric",
+          "start_blend_randomization_percent": 0.1,
+          "end_blend_rand": false,
+          "end_blend_rand_min": 0.4,
+          "end_blend_rand_max": 0.6,
+          "end_blend_enable_randomization_type": false,
+          "end_blend_randomization_type": "asymmetric",
+          "end_blend_randomization_percent": 0.2,
+          "sharpness_rand": false,
+          "sharpness_rand_min": 0.75,
+          "sharpness_rand_max": 0.95,
+          "sharpness_enable_randomization_type": false,
+          "sharpness_randomization_type": "asymmetric",
+          "sharpness_randomization_percent": 0.2,
+          "smooth_blend_factor_rand": false,
+          "smooth_blend_factor_rand_min": 6,
+          "smooth_blend_factor_rand_max": 11,
+          "smooth_blend_factor_enable_randomization_type": false,
+          "smooth_blend_factor_randomization_type": "asymmetric",
+          "smooth_blend_factor_randomization_percent": 0.2,
+          "initial_step_size_rand": false,
+          "initial_step_size_rand_min": 0.7,
+          "initial_step_size_rand_max": 1.0,
+          "initial_step_size_enable_randomization_type": false,
+          "initial_step_size_randomization_type": "asymmetric",
+          "initial_step_size_randomization_percent": 0.2,
+          "final_step_size_rand": false,
+          "final_step_size_rand_min": 0.1,
+          "final_step_size_rand_max": 0.3,
+          "final_step_size_enable_randomization_type": false,
+          "final_step_size_randomization_type": "asymmetric",
+          "final_step_size_randomization_percent": 0.2,
+          "step_size_factor_rand": false,
+          "step_size_factor_rand_min": 0.65,
+          "step_size_factor_rand_max": 0.85,
+          "step_size_factor_enable_randomization_type": false,
+          "step_size_factor_randomization_type": "asymmetric",
+          "step_size_factor_randomization_percent": 0.2,
+          "initial_noise_scale_rand": false,
+          "initial_noise_scale_rand_min": 1.0,
+          "initial_noise_scale_rand_max": 1.5,
+          "initial_noise_scale_enable_randomization_type": false,
+          "initial_noise_scale_randomization_type": "asymmetric",
+          "initial_noise_scale_randomization_percent": 0.2,
+          "final_noise_scale_rand": false,
+          "final_noise_scale_rand_min": 0.6,
+          "final_noise_scale_rand_max": 1.0,
+          "final_noise_scale_enable_randomization_type": false,
+          "final_noise_scale_randomization_type": "asymmetric",
+          "final_noise_scale_randomization_percent": 0.2,
+          "noise_scale_factor_rand": false,
+          "noise_scale_factor_rand_min": 0.75,
+          "noise_scale_factor_rand_max": 0.95,
+          "noise_scale_factor_enable_randomization_type": false,
+          "noise_scale_factor_randomization_type": "asymmetric",
+          "noise_scale_factor_randomization_percent": 0.2,
+          "early_stopping_threshold_rand": false,
+          "early_stopping_threshold_rand_min": 0.001,
+          "early_stopping_threshold_rand_max": 0.02,
+          "early_stopping_threshold_enable_randomization_type": false,
+          "early_stopping_threshold_randomization_type": "asymmetric",
+          "early_stopping_threshold_randomization_percent": 0.2,
+          "prefer_config": false,
+          "_config_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\config\\simple_kes\\default.yaml",
+          "_config_source": "default",
+          "_policy": {
+            "allow_step_expansion": false,
+            "allow_tail_append": false,
+            "allow_decay_append": false,
+            "truncate_to_requested_steps": true,
+            "warn_on_feature_downgrade": true,
+            "compatibility_mode": "fixed_steps"
+          },
+          "_validation_warnings": []
+        },
+        "validation_warnings": [],
+        "scheduler_settings": {
+          "blending_mode": "default",
+          "blending_style": "softmax",
+          "step_progress_mode": "sigmoid",
+          "sigma_auto_enabled": false,
+          "sigma_auto_mode": "sigma_min",
+          "sigma_scale_factor": 900.0,
+          "sigma_min": 0.13757067353874633,
+          "sigma_max": 47.95768510805332,
+          "rho": 6.0,
+          "steps": 35,
+          "device": "cuda",
+          "exp_power": 2,
+          "min_visual_sigma": 10.0,
+          "sigma_save_subfolder": "saved_sigmas",
+          "decay_pattern": "harmonic",
+          "decay_mode": "append",
+          "tail_steps": 5,
+          "allow_step_expansion": false,
+          "apply_tail_steps": false,
+          "apply_decay_tail": false,
+          "apply_blended_tail": false,
+          "apply_progressive_decay": false,
+          "auto_tail_smoothing": true,
+          "auto_tail_threshold": 0.05,
+          "jaggedness_threshold": 0.01,
+          "auto_stabilization_sequence": [
+            "smooth_interpolation",
+            "append_tail",
+            "blend_tail",
+            "apply_decay",
+            "progressive_decay"
+          ],
+          "start_blend": 0.05,
+          "end_blend": 0.4,
+          "blend_midpoint": 0.5,
+          "smooth_blend_factor": 5.0,
+          "initial_step_size": 0.9,
+          "final_step_size": 0.2,
+          "step_size_factor": 0.80814932869181,
+          "initial_noise_scale": 1.25,
+          "final_noise_scale": 0.8,
+          "noise_scale_factor": 0.8113992828873163,
+          "early_stopping_threshold": 0.06,
+          "early_stopping_method": "max",
+          "sigma_variance_scale": 0.1,
+          "safety_minimum_stop_step": 10,
+          "recent_change_convergence_delta": 0.6,
+          "sharpen_variance_threshold": 0.01,
+          "sharpen_last_n_steps": 10,
+          "sharpen_mode": "full",
+          "sharpness": 0.85,
+          "skip_prepass": true,
+          "load_prepass_sigmas": false,
+          "save_prepass_sigmas": false,
+          "load_sigma_cache": false,
+          "save_sigma_cache": false,
+          "graph_save_enable": false,
+          "graph_save_directory": "modules/sd_simple_kes/image_generation_data",
+          "log_save_directory": "modules/sd_simple_kes/image_generation_data",
+          "debug": true,
+          "verbose": false,
+          "global_randomize": false,
+          "blend_methods": {
+            "karras": {
+              "weight": 0.8,
+              "decay_pattern": "exponential",
+              "decay_mode": "blend",
+              "tail_steps": 1
+            },
+            "exponential": {
+              "weight": 0.5,
+              "decay_pattern": "geometric",
+              "decay_mode": "blend",
+              "tail_steps": 1
+            }
+          },
+          "compatibility": {
+            "pipeline_mode": "fixed_steps",
+            "truncate_to_requested_steps": true,
+            "warn_on_feature_downgrade": true
+          },
+          "history_window": 10,
+          "repair_steps": 4,
+          "auto_history": false,
+          "rho_rand": false,
+          "rho_rand_min": 3.0,
+          "rho_rand_max": 8.0,
+          "rho_enable_randomization_type": false,
+          "rho_randomization_type": "logarithmic",
+          "rho_randomization_percent": 0.1,
+          "sigma_min_rand": false,
+          "sigma_min_rand_min": 0.001,
+          "sigma_min_rand_max": 0.02,
+          "sigma_min_enable_randomization_type": false,
+          "sigma_min_randomization_type": "asymmetric",
+          "sigma_min_randomization_percent": 0.2,
+          "sigma_max_rand": false,
+          "sigma_max_rand_min": 25,
+          "sigma_max_rand_max": 60,
+          "sigma_max_enable_randomization_type": false,
+          "sigma_max_randomization_type": "logarithmic",
+          "sigma_max_randomization_percent": 0.25,
+          "start_blend_rand": false,
+          "start_blend_rand_min": 0.04,
+          "start_blend_rand_max": 0.11,
+          "start_blend_enable_randomization_type": false,
+          "start_blend_randomization_type": "asymmetric",
+          "start_blend_randomization_percent": 0.1,
+          "end_blend_rand": false,
+          "end_blend_rand_min": 0.4,
+          "end_blend_rand_max": 0.6,
+          "end_blend_enable_randomization_type": false,
+          "end_blend_randomization_type": "asymmetric",
+          "end_blend_randomization_percent": 0.2,
+          "sharpness_rand": false,
+          "sharpness_rand_min": 0.75,
+          "sharpness_rand_max": 0.95,
+          "sharpness_enable_randomization_type": false,
+          "sharpness_randomization_type": "asymmetric",
+          "sharpness_randomization_percent": 0.2,
+          "smooth_blend_factor_rand": false,
+          "smooth_blend_factor_rand_min": 6,
+          "smooth_blend_factor_rand_max": 11,
+          "smooth_blend_factor_enable_randomization_type": false,
+          "smooth_blend_factor_randomization_type": "asymmetric",
+          "smooth_blend_factor_randomization_percent": 0.2,
+          "initial_step_size_rand": false,
+          "initial_step_size_rand_min": 0.7,
+          "initial_step_size_rand_max": 1.0,
+          "initial_step_size_enable_randomization_type": false,
+          "initial_step_size_randomization_type": "asymmetric",
+          "initial_step_size_randomization_percent": 0.2,
+          "final_step_size_rand": false,
+          "final_step_size_rand_min": 0.1,
+          "final_step_size_rand_max": 0.3,
+          "final_step_size_enable_randomization_type": false,
+          "final_step_size_randomization_type": "asymmetric",
+          "final_step_size_randomization_percent": 0.2,
+          "step_size_factor_rand": false,
+          "step_size_factor_rand_min": 0.65,
+          "step_size_factor_rand_max": 0.85,
+          "step_size_factor_enable_randomization_type": false,
+          "step_size_factor_randomization_type": "asymmetric",
+          "step_size_factor_randomization_percent": 0.2,
+          "initial_noise_scale_rand": false,
+          "initial_noise_scale_rand_min": 1.0,
+          "initial_noise_scale_rand_max": 1.5,
+          "initial_noise_scale_enable_randomization_type": false,
+          "initial_noise_scale_randomization_type": "asymmetric",
+          "initial_noise_scale_randomization_percent": 0.2,
+          "final_noise_scale_rand": false,
+          "final_noise_scale_rand_min": 0.6,
+          "final_noise_scale_rand_max": 1.0,
+          "final_noise_scale_enable_randomization_type": false,
+          "final_noise_scale_randomization_type": "asymmetric",
+          "final_noise_scale_randomization_percent": 0.2,
+          "noise_scale_factor_rand": false,
+          "noise_scale_factor_rand_min": 0.75,
+          "noise_scale_factor_rand_max": 0.95,
+          "noise_scale_factor_enable_randomization_type": false,
+          "noise_scale_factor_randomization_type": "asymmetric",
+          "noise_scale_factor_randomization_percent": 0.2,
+          "early_stopping_threshold_rand": false,
+          "early_stopping_threshold_rand_min": 0.001,
+          "early_stopping_threshold_rand_max": 0.02,
+          "early_stopping_threshold_enable_randomization_type": false,
+          "early_stopping_threshold_randomization_type": "asymmetric",
+          "early_stopping_threshold_randomization_percent": 0.2,
+          "prefer_config": false,
+          "_config_path": "C:\\Software_Development\\core\\image_gen2\\sandbox_testing\\image_gen\\image_gen\\modules\\ss_registry\\schedulers\\config\\simple_kes\\default.yaml",
+          "_config_source": "default",
+          "_policy": {
+            "allow_step_expansion": false,
+            "allow_tail_append": false,
+            "allow_decay_append": false,
+            "truncate_to_requested_steps": true,
+            "warn_on_feature_downgrade": true,
+            "compatibility_mode": "fixed_steps"
+          },
+          "_validation_warnings": []
+        },
+        "skip_prepass": true,
+        "load_prepass_sigmas": false,
+        "load_sigma_cache": false,
+        "terminal_sigma_added": true,
+        "timestep_mapping": {
+          "type": "sd_scaled_linear_beta_log_sigma_interpolation",
+          "num_train_timesteps": 1000,
+          "beta_start": 0.00085,
+          "beta_end": 0.012,
+          "training_sigma_min": 0.029167158151720367,
+          "training_sigma_max": 14.614641229333632,
+          "clipped_low_count": 4,
+          "clipped_high_count": 9
+        },
+        "validated_for_sampler": "kes",
+        "schedule_is_compatible": true,
+        "schedule_validation_reasons": [],
+        "requested_steps": 35,
+        "effective_steps": 35,
+        "scheduler_step_override_applied": false,
+        "compatibility_mode": "fixed_steps"
+      },
+      "sampler_capability_clamp": {},
+      "step_expansion_clamped": false,
+      "tail_metadata_clamped": false,
+      "compatibility_mode_used": "fixed_steps",
+      "schedule_mode": "smooth_blend",
+      "schedule_mode_used": "smooth_blend",
+      "scheduler_reported_requested_steps": 35,
+      "scheduler_reported_effective_steps": 35,
+      "tail_features_used": {
+        "tail_steps_applied": false,
+        "decay_tail_applied": false,
+        "blended_tail_applied": false,
+        "progressive_decay_applied": false,
+        "auto_stabilization_applied": false,
+        "step_expansion_applied": false
+      },
+      "active_blend_methods": [
+        "karras",
+        "exponential"
+      ],
+      "active_blend_weights": [
+        0.8,
+        0.5
+      ],
+      "scheduler_prepass_used": false,
+      "scheduler_predicted_stop_step": 35,
+      "scheduler_compatibility_mode": "fixed_steps",
+      "initial_noise_applied": false,
+      "cfg_rescale_applied": false,
+      "clamp_applied": false,
+      "stochastic_noise_applied": false,
+      "gamma_strategy_used": "standard",
+      "eta_schedule_mode_used": "none",
+      "integration_mode_used": "euler"
+    },
+    "batch_resolved_seeds": [
+      1795415555
+    ],
+    "image_seed": 1795415555
+  }
+}
