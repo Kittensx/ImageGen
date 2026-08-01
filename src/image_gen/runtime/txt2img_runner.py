@@ -22,7 +22,7 @@ from image_gen.systems.diagnostics import (
 )
 from image_gen.systems.model_loading import ModelLoadingSystem
 from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
-from image_gen.systems.output import OutputSystem
+from image_gen.systems.output import OutputSystem, PreparedOutputSaveRequest
 from image_gen.systems.registry import RuntimeRegistrySystem
 from modules.pipeline.progress_reporter import ProgressReporter
 from modules.project_context import ProjectContext
@@ -41,6 +41,8 @@ class Txt2ImgRunResult:
     generation_time_sec: float | None = None
     run_id: str | None = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    prepared_save_request: PreparedOutputSaveRequest | None = None
+    expected_saved_count: int = 0
 
 
 
@@ -1048,6 +1050,7 @@ class Txt2ImgRunner:
         save_images: bool | None = None,
         save_txt: bool = True,
         save_json: bool = True,
+        defer_output_save: bool = False,
     ) -> Txt2ImgRunResult:
         should_save = request.save_images if save_images is None else bool(save_images)
         _prepare_output_directory(
@@ -1171,35 +1174,56 @@ class Txt2ImgRunner:
                     device_name=str(request.device or self.device),
                 ),
             )
+
             saved_records: list[SavedImageRecord] = []
+            prepared_save_request: PreparedOutputSaveRequest | None = None
+            expected_saved_count = 0
             if should_save:
                 output_dir = request.output_dir or extras.get("output_dir")
                 if not output_dir:
                     raise ValueError("An output directory is required when saving images.")
-                def save_and_verify_outputs() -> list[SavedImageRecord]:
-                    records = self.output_system.save(
-                        pipeline_result=pipeline_result,
-                        request=request,
-                        manifest=manifest,
-                        output_dir=str(output_dir),
-                        save_txt=save_txt,
-                        save_json=save_json,
-                    )
-                    return _verify_saved_records(records)
-
                 pipeline.memory_manager.capture("before_output_save")
                 if hasattr(manifest, "extra"):
                     manifest.extra["memory_management"] = pipeline.memory_manager.summary()
-                saved_records = self.diagnostics_system.run_stage(
-                    session,
-                    "output",
-                    "save",
-                    lambda: pipeline.memory_manager.observe_stage(
-                        "output_save",
-                        save_and_verify_outputs,
-                    ),
-                )
-                pipeline_result.metadata["memory_management"] = pipeline.memory_manager.summary()
+                if defer_output_save:
+                    prepared_save_request = self.diagnostics_system.run_stage(
+                        session,
+                        "output",
+                        "prepare_save_request",
+                        lambda: self.output_system.prepare_save_request(
+                            pipeline_result=pipeline_result,
+                            request=request,
+                            manifest=manifest,
+                            output_dir=str(output_dir),
+                            save_txt=save_txt,
+                            save_json=save_json,
+                        ),
+                    )
+                    expected_saved_count = int(prepared_save_request.expected_count or 0)
+                    pipeline_result.metadata["memory_management"] = pipeline.memory_manager.summary()
+                else:
+                    def save_and_verify_outputs() -> list[SavedImageRecord]:
+                        records = self.output_system.save(
+                            pipeline_result=pipeline_result,
+                            request=request,
+                            manifest=manifest,
+                            output_dir=str(output_dir),
+                            save_txt=save_txt,
+                            save_json=save_json,
+                        )
+                        return _verify_saved_records(records)
+
+                    saved_records = self.diagnostics_system.run_stage(
+                        session,
+                        "output",
+                        "save",
+                        lambda: pipeline.memory_manager.observe_stage(
+                            "output_save",
+                            save_and_verify_outputs,
+                        ),
+                    )
+                    expected_saved_count = len(saved_records)
+                    pipeline_result.metadata["memory_management"] = pipeline.memory_manager.summary()
 
             diagnostics_summary = self.diagnostics_system.complete(
                 session, result=pipeline_result
@@ -1214,6 +1238,8 @@ class Txt2ImgRunner:
                 generation_time_sec=generation_time_sec,
                 run_id=session.run_id,
                 diagnostics=diagnostics_summary,
+                prepared_save_request=prepared_save_request,
+                expected_saved_count=expected_saved_count,
             )
         except PipelineStageError:
             raise

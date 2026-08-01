@@ -55,7 +55,10 @@ _GENERATION_SEED_LINE = re.compile(r"^GENERATION_SEED_JSON:\s*(\{.*\})\s*$")
 _LIVE_PREVIEW_SUMMARY_LINE = re.compile(r"^LIVE_PREVIEW_SUMMARY_JSON:\s*(\{.*\})\s*$")
 _MEMORY_STATUS_LINE = re.compile(r"MEMORY_STATUS_JSON:\s*(\{.*\})\s*$")
 _MODEL_RUNTIME_STATUS_LINE = re.compile(r"^MODEL_RUNTIME_STATUS_JSON:\s*(\{.*\})\s*$")
+_ASYNC_OUTPUT_SAVE_STATUS_LINE = re.compile(r"^ASYNC_OUTPUT_SAVE_STATUS_JSON:\s*(\{.*\})\s*$")
+_ASYNC_OUTPUT_SAVE_ERROR_LINE = re.compile(r"^ASYNC_OUTPUT_SAVE_ERROR_JSON:\s*(\{.*\})\s*$")
 _ACTIVE_JOB_STATUSES = {"preparing_model", "warming_model", "running", "finalizing", "cancelling"}
+_CANCELLABLE_JOB_STATUSES = {"preparing_model", "warming_model", "running"}
 _MISSING = object()
 _SUBPROCESS_STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -327,6 +330,11 @@ class GenerationJob:
     scheduler_effective_hash: str | None = None
     scheduler_step_count_source: str | None = None
     scheduler_warnings_acknowledged: bool = False
+    output_save_status: dict[str, Any] = field(default_factory=dict)
+    output_save_events: list[dict[str, Any]] = field(default_factory=list)
+    pending_save_batches: int = 0
+    completed_save_batches: int = 0
+    failed_save_batches: int = 0
     process: asyncio.subprocess.Process | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -387,6 +395,11 @@ class GenerationJob:
             "scheduler_effective_hash": self.scheduler_effective_hash,
             "scheduler_step_count_source": self.scheduler_step_count_source,
             "scheduler_warnings_acknowledged": self.scheduler_warnings_acknowledged,
+            "output_save_status": dict(self.output_save_status),
+            "output_save_events": list(self.output_save_events[-16:]),
+            "pending_save_batches": int(self.pending_save_batches),
+            "completed_save_batches": int(self.completed_save_batches),
+            "failed_save_batches": int(self.failed_save_batches),
             "model_selection": dict(self.model_selection),
             "model_diagnostics": dict(self.model_diagnostics),
         }
@@ -400,9 +413,11 @@ class GenerationJobManager:
         context: ProjectContext,
         *,
         settings_provider: Callable[[], Mapping[str, Any]] | None = None,
+        recent_output_provider: Callable[[Path], Mapping[str, Any] | None] | None = None,
     ) -> None:
         self.context = context
         self.settings_provider = settings_provider
+        self.recent_output_provider = recent_output_provider
         self.registry = RuntimeRegistrySystem(project_context=context)
         self.selections = WebUISelectionResolver(self.registry)
         self.jobs: dict[str, GenerationJob] = {}
@@ -850,6 +865,63 @@ class GenerationJobManager:
             job.worker_stage = stage_value
         job.updated_at = now
         return now
+
+    def _recent_output_payload(self, image_path: str | Path) -> dict[str, Any] | None:
+        try:
+            resolved = Path(image_path).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+
+        payload: Mapping[str, Any] | None = None
+        provider = self.recent_output_provider
+        if callable(provider):
+            try:
+                payload = provider(resolved)
+            except TypeError:
+                payload = provider(Path(resolved))
+            except Exception:
+                payload = None
+        else:
+            try:
+                from image_gen.webui.catalog import WebUICatalog
+
+                payload = WebUICatalog(self.context).output_summary_from_path(resolved)
+            except Exception:
+                payload = None
+
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        return None
+
+    def _record_job_output(
+        self,
+        job: GenerationJob,
+        image_path: str | Path,
+        *,
+        seed_text: str | None = None,
+    ) -> dict[str, Any] | None:
+        image_value = str(image_path)
+        self._transition_job(job, status="finalizing", worker_stage="saving_output")
+        if image_value not in job.output_paths:
+            job.output_paths.append(image_value)
+        job.final_output_url = self._output_url_for_path(image_value)
+        if job.resolved_seed is None and seed_text not in (None, ""):
+            try:
+                job.resolved_seed = int(str(seed_text))
+            except (TypeError, ValueError):
+                pass
+        job.updated_at = _utc_now()
+        self._persist_job(job)
+        recent_output = self._recent_output_payload(image_value)
+        payload = {
+            "latest_output_path": image_value,
+            "latest_output_url": job.final_output_url,
+            "output_count": len(job.output_paths),
+        }
+        if recent_output is not None:
+            payload["recent_output"] = recent_output
+        self._publish_event(job, "job-output-produced", **payload)
+        return recent_output
 
     def _watchdog_settings(self) -> dict[str, Any]:
         settings = self._application_settings()
@@ -1346,7 +1418,7 @@ class GenerationJobManager:
             job.completed_at = completed
             self._persist_job(job)
             self._publish_terminal_once(job, "job-cancelled")
-        elif job.status in _ACTIVE_JOB_STATUSES:
+        elif job.status in _CANCELLABLE_JOB_STATUSES:
             self._transition_job(job, status="cancelling", worker_stage="cancelling")
             if job.execution_mode == "resident_model":
                 await self.model_runtime.cancel_active(job.job_id)
@@ -1851,6 +1923,36 @@ class GenerationJobManager:
         )
         return True
 
+    def _apply_output_save_status_payload(
+        self,
+        job: GenerationJob,
+        payload: Mapping[str, Any],
+    ) -> None:
+        normalized = dict(payload or {})
+        event = str(normalized.get("event") or "")
+        if not event:
+            return
+        job.pending_save_batches = max(0, int(_coerce_top_level_number(normalized.get("pending_batches"), integer=True, default=0) or 0))
+        job.completed_save_batches = max(0, int(_coerce_top_level_number(normalized.get("completed_batches"), integer=True, default=0) or 0))
+        job.failed_save_batches = max(0, int(_coerce_top_level_number(normalized.get("failed_batches"), integer=True, default=0) or 0))
+        job.output_save_status = normalized
+        job.output_save_events.append({**normalized, "updated_at": _utc_now()})
+        if len(job.output_save_events) > 24:
+            job.output_save_events = job.output_save_events[-24:]
+        if event in {"enqueued", "started", "completed", "failed"} and job.status not in {"completed", "cancelled", "failed"}:
+            if job.status != "running" or event in {"started", "failed"}:
+                self._transition_job(job, status="finalizing", worker_stage="saving_output")
+        self._touch_job_runtime(job, progress=False)
+        self._persist_job(job)
+        self._publish_event(
+            job,
+            "job-progress",
+            output_save_status=dict(job.output_save_status),
+            pending_save_batches=job.pending_save_batches,
+            completed_save_batches=job.completed_save_batches,
+            failed_save_batches=job.failed_save_batches,
+        )
+
     def _apply_runtime_line(self, job: GenerationJob, line: str) -> None:
         runtime_status_match = _MODEL_RUNTIME_STATUS_LINE.match(line)
         if runtime_status_match:
@@ -1953,6 +2055,29 @@ class GenerationJobManager:
                 )
             return
 
+        output_save_status_match = _ASYNC_OUTPUT_SAVE_STATUS_LINE.match(line)
+        if output_save_status_match:
+            try:
+                payload = json.loads(output_save_status_match.group(1))
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                self._apply_output_save_status_payload(job, payload)
+            return
+
+        output_save_error_match = _ASYNC_OUTPUT_SAVE_ERROR_LINE.match(line)
+        if output_save_error_match:
+            try:
+                payload = json.loads(output_save_error_match.group(1))
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                merged = dict(job.output_save_status or {})
+                merged.update(payload)
+                merged["event"] = merged.get("event") or "failed"
+                self._apply_output_save_status_payload(job, merged)
+            return
+
         seed_match = _GENERATION_SEED_LINE.match(line)
         if seed_match:
             try:
@@ -2030,24 +2155,10 @@ class GenerationJobManager:
 
         image_match = _IMAGE_LINE.match(line)
         if image_match:
-            self._transition_job(job, status="finalizing", worker_stage="saving_output")
-            image_path = image_match.group("path")
-            if image_path not in job.output_paths:
-                job.output_paths.append(image_path)
-            job.final_output_url = self._output_url_for_path(image_path)
-            if job.resolved_seed is None:
-                try:
-                    job.resolved_seed = int(image_match.group("seed"))
-                except (TypeError, ValueError):
-                    pass
-            self._touch_job_runtime(job, progress=True)
-            self._persist_job(job)
-            self._publish_event(
+            self._record_job_output(
                 job,
-                "job-output-produced",
-                latest_output_path=image_path,
-                latest_output_url=job.final_output_url,
-                output_count=len(job.output_paths),
+                image_match.group("path"),
+                seed_text=image_match.group("seed"),
             )
             return
 
@@ -2187,6 +2298,13 @@ class GenerationJobManager:
                 "memory_allow_preview_suspension_on_oom", True
             ),
             "cfg_telemetry_continues_during_preview_suspension": True,
+        }
+        payload["phase13c_async_output_save_pipeline"] = {
+            "pending_save_batches": int(job.pending_save_batches),
+            "completed_save_batches": int(job.completed_save_batches),
+            "failed_save_batches": int(job.failed_save_batches),
+            "latest_status": dict(job.output_save_status),
+            "recent_events": list(job.output_save_events[-8:]),
         }
         payload["phase14k7_preview_memory_policy"] = {
             "requested_policy": job.request.get("preview_policy", "normal"),

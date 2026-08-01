@@ -42,7 +42,9 @@ set "WEBUI_PYTHON=%VENV_DIR%\Scripts\python.exe"
 set "PYTHONPATH=%CD%\src;%CD%;%PYTHONPATH%"
 set "IMAGE_GEN_WEBUI_START_PORT=7860"
 set "IMAGE_GEN_WEBUI_URL_FILE=%TEMP%\image_gen_webui_%RANDOM%_%RANDOM%.url"
+set "IMAGE_GEN_WEBUI_RESTART_FILE=%TEMP%\image_gen_webui_%RANDOM%_%RANDOM%.restart"
 if exist "%IMAGE_GEN_WEBUI_URL_FILE%" del /q "%IMAGE_GEN_WEBUI_URL_FILE%" >nul 2>&1
+if exist "%IMAGE_GEN_WEBUI_RESTART_FILE%" del /q "%IMAGE_GEN_WEBUI_RESTART_FILE%" >nul 2>&1
 
 rem Preserve values supplied by the caller; otherwise use the requested defaults.
 if not defined MSLK_FMHA_POLICY set "MSLK_FMHA_POLICY=blackwell_safe"
@@ -139,9 +141,20 @@ start "" /b powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Comma
   "  Start-Sleep -Milliseconds 500" ^
   "}"
 
-rem Keep the server attached to this console so startup errors remain visible.
-"%WEBUI_PYTHON%" -m image_gen.webui.server --project-root "%CD%" --host 127.0.0.1 --port %IMAGE_GEN_WEBUI_START_PORT% --url-file "%IMAGE_GEN_WEBUI_URL_FILE%" %COMMANDLINE_ARGS% %*
+rem Keep this BAT as the persistent supervisor. The Python backend can request
+rem a full restart while the browser tab and launcher console remain open.
+:launch_server
+"%WEBUI_PYTHON%" -m image_gen.webui.server --project-root "%CD%" --host 127.0.0.1 --port %IMAGE_GEN_WEBUI_START_PORT% --url-file "%IMAGE_GEN_WEBUI_URL_FILE%" --restart-file "%IMAGE_GEN_WEBUI_RESTART_FILE%" %COMMANDLINE_ARGS% %*
 set "SERVER_EXIT_CODE=%ERRORLEVEL%"
+
+if exist "%IMAGE_GEN_WEBUI_RESTART_FILE%" (
+    del /q "%IMAGE_GEN_WEBUI_RESTART_FILE%" >nul 2>&1
+    echo.
+    echo Restart requested by the WebUI. Starting a clean backend process...
+    echo.
+    goto launch_server
+)
+
 if exist "%IMAGE_GEN_WEBUI_URL_FILE%" del /q "%IMAGE_GEN_WEBUI_URL_FILE%" >nul 2>&1
 
 if not "%SERVER_EXIT_CODE%"=="0" (

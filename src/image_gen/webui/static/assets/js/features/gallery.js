@@ -19,6 +19,29 @@ function outputId(item) {
   return String(item?.output_id || item?.name || "");
 }
 
+function outputKey(item) {
+  return String(item?.output_id || item?.absolute_path || item?.path || item?.url || item?.name || "");
+}
+
+function sameOutput(left, right) {
+  if (!left || !right) return false;
+  const leftId = outputId(left);
+  const rightId = outputId(right);
+  if (leftId && rightId) return leftId === rightId;
+  const leftPath = String(left?.absolute_path || left?.path || "");
+  const rightPath = String(right?.absolute_path || right?.path || "");
+  if (leftPath && rightPath) return leftPath === rightPath;
+  return outputKey(left) === outputKey(right);
+}
+
+function sortRecentOutputCatalog(items) {
+  return [...(items || [])].sort((left, right) => {
+    const modifiedDelta = Number(right?.modified_ns || 0) - Number(left?.modified_ns || 0);
+    if (modifiedDelta) return modifiedDelta;
+    return String(right?.timestamp || "").localeCompare(String(left?.timestamp || ""));
+  });
+}
+
 function selectedSet() {
   return new Set(state.gallerySelection.outputIds || []);
 }
@@ -443,7 +466,9 @@ function applyAndRenderGallery({ selectNewest = false, focusOutputId = "" } = {}
     return;
   }
 
-  const preferred = state.recentOutputs.find((item) => outputId(item) === previousOutputId)
+  const preferred = state.recentOutputs.find((item) => outputId(item) === String(focusOutputId || ""))
+    || (selectNewest ? state.recentOutputs[0] : null)
+    || state.recentOutputs.find((item) => outputId(item) === previousOutputId)
     || state.recentOutputs.find((item) => item.name === previousName)
     || state.recentOutputs[0];
   const preferredIndex = state.recentOutputs.findIndex((item) => outputId(item) === outputId(preferred));
@@ -728,13 +753,25 @@ async function onRefreshNeeded() {
 }
 
 async function reloadRecentOutputFolder() {
+  const button = $("#recentOutputReloadButton");
+  if (button) button.disabled = true;
   try {
     const response = await api.reloadRecentOutputs();
     thumbnailWindowStart = 0;
+    if (response.time_window) {
+      state.recentOutputFilters.timeWindow = String(response.time_window);
+    }
     renderGallery(response.recent_outputs || []);
-    notify("Recent output folder reloaded from disk.");
+    updateRecentOutputFilterControls();
+    notify(
+      response.full_rescan
+        ? `Output folder rescanned. ${Number(response.count || response.recent_outputs?.length || 0)} image${Number(response.count || response.recent_outputs?.length || 0) === 1 ? "" : "s"} loaded in All time view.`
+        : "Recent output folder reloaded from disk.",
+    );
   } catch (error) {
     notify(error.message, "error");
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -969,7 +1006,19 @@ export function bindGallery(options = {}) {
   publishSelection();
 }
 
+export function upsertRecentOutput(item, { selectNewest = false, focusThumbnail = false } = {}) {
+  if (!item || !outputKey(item)) return;
+  const merged = [item, ...(state.recentOutputCatalog || []).filter((existing) => !sameOutput(item, existing))];
+  state.recentOutputCatalog = sortRecentOutputCatalog(merged);
+  const visible = filterRecentOutputs([item]).length > 0;
+  const focusOutputId = (selectNewest || focusThumbnail) && visible ? outputId(item) : "";
+  applyAndRenderGallery({
+    selectNewest: selectNewest && visible,
+    focusOutputId,
+  });
+}
+
 export function renderGallery(outputs, { selectNewest = false } = {}) {
-  state.recentOutputCatalog = outputs || [];
+  state.recentOutputCatalog = sortRecentOutputCatalog(outputs || []);
   applyAndRenderGallery({ selectNewest });
 }

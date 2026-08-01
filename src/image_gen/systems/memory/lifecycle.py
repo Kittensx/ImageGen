@@ -291,6 +291,14 @@ class AdaptiveComponentMemoryManager:
             current[key] = max(int(value), int(previous or 0))
 
     def apply_initial_policy(self) -> None:
+        if self.target_device.type == "cuda":
+            # Checkpoint hydration can leave a large unallocated CUDA cache. On
+            # Windows that cache may consume the full physical card and trigger
+            # shared-memory paging even though live tensors are much smaller.
+            self._release_cuda_cache(
+                stage="initial_residency",
+                reason="post-model-load allocator cleanup",
+            )
         snapshot = self.capture("initial_residency")
         decision = resolve_policy(self.settings.policy, cuda_payload=snapshot.get("cuda"))
         self._effective_profile = decision.effective_profile
@@ -298,14 +306,24 @@ class AdaptiveComponentMemoryManager:
             return
         if self._effective_profile == "high_vram" and self.settings.vae_device != "cpu":
             return
+
+        # Balanced 8 GiB operation keeps the sampling-critical UNet resident and
+        # stages the VAE only when decode is needed. Low-VRAM mode also stages
+        # the UNet. The selected checkpoint remains cached and is restored by
+        # the resident-model retention pass after generation.
         candidates = {"vae"}
         if self._effective_profile == "low_vram":
             candidates.add("unet")
+
+        moved = False
         for component_id in candidates:
             component = self.registry.components.get(component_id)
             if component is None or component.leased or not component.current_device.startswith("cuda"):
                 continue
             self._move_to_cpu(component_id, stage="initial_residency", reason="initial policy residency")
+            moved = True
+        if moved:
+            self._release_cuda_cache(stage="initial_residency", reason="initial policy offload")
         self.capture("initial_policy_applied")
 
     def estimate_stage(
@@ -409,17 +427,26 @@ class AdaptiveComponentMemoryManager:
                 else max(0, int(estimated_stage_bytes))
             ),
             preview_requires_vae=preview_requires_vae,
+            resident_on_target={
+                component_id
+                for component_id, component in self.registry.components.items()
+                if self._device_matches(component.current_device, str(self.target_device))
+            },
         )
         self._effective_profile = plan.effective_profile
         self.plans.append(plan.to_dict())
 
         selected = set(plan.selected_for_target)
+        evicted = False
         for component_id in plan.selected_for_cpu:
             component = self.registry.components.get(component_id)
             if component is None or component.leased:
                 continue
             if component.current_device.startswith("cuda"):
                 self._move_to_cpu(component_id, stage=stage, reason="stage plan eviction")
+                evicted = True
+        if evicted:
+            self._release_cuda_cache(stage=stage, reason="stage plan eviction")
 
         default_target = "cpu" if plan.effective_profile == "cpu_fallback" else str(self.target_device)
         for component_id in selected:
@@ -483,25 +510,47 @@ class AdaptiveComponentMemoryManager:
             "reason": reason,
         })
 
+    def _release_cuda_cache(self, *, stage: str, reason: str) -> None:
+        if self.target_device.type != "cuda" or not torch.cuda.is_available():
+            return
+        gc.collect()
+        torch.cuda.empty_cache()
+        self.automatic_actions.append({
+            "stage": stage,
+            "action": "cuda_allocator_cache_release",
+            "reason": reason,
+        })
+
     def _exit_lease(self, stage: str, plan: ResidencyPlan | None) -> None:
         self.capture(f"after_{stage}")
         effective_profile = (
             plan.effective_profile if plan is not None else self._effective_profile
         )
         candidates = post_stage_offload_candidates(effective_profile, stage)
+        # Retention is a between-job promise, not a requirement to keep every
+        # component on the GPU during every stage. Keep the sampling-critical
+        # UNet resident when requested, but allow the text encoder and VAE to be
+        # staged temporarily so an 8 GiB card does not page through system RAM.
+        if self.settings.retain_checkpoint_between_jobs:
+            candidates.discard("unet")
+        elif stage == "final_decode":
+            candidates.add("unet")
         if stage == "final_decode":
             if self.settings.retain_vae_between_jobs:
                 candidates.discard("vae")
             else:
                 candidates.add("vae")
-            if not self.settings.retain_checkpoint_between_jobs:
-                candidates.add("unet")
+
+        moved = False
         for component_id in candidates:
             component = self.registry.components.get(component_id)
             if component is None or component.leased:
                 continue
             if component.current_device.startswith("cuda"):
                 self._move_to_cpu(component_id, stage=stage, reason="post-stage policy")
+                moved = True
+        if moved:
+            self._release_cuda_cache(stage=stage, reason="post-stage policy")
         self.capture(f"post_policy_{stage}")
         self.active_stage = None
         self._effective_profile = self.settings.policy
@@ -514,6 +563,7 @@ class AdaptiveComponentMemoryManager:
         reason: str,
     ) -> list[dict[str, Any]]:
         actions: list[dict[str, Any]] = []
+        moved = False
         for component_id in dict.fromkeys(str(value) for value in component_ids):
             component = self.registry.components.get(component_id)
             if component is None:
@@ -537,12 +587,15 @@ class AdaptiveComponentMemoryManager:
                 })
                 continue
             self._move_to_cpu(component_id, stage=stage, reason=reason)
+            moved = True
             actions.append({
                 "action": "component_offload",
                 "component_id": component_id,
                 "target_device": "cpu",
                 "reason": reason,
             })
+        if moved:
+            self._release_cuda_cache(stage=stage, reason=reason)
         return actions
 
     def release_preview_work_for_hires(self) -> list[dict[str, Any]]:

@@ -43,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the selected browser URL to this file after reserving the port.",
     )
     parser.add_argument("--project-root", type=Path, default=None)
+    parser.add_argument(
+        "--restart-file",
+        type=Path,
+        default=None,
+        help="Write a restart marker consumed by run_webui.bat before graceful shutdown.",
+    )
     parser.add_argument("--reload", action="store_true")
     add_runtime_startup_arguments(parser)
     return parser
@@ -165,16 +171,29 @@ def _run_with_reserved_socket(args: argparse.Namespace) -> None:
         )
     print(f"Starting server at {url}", flush=True)
 
+    server_holder: dict[str, object] = {}
+
+    def request_restart() -> None:
+        if args.restart_file is not None:
+            marker = args.restart_file.expanduser().resolve()
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("restart\n", encoding="utf-8")
+        server_value = server_holder.get("server")
+        if server_value is not None:
+            setattr(server_value, "should_exit", True)
+
     config = uvicorn.Config(
         create_app(
             project_root=args.project_root,
             runtime_startup_options=getattr(args, "runtime_startup_options", None),
+            restart_callback=(request_restart if args.restart_file is not None else None),
         ),
         host=args.host,
         port=selected_port,
         log_level="info",
     )
     server = uvicorn.Server(config)
+    server_holder["server"] = server
     try:
         server.run(sockets=[reserved_socket])
     finally:
@@ -244,6 +263,7 @@ def main() -> None:
                 "port": args.port,
                 "reload": args.reload,
                 "url_file": str(args.url_file) if args.url_file else None,
+                "restart_file": str(args.restart_file) if args.restart_file else None,
             },
         )
         print(f"IMAGE_GEN WebUI startup failed: {exc}", flush=True)

@@ -112,10 +112,12 @@ class MemoryPlanner:
         safety_margin_bytes: int,
         estimated_stage_bytes: int,
         preview_requires_vae: bool = False,
+        resident_on_target: Iterable[str] = (),
     ) -> ResidencyPlan:
         required_ids = tuple(dict.fromkeys(str(value) for value in required))
         preferred_ids = tuple(dict.fromkeys(str(value) for value in preferred))
         optional_ids = tuple(dict.fromkeys(str(value) for value in optional))
+        resident_ids = set(str(value) for value in resident_on_target)
         decision = resolve_policy(
             requested_profile,
             cuda_payload={
@@ -126,9 +128,10 @@ class MemoryPlanner:
         )
         effective = decision.effective_profile
         if requested_profile == "auto" and target_device.startswith("cuda"):
-            if available_bytes is not None:
-                gib = 1024 ** 3
-                effective = "high_vram" if available_bytes >= 10 * gib else "balanced" if available_bytes >= 5 * gib else "low_vram"
+            # Auto starts from the resident-friendly balanced policy. It only
+            # drops to sequential low-VRAM residency when the incremental bytes
+            # needed by this stage cannot fit inside current physical headroom.
+            effective = "balanced"
         if not target_device.startswith("cuda"):
             effective = "cpu_fallback"
 
@@ -136,8 +139,30 @@ class MemoryPlanner:
         reasons = [decision.reason]
         remaining = None
         if available_bytes is not None:
-            required_bytes = estimated_stage_bytes + sum(component_bytes.get(item, 0) for item in required_ids)
-            remaining = available_bytes - safety_margin_bytes - required_bytes
+            stage_component_ids = tuple(dict.fromkeys(
+                (*required_ids, *preferred_ids, *optional_ids)
+            ))
+            represented_parameter_bytes = sum(
+                component_bytes.get(item, 0) for item in stage_component_ids
+            )
+            # MemoryEstimator includes stage component parameters in its expected
+            # total. Subtract them before adding only the components that still
+            # need to move onto the target device; otherwise resident modules are
+            # counted twice and Auto incorrectly falls into low-VRAM mode.
+            workspace_bytes = max(
+                0,
+                int(estimated_stage_bytes) - represented_parameter_bytes,
+            )
+            missing_required_bytes = sum(
+                component_bytes.get(item, 0)
+                for item in required_ids
+                if item not in resident_ids
+            )
+            incremental_required_bytes = workspace_bytes + missing_required_bytes
+            remaining = available_bytes - safety_margin_bytes - incremental_required_bytes
+            if requested_profile == "auto" and remaining < 0:
+                effective = "low_vram"
+                reasons.append("stage incremental requirement exceeded current VRAM headroom")
 
         if effective == "high_vram":
             selected.extend(preferred_ids)
@@ -145,13 +170,16 @@ class MemoryPlanner:
         elif effective == "balanced":
             for component_id in preferred_ids:
                 component_size = component_bytes.get(component_id, 0)
-                if remaining is None or remaining >= component_size:
+                if component_id in resident_ids or remaining is None or remaining >= component_size:
                     selected.append(component_id)
-                    if remaining is not None:
+                    if remaining is not None and component_id not in resident_ids:
                         remaining -= component_size
             for component_id in optional_ids:
                 component_size = component_bytes.get(component_id, 0)
-                if remaining is not None and remaining >= component_size * 2:
+                if component_id in resident_ids:
+                    if remaining is None or remaining >= 0:
+                        selected.append(component_id)
+                elif remaining is not None and remaining >= component_size * 2:
                     selected.append(component_id)
                     remaining -= component_size
         elif effective == "low_vram":
@@ -166,12 +194,12 @@ class MemoryPlanner:
             and "vae" in selected
             and remaining is not None
         ):
-            nonrequired_bytes = sum(
+            incremental_nonrequired_bytes = sum(
                 component_bytes.get(component_id, 0)
                 for component_id in selected
-                if component_id not in required_ids
+                if component_id not in required_ids and component_id not in resident_ids
             )
-            if nonrequired_bytes > remaining:
+            if incremental_nonrequired_bytes > remaining:
                 selected.remove("vae")
                 reasons.append(
                     "optional VAE preview residency would violate the VRAM safety margin"

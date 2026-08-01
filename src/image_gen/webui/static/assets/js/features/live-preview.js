@@ -247,6 +247,9 @@ function renderHistory() {
 
 function statusText(progress) {
   const status = state.livePreview.status;
+  const saveStatus = currentJob?.output_save_status || {};
+  const pendingSaves = Number(currentJob?.pending_save_batches || saveStatus.pending_batches || 0);
+  const completedSaves = Number(currentJob?.completed_save_batches || saveStatus.completed_batches || 0);
   if (
     !isTerminal(status)
     && state.livePreview.selectedStep
@@ -265,6 +268,11 @@ function statusText(progress) {
       : "Failed";
   }
   if (status === "completed") return "Completed";
+  if (status === "finalizing" && pendingSaves > 0) {
+    return completedSaves > 0
+      ? `Saving output · ${completedSaves} completed · ${pendingSaves} pending`
+      : `Saving output · ${pendingSaves} pending`;
+  }
   if (status === "queued") return "Queued";
   if (status === "cancelling") return "Cancelling";
   if (progress.step > 0 && progress.total > 0) return `Step ${progress.step} / ${progress.total}`;

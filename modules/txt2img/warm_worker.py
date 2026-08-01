@@ -29,12 +29,15 @@ import torch
 from image_gen.runtime.scheduler_settings import normalize_scheduler_payload
 from image_gen.systems.registry import RuntimeRegistrySystem
 from modules.project_context import ProjectContext
+from modules.txt2img.async_output_pipeline import AsyncOutputSaveQueue, OutputSaveTicket
 from modules.txt2img.cli import _build_prompt_adapter
 from modules.txt2img.request_loader import load_request_payload, payload_to_generation_request
 from modules.txt2img.seed_utils import iter_batch_base_seeds, offset_seed
 from modules.txt2img.txt2img_runner import Txt2ImgRunner
 
 _STATUS_PREFIX = "WARM_WORKER_STATUS_JSON: "
+_ASYNC_OUTPUT_SAVE_STATUS_PREFIX = "ASYNC_OUTPUT_SAVE_STATUS_JSON: "
+_ASYNC_OUTPUT_SAVE_ERROR_PREFIX = "ASYNC_OUTPUT_SAVE_ERROR_JSON: "
 _READY_PREFIX = "WARM_WORKER_READY_JSON: "
 _COMPLETE_PREFIX = "WARM_WORKER_COMMAND_COMPLETE_JSON: "
 
@@ -72,6 +75,85 @@ class PersistentTxt2ImgWarmWorker:
             "warm_worker_retention_device": "auto",
             "runtime_startup_options": self.runtime_startup_options.to_dict(),
         }
+        self._output_save_queue: AsyncOutputSaveQueue | None = None
+
+
+
+    def _emit_async_output_save_status(self, snapshot: dict[str, Any]) -> None:
+        print(
+            _ASYNC_OUTPUT_SAVE_STATUS_PREFIX
+            + json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+            flush=True,
+        )
+
+    def _handle_async_save_enqueued(
+        self,
+        ticket: OutputSaveTicket,
+        snapshot: Any,
+    ) -> None:
+        del ticket
+        self._emit_async_output_save_status(dict(snapshot.to_dict()))
+
+    def _handle_async_save_started(
+        self,
+        ticket: OutputSaveTicket,
+        snapshot: Any,
+    ) -> None:
+        del ticket
+        self._emit_async_output_save_status(dict(snapshot.to_dict()))
+
+    def _handle_async_save_success(
+        self,
+        ticket: OutputSaveTicket,
+        records: list[Any],
+        snapshot: Any,
+    ) -> None:
+        del ticket
+        snapshot_payload = dict(snapshot.to_dict())
+        snapshot_payload["saved_paths"] = [str(record.image_path) for record in records]
+        self._emit_async_output_save_status(snapshot_payload)
+        for record in records:
+            seed_label = "unknown" if getattr(record, "seed", None) is None else str(record.seed)
+            print(f"  Image [seed {seed_label}]: {record.image_path}", flush=True)
+            if getattr(record, "txt_path", None):
+                print(f"  TXT:   {record.txt_path}", flush=True)
+            if getattr(record, "json_path", None):
+                print(f"  JSON:  {record.json_path}", flush=True)
+
+    def _handle_async_save_error(
+        self,
+        ticket: OutputSaveTicket,
+        error: BaseException,
+        snapshot: Any,
+    ) -> None:
+        self._emit_async_output_save_status(dict(snapshot.to_dict()))
+        print(
+            _ASYNC_OUTPUT_SAVE_ERROR_PREFIX
+            + json.dumps(
+                {
+                    "job_id": ticket.job_id,
+                    "batch_number": ticket.batch_number,
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    def _ensure_output_save_queue(self) -> AsyncOutputSaveQueue:
+        if self._output_save_queue is not None:
+            return self._output_save_queue
+        runner = self._ensure_runner()
+        self._output_save_queue = AsyncOutputSaveQueue(
+            runner.output_system.save_prepared,
+            on_enqueued=self._handle_async_save_enqueued,
+            on_started=self._handle_async_save_started,
+            on_saved=self._handle_async_save_success,
+            on_error=self._handle_async_save_error,
+        )
+        return self._output_save_queue
 
     def _ensure_runner(self) -> Txt2ImgRunner:
         if self.runner is not None:
@@ -249,6 +331,7 @@ class PersistentTxt2ImgWarmWorker:
         job_started = time.perf_counter()
         model_cache_reused = False
         first_generation_started: float | None = None
+        save_tickets: list[OutputSaveTicket] = []
 
         while unlimited or completed_batches < batch_count:
             # Keep the warmed checkpoint/components resident, but clear any
@@ -319,12 +402,23 @@ class PersistentTxt2ImgWarmWorker:
             if first_generation_started is None:
                 first_generation_started = time.perf_counter()
             self.emit_status("running", batch_number=batch_number, batch_count=batch_count)
-            result = runner.run_request(
-                batch_request,
-                batch_extras,
-                save_txt=bool(command.get("save_txt", True)),
-                save_json=bool(command.get("save_json", True)),
-            )
+            try:
+                result = runner.run_request(
+                    batch_request,
+                    batch_extras,
+                    save_txt=bool(command.get("save_txt", True)),
+                    save_json=bool(command.get("save_json", True)),
+                    defer_output_save=True,
+                )
+            except TypeError as exc:
+                if "defer_output_save" not in str(exc):
+                    raise
+                result = runner.run_request(
+                    batch_request,
+                    batch_extras,
+                    save_txt=bool(command.get("save_txt", True)),
+                    save_json=bool(command.get("save_json", True)),
+                )
 
             live_preview_summary = dict(result.pipeline_result.metadata.get("live_preview") or {})
             print(
@@ -356,11 +450,27 @@ class PersistentTxt2ImgWarmWorker:
                 + json.dumps(model_diagnostic, ensure_ascii=False, sort_keys=True),
                 flush=True,
             )
-            saved_paths = [record.image_path for record in result.saved_records]
-            if result.request.save_images and not saved_paths:
-                raise RuntimeError(
-                    "Generation completed, but image saving was requested and no image was persisted."
+
+            if result.request.save_images:
+                prepared_save_request = result.prepared_save_request
+                if prepared_save_request is None:
+                    raise RuntimeError(
+                        "Generation completed, but no prepared output save request was returned."
+                    )
+                if int(result.expected_saved_count or 0) < 1:
+                    raise RuntimeError(
+                        "Generation completed, but output saving was requested and no save artifacts were prepared."
+                    )
+                save_ticket = self._ensure_output_save_queue().enqueue(
+                    prepared_save_request,
+                    job_id=job_id,
+                    batch_number=batch_number,
                 )
+                save_tickets.append(save_ticket)
+                saved_paths: list[str] = []
+            else:
+                saved_paths = [record.image_path for record in result.saved_records]
+
             if requested_seed is not None and int(requested_seed) >= 0:
                 expected_base_seed = offset_seed(
                     int(requested_seed), completed_batches * int(request.batch_size)
@@ -380,14 +490,25 @@ class PersistentTxt2ImgWarmWorker:
                         f"expected {expected_image_seeds}, runtime used {result.request.resolved_seeds}."
                     )
             completed_batches += 1
-            total_saved += len(saved_paths)
-            for record in result.saved_records:
-                seed_label = "unknown" if record.seed is None else str(record.seed)
-                print(f"  Image [seed {seed_label}]: {record.image_path}", flush=True)
-                if record.txt_path:
-                    print(f"  TXT:   {record.txt_path}", flush=True)
-                if record.json_path:
-                    print(f"  JSON:  {record.json_path}", flush=True)
+            if not result.request.save_images:
+                total_saved += len(saved_paths)
+                for record in result.saved_records:
+                    seed_label = "unknown" if record.seed is None else str(record.seed)
+                    print(f"  Image [seed {seed_label}]: {record.image_path}", flush=True)
+                    if record.txt_path:
+                        print(f"  TXT:   {record.txt_path}", flush=True)
+                    if record.json_path:
+                        print(f"  JSON:  {record.json_path}", flush=True)
+
+        if save_tickets:
+            self.emit_status(
+                "saving_output",
+                action="drain_async_output_save_queue",
+                pending_save_batches=len(save_tickets),
+            )
+            for ticket in save_tickets:
+                records = ticket.result()
+                total_saved += len(records)
 
         self.emit_status("applying_retention_policy")
         retention = runner.apply_warm_retention(payload_extras)
@@ -428,6 +549,9 @@ class PersistentTxt2ImgWarmWorker:
         if name == "run":
             return self.run_job(command)
         if name == "shutdown":
+            if self._output_save_queue is not None:
+                self._output_save_queue.shutdown(wait=True)
+                self._output_save_queue = None
             result = self.unload(command)
             result["shutdown"] = True
             return result

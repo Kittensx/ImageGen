@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -62,6 +67,10 @@ class ModelActivationPayload(BaseModel):
     model_path: str = Field(min_length=1)
 
 
+class OutputFolderPayload(BaseModel):
+    path: str = ""
+
+
 def encode_sse_event(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -69,8 +78,11 @@ def encode_sse_event(event: str, payload: dict[str, Any]) -> str:
 def create_app(
     project_root: str | Path | None = None,
     runtime_startup_options: RuntimeStartupOptions | dict[str, Any] | None = None,
+    restart_callback: Callable[[], Any] | None = None,
 ) -> FastAPI:
     context = ProjectContext.load(project_root=project_root)
+    server_instance_id = uuid.uuid4().hex
+    server_started_at_unix = time.time()
     catalog = WebUICatalog(context)
     store = WebUIStore(context.data_root / "webui")
     application_settings = store.load_application_settings()
@@ -88,7 +100,11 @@ def create_app(
         resolved_runtime_startup = resolve_runtime_startup_options(
             settings=application_settings,
         )
-    jobs = GenerationJobManager(context, settings_provider=store.load_application_settings)
+    jobs = GenerationJobManager(
+        context,
+        settings_provider=store.load_application_settings,
+        recent_output_provider=lambda path: catalog.output_summary_from_path(Path(path)),
+    )
     jobs.runtime_startup_options = resolved_runtime_startup.to_dict()
     model_selection = WebUIModelSelectionState(context)
     selections = WebUISelectionResolver(jobs.registry)
@@ -133,6 +149,9 @@ def create_app(
     app.state.prompt_parsers = prompt_parsers
     app.state.prompt_configuration = prompt_configuration
     app.state.runtime_startup_options = resolved_runtime_startup.to_dict()
+    app.state.server_instance_id = server_instance_id
+    app.state.server_started_at_unix = server_started_at_unix
+    app.state.restart_callback = restart_callback
 
     def _runtime_startup_status() -> dict[str, Any]:
         worker_status = jobs.model_runtime.status()
@@ -292,10 +311,29 @@ def create_app(
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
+            "instance_id": server_instance_id,
+            "process_id": os.getpid(),
+            "started_at_unix": server_started_at_unix,
             "worker": jobs.status(),
             "version": WEBUI_VERSION,
             "active_model": model_selection.current_payload(),
             "prompt_parsers": prompt_parsers.descriptors(),
+        }
+
+    @app.post("/api/system/restart")
+    async def restart_backend() -> dict[str, Any]:
+        callback = app.state.restart_callback
+        if not callable(callback):
+            raise HTTPException(
+                status_code=503,
+                detail="Backend restart is unavailable because IMAGE_GEN was not launched through run_webui.bat.",
+            )
+        loop = asyncio.get_running_loop()
+        loop.call_later(0.20, callback)
+        return {
+            "restart_requested": True,
+            "previous_instance_id": server_instance_id,
+            "message": "The IMAGE_GEN backend is restarting. The browser will reconnect automatically.",
         }
 
     @app.get("/api/prompt-parsers")
@@ -569,7 +607,28 @@ def create_app(
 
     @app.post("/api/recent-outputs/reload")
     async def reload_recent_outputs() -> JSONResponse:
-        return JSONResponse({"recent_outputs": _visible_recent_outputs()})
+        # A manual folder reload is an explicit full disk reconciliation. Reset
+        # the non-destructive clear marker, invalidate metadata summaries, and
+        # scan all configured folders regardless of the previous time window.
+        store.restore_recent_outputs_visibility()
+        store.save_application_settings({
+            "recent_outputs_browser": {"time_window": "all"}
+        })
+        catalog.invalidate_output_cache()
+        browser = _recent_output_browser_settings()
+        items = catalog.recent_outputs(
+            limit=None,
+            hours=None,
+            include_subfolders=browser["include_subfolders"],
+            extra_paths=browser["source_paths"],
+            require_metadata_for_external=browser["require_metadata_for_external"],
+        )
+        return JSONResponse({
+            "recent_outputs": items,
+            "count": len(items),
+            "time_window": "all",
+            "full_rescan": True,
+        })
 
     @app.post("/api/recent-outputs/clear")
     async def clear_recent_outputs() -> dict[str, Any]:
@@ -585,6 +644,31 @@ def create_app(
             "cleared_through_modified_ns": visibility["cleared_through_modified_ns"],
             "recent_outputs": _visible_recent_outputs(),
         }
+
+    @app.post("/api/outputs/open-folder")
+    async def open_output_folder(payload: OutputFolderPayload) -> dict[str, Any]:
+        raw_path = str(payload.path or "").strip()
+        target = (
+            catalog.resolve_output_root(raw_path)
+            if raw_path
+            else context.txt2img_output_root.resolve()
+        )
+        allowed_roots = catalog.configured_output_roots(
+            _recent_output_browser_settings().get("source_paths") or []
+        )
+        if not any(target == root or is_within_root(target, root) for root in allowed_roots):
+            raise HTTPException(status_code=403, detail="The requested folder is outside configured output locations.")
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)], start_new_session=True)
+            else:
+                subprocess.Popen(["xdg-open", str(target)], start_new_session=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to open the output folder: {exc}") from exc
+        return {"opened": True, "path": str(target)}
 
     @app.get("/api/image-files/{image_ref:path}")
     async def recent_output_image(image_ref: str) -> FileResponse:
@@ -1048,9 +1132,15 @@ def create_app(
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str) -> dict[str, Any]:
-        job = await jobs.cancel(job_id)
-        if job is None:
+        existing = jobs.get_job(job_id)
+        if existing is None:
             raise HTTPException(status_code=404, detail="Generation job not found.")
+        if existing.status == "finalizing":
+            raise HTTPException(
+                status_code=409,
+                detail="Generation is complete and output saving is in progress. The save operation will continue.",
+            )
+        job = await jobs.cancel(job_id)
         return job.to_dict()
 
     @app.get("/api/jobs/{job_id}/events")

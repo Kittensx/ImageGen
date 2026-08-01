@@ -67,6 +67,7 @@ export const api = {
   }),
   activeModel: () => request("/api/models/active"),
   reloadWorkspace: () => request("/api/workspace/reload", { method: "POST" }),
+  restartBackend: () => request("/api/system/restart", { method: "POST" }),
   recentOutputs: (filters = {}) => {
     const params = new URLSearchParams();
     Object.entries(filters || {}).forEach(([key, value]) => {

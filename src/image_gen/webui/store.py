@@ -377,6 +377,11 @@ class WebUIStore:
         self._write(self.recent_outputs_dir / "visibility.json", value)
         return value
 
+    def restore_recent_outputs_visibility(self) -> dict[str, Any]:
+        value = {"cleared_through_modified_ns": 0}
+        self._write(self.recent_outputs_dir / "visibility.json", value)
+        return value
+
     def _profile_root(self, kind: str, plugin_id: str | None = None) -> Path:
         safe_kind = _safe_name(kind).lower().replace(" ", "-")
         root = self.profile_dir / safe_kind

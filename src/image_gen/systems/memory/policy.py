@@ -47,10 +47,14 @@ def resolve_policy(
     total = int(cuda.get("total_vram_bytes") or 0)
     free = int(cuda.get("free_vram_bytes") or 0)
     gib = 1024 ** 3
-    if total >= 20 * gib and free >= 10 * gib:
+    if total >= 16 * gib and free >= 8 * gib:
         return MemoryPolicyDecision("auto", "high_vram", "high VRAM capacity and headroom")
-    if total >= 10 * gib and free >= 5 * gib:
-        return MemoryPolicyDecision("auto", "balanced", "moderate VRAM capacity and headroom")
+    # SD 1.x checkpoints can remain fully resident on common 8 GiB cards.
+    # Treat those devices as balanced while at least 1 GiB of physical headroom
+    # remains; stage planning and bounded OOM recovery can still downgrade when
+    # a specific request does not fit.
+    if total >= 6 * gib and free >= 1 * gib:
+        return MemoryPolicyDecision("auto", "balanced", "resident checkpoint fits with usable VRAM headroom")
     return MemoryPolicyDecision("auto", "low_vram", "limited reported VRAM headroom")
 
 

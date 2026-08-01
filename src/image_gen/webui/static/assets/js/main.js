@@ -751,8 +751,17 @@ function bindPanels() {
       syncPanelToggle(button, target);
     });
   });
-  $("#openOutputsButton").addEventListener("click", () => {
-    $(".gallery-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+  const outputsButton = $("#openOutputsButton");
+  outputsButton?.addEventListener("click", async () => {
+    outputsButton.disabled = true;
+    try {
+      await api.openOutputFolder();
+      notify("Output folder opened.");
+    } catch (error) {
+      notify(`Unable to open the output folder: ${error.message}`, "error");
+    } finally {
+      outputsButton.disabled = false;
+    }
   });
 }
 
@@ -806,20 +815,60 @@ async function refreshModels() {
   }
 }
 
+function waitForBackendRestart(previousInstanceId, timeoutMs = 120000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const check = async () => {
+      try {
+        const response = await fetch(`/api/health?restart_probe=${Date.now()}`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache" },
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          if (payload.instance_id && payload.instance_id !== previousInstanceId) {
+            resolve(payload);
+            return;
+          }
+        }
+      } catch {
+        // The connection normally drops while the backend process restarts.
+      }
+      if (Date.now() >= deadline) {
+        reject(new Error("The backend did not return within two minutes. Check the WebUI launcher window for the startup error."));
+        return;
+      }
+      window.setTimeout(check, 500);
+    };
+    check();
+  });
+}
+
 async function reloadWorkspace() {
+  const accepted = window.confirm(
+    "Restart the IMAGE_GEN WebUI backend?\n\n"
+      + "This stops active and queued generation work, recreates the Python backend process, and reloads all modules and startup-only settings. "
+      + "The browser tab will remain open and reconnect automatically.",
+  );
+  if (!accepted) return;
+
+  const button = $("#reloadWorkspaceButton");
+  const previousLabel = button?.textContent || "Reload UI";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Restarting…";
+  }
   try {
-    const current = collectCurrentValues();
-    const payload = await api.reloadWorkspace();
-    setCatalogs(payload);
-    populateModels(current);
-    populatePlugins(current);
-    refreshPromptConfigurationCatalogs(payload);
-    await refreshAdvancedEditors({ preservePresetSelection: true });
-    await activateSelectedModel({ quiet: true });
-    renderGallery(payload.recent_outputs || []);
-    notify("Interface catalogs reloaded.");
+    const response = await api.restartBackend();
+    notify("Backend restart requested. Waiting for the new process…");
+    await waitForBackendRestart(response.previous_instance_id);
+    window.location.reload();
   } catch (error) {
-    notify(error.message, "error");
+    notify(`Unable to restart the WebUI backend: ${error.message}`, "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousLabel;
+    }
   }
 }
 

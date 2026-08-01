@@ -31,6 +31,9 @@ class WebUICatalog:
     def reload_plugins(self) -> None:
         self._registry = RuntimeRegistrySystem(project_context=self.context)
 
+    def invalidate_output_cache(self) -> None:
+        self._output_summary_cache.clear()
+
     def _descriptor_payload(self, kind: str) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         for item in self._registry.descriptors(kind):

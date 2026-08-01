@@ -7,7 +7,7 @@ import {
   setLivePreviewTransport,
   stopLivePreview,
 } from "./live-preview.js?v=0.1.56";
-import { showOutput } from "./gallery.js";
+import { showOutput, upsertRecentOutput } from "./gallery.js";
 import { openOutputDetailsData } from "./output-details.js";
 import { preflightCurrentPrompt } from "./prompt-tools.js?v=0.1.57";
 
@@ -64,6 +64,7 @@ function scheduleRecentOutputsPolling() {
 }
 
 const ACTIVE_JOB_STATUSES = new Set(["preparing_model", "warming_model", "running", "finalizing", "cancelling"]);
+const CANCELLABLE_JOB_STATUSES = new Set(["preparing_model", "warming_model", "running"]);
 
 function isTerminalStatus(status) {
   return ["completed", "cancelled", "failed"].includes(String(status || ""));
@@ -272,7 +273,7 @@ function renderWorker(worker) {
 
 function jobCanBeCancelled(job) {
   const status = String(job?.status || "");
-  return status === "queued" || ACTIVE_JOB_STATUSES.has(status);
+  return status === "queued" || CANCELLABLE_JOB_STATUSES.has(status);
 }
 
 async function cancelQueueJob(job, { confirmUser = true } = {}) {
@@ -332,6 +333,19 @@ function renderQueue(jobs) {
     const timing = document.createElement("small");
     timing.textContent = job.completed_at ? `Finished ${formatTime(job.completed_at)}` : `Started ${formatTime(job.started_at || job.created_at)}`;
     card.append(header, settings, timing);
+    const pendingSaves = Number(job.pending_save_batches || 0);
+    const completedSaves = Number(job.completed_save_batches || 0);
+    const failedSaves = Number(job.failed_save_batches || 0);
+    if (pendingSaves > 0 || completedSaves > 0 || failedSaves > 0) {
+      const saveStatus = document.createElement("small");
+      saveStatus.className = "queue-diagnostic-path";
+      const saveParts = [];
+      if (pendingSaves > 0) saveParts.push(`${pendingSaves} pending save${pendingSaves === 1 ? "" : "s"}`);
+      if (completedSaves > 0) saveParts.push(`${completedSaves} completed`);
+      if (failedSaves > 0) saveParts.push(`${failedSaves} failed`);
+      saveStatus.textContent = `Output save queue: ${saveParts.join(" · ")}`;
+      card.append(saveStatus);
+    }
     const outputQuality = job.output_quality_diagnostics || {};
     if (outputQuality.suspect) {
       const qualityWarning = document.createElement("p");
@@ -462,7 +476,9 @@ function updateActiveState() {
   }
   const job = monitoredJob();
   const forever = Boolean(running?.request?.unlimited);
-  $("#cancelButton").classList.toggle("is-hidden", !running);
+  $("#cancelButton").classList.toggle("is-hidden", !jobCanBeCancelled(running));
+  $("#topCancelButton")?.classList.toggle("is-disabled", !jobCanBeCancelled(running));
+  if ($("#topCancelButton")) $("#topCancelButton").disabled = !jobCanBeCancelled(running);
   $("#infinityButton").classList.toggle("is-active", forever);
   $("#infinityButton").textContent = forever ? "[ ∞ Generating ]" : "∞ Generate Forever";
   renderLivePreviewJob(job);
@@ -589,6 +605,13 @@ function connectEventStream(job) {
   bindEvent("step-preview", applyEventPayload);
   bindEvent("job-output-produced", async (payload) => {
     applyEventPayload(payload);
+    const recentOutput = payload?.recent_output || null;
+    if (recentOutput) {
+      upsertRecentOutput(recentOutput, {
+        selectNewest: Boolean(state.layout.followNewestOutput || !state.selectedOutput),
+      });
+      return;
+    }
     schedulePostCompletionRefresh(payload?.job || payload);
   });
   bindEvent("job-cancelled", async (payload) => {
@@ -736,7 +759,14 @@ async function submit(unlimited) {
 }
 
 async function cancelActive() {
-  const job = activeJob() || state.jobs.find((item) => item.status === "queued") || null;
+  const active = activeJob();
+  if (String(active?.status || "") === "finalizing") {
+    notify("Generation is complete and the output is being saved. Saving will continue.", "warning");
+    return;
+  }
+  const job = (active && jobCanBeCancelled(active))
+    ? active
+    : state.jobs.find((item) => item.status === "queued") || null;
   if (!job) {
     notify("There is no active or queued generation to cancel.", "warning");
     return;
