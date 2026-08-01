@@ -1,0 +1,9 @@
+{
+  "hidden_size": 1280,
+  "intermediate_size": 5120,
+  "projection_dim": 1280,
+  "num_hidden_layers": 32,
+  "num_attention_heads": 20,
+  "max_position_embeddings": 77,
+  "vocab_size": 49408
+}

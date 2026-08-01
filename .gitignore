@@ -1,0 +1,79 @@
+# Python environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+*.whl
+
+# IDE and editor files
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime output
+output/
+outputs/
+generated/
+temp/
+tmp/
+cache/
+logs/
+*.log
+
+# Image-generation models and weights
+models/
+checkpoints/
+loras/
+vae/
+upscalers/
+embeddings/
+*.ckpt
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# Local databases and session data
+*.db
+*.sqlite
+*.sqlite3
+sessions/
+session-cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+secrets.json
+credentials.json
+application.local.json
+config.local.json
+
+# Diagnostics and crash output
+diagnostics/
+crash_reports/
+runtime_diagnostics/

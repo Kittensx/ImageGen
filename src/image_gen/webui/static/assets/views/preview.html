@@ -1,0 +1,141 @@
+<section class="center-column" id="outputBrowser">
+  <article class="panel output-viewer-panel" id="outputViewerPanel" data-panel-scale-key="output_viewer">
+    <div class="panel-heading output-viewer-heading">
+      <div>
+        <h2>Output Viewer</h2>
+        <span id="outputDimensions">—</span>
+      </div>
+      <div class="viewer-actions" aria-label="Output viewer controls">
+        <button class="icon-button" id="previousOutputButton" type="button" aria-label="Previous output" title="Previous output">‹</button>
+        <button class="icon-button" id="nextOutputButton" type="button" aria-label="Next output" title="Next output">›</button>
+        <button class="text-button viewer-mode-button" id="fitOutputButton" type="button" aria-pressed="true">Fit to Panel</button>
+        <button class="text-button viewer-mode-button" id="imageDetailsButton" type="button" disabled>Image Details</button>
+        <button class="text-button viewer-mode-button" id="openLargeOutputButton" type="button" disabled>Open Large</button>
+      </div>
+    </div>
+    <div class="output-stage is-fit" id="outputStage" tabindex="0" aria-label="Selected completed output">
+      <div class="preview-placeholder" id="outputPlaceholder">
+        <strong>No completed output selected</strong>
+        <span>Generated images will remain available here while new jobs run.</span>
+      </div>
+      <img id="outputImage" alt="Selected completed output">
+    </div>
+    <div class="preview-meta output-meta" id="outputMeta">
+      <span>Sampler: <strong id="outputSampler">—</strong></span>
+      <span>Scheduler: <strong id="outputScheduler">—</strong></span>
+      <span>Seed: <strong id="outputSeed">—</strong></span>
+      <span id="outputStatus">No selection</span>
+    </div>
+  </article>
+
+  <div
+    class="center-splitter"
+    id="centerSplitter"
+    role="separator"
+    aria-label="Resize output viewer and recent outputs"
+    aria-orientation="horizontal"
+    tabindex="0"
+  ></div>
+
+  <article class="panel gallery-panel" id="recentOutputsPanel" data-panel-scale-key="recent_outputs">
+    <div class="panel-heading gallery-heading">
+      <div>
+        <h2>Recent Outputs</h2>
+        <span class="gallery-selection-count" id="gallerySelectionCount" aria-live="polite">0 selected</span>
+      </div>
+      <div class="gallery-selection-actions" role="toolbar" aria-label="Recent output selection actions">
+        <button class="text-button" id="selectAllVisibleButton" type="button">Select All Visible</button>
+        <button class="text-button" id="clearGallerySelectionButton" type="button" disabled>Clear Selection</button>
+        <button class="text-button" id="clearRecentOutputsButton" type="button" title="Clear the Recent Outputs list without deleting image files" aria-label="Clear Recent List" disabled>Clear Recent List</button>
+        <button class="primary-button compact-button" id="composeQueueButton" type="button" disabled>Compose Queue (0)</button>
+        <select class="compact-select" id="batchExportFormat" aria-label="Queue export format">
+          <option value="native">Native JSON</option>
+          <option value="jsonl">JSON Lines</option>
+          <option value="csv">CSV</option>
+        </select>
+        <button class="text-button" id="importQueueButton" type="button">Import Queue</button>
+        <button class="primary-button compact-button" id="openVariationMatrixButton" type="button">Variation Matrix</button>
+        <button class="text-button" id="exportCurrentButton" type="button">Export Current (1)</button>
+        <button class="text-button" id="exportSelectedOutputsButton" type="button" disabled>Export Selected (0)</button>
+        <button class="text-button" id="recentOutputFilterToggleButton" type="button">Filter</button>
+        <button class="text-button" id="refreshOutputsButton" type="button">Refresh</button>
+        <button class="text-button" id="recentOutputReloadButton" type="button">Reload Folder</button>
+        <button class="icon-button panel-toggle" id="recentOutputsToggle" data-target="recentOutputsPanel" type="button" aria-label="Collapse recent outputs" aria-expanded="true">⌃</button>
+      </div>
+    </div>
+    <div class="recent-output-filter-panel" id="recentOutputFilterPanel" hidden>
+      <div class="recent-output-filter-grid">
+        <label>
+          <span>Time window</span>
+          <select id="recentOutputTimeWindow">
+            <option value="72">72 hours</option>
+            <option value="48">48 hours</option>
+            <option value="24">24 hours</option>
+            <option value="custom">Custom hours</option>
+            <option value="all">All available</option>
+          </select>
+        </label>
+        <label id="recentOutputCustomHoursWrap" hidden>
+          <span>Custom hours</span>
+          <input id="recentOutputCustomHours" type="number" min="1" step="1" value="24">
+        </label>
+        <label class="checkbox-field"><input id="recentOutputIncludeSubfolders" type="checkbox" checked> <span>Include subfolders</span></label>
+        <label class="checkbox-field"><input id="recentOutputRequireMetadata" type="checkbox" checked> <span>External folders require supported metadata</span></label>
+      </div>
+      <div class="recent-output-source-block">
+        <div class="recent-output-source-header">
+          <strong>Image folders</strong>
+          <small>Default source: <code id="recentOutputDefaultFolderPath">Current output folder</code></small>
+        </div>
+        <div class="recent-output-source-entry">
+          <input id="recentOutputSourceInput" type="text" placeholder="Add another image folder path">
+          <button class="secondary-button compact-button" id="addRecentOutputSourceButton" type="button">Add Folder</button>
+        </div>
+        <div class="recent-source-list" id="recentOutputSourceList"></div>
+      </div>
+      <div class="recent-output-filter-grid advanced-grid">
+        <label>
+          <span>Prompt filter</span>
+          <input id="recentOutputPromptQuery" type="text" placeholder="comma, separated, prompt terms">
+        </label>
+        <label>
+          <span>Custom start</span>
+          <input id="recentOutputParserStart" type="text" placeholder="{">
+        </label>
+        <label>
+          <span>Midpoint start</span>
+          <input id="recentOutputParserMidpoint" type="text" placeholder=":::">
+        </label>
+        <label>
+          <span>Custom end</span>
+          <input id="recentOutputParserEnd" type="text" placeholder="}">
+        </label>
+      </div>
+      <div class="recent-output-filter-grid advanced-grid">
+        <label><span>Sampler</span><select id="recentOutputSamplerFilter"></select></label>
+        <label><span>Scheduler</span><select id="recentOutputSchedulerFilter"></select></label>
+        <label><span>Model</span><select id="recentOutputModelFilter"></select></label>
+        <label><span>VAE</span><select id="recentOutputVaeFilter"></select></label>
+        <label><span>LoRA</span><select id="recentOutputLoraFilter"></select></label>
+        <label><span>Resolution</span><select id="recentOutputResolutionFilter"></select></label>
+        <label><span>Mode</span><select id="recentOutputGenerationModeFilter"></select></label>
+        <label><span>Hires</span><select id="recentOutputHiresFilter"></select></label>
+        <label><span>Metadata source</span><select id="recentOutputMetadataSourceFilter"></select></label>
+      </div>
+      <div class="recent-output-filter-footer">
+        <small id="recentOutputFilterSummary">0 shown of 0 scanned</small>
+        <button class="text-button" id="resetRecentOutputFiltersButton" type="button">Reset Filters</button>
+      </div>
+    </div>
+    <div class="thumbnail-carousel" id="recentOutputCarousel" aria-label="Recent output pages">
+      <button class="button small subtle carousel-nav-button" id="recentOutputCarouselPrevButton" type="button" aria-label="Show previous recent output page">‹</button>
+      <div class="thumbnail-viewport" id="recentOutputCarouselViewport">
+        <div class="thumbnail-strip" id="recentOutputs" role="list" aria-label="Recent output images"></div>
+      </div>
+      <button class="button small subtle carousel-nav-button" id="recentOutputCarouselNextButton" type="button" aria-label="Show next recent output page">›</button>
+    </div>
+    <div class="thumbnail-carousel-footer">
+      <small id="recentOutputCarouselStatus">Showing 0–0 of 0 recent outputs</small>
+    </div>
+  </article>
+</section>

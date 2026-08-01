@@ -1,0 +1,93 @@
+project:
+  config_version: 1
+
+paths:
+  models_root: "models/StableDiffusion"
+  checkpoints_dir: "models/StableDiffusion/CheckPoints"
+  vae_dir: "models/StableDiffusion/VAE"
+  vae_approx_dir: "models/StableDiffusion/VAE_approx"
+  lora_dir: "models/StableDiffusion/Lora"
+  blip_dir: "models/StableDiffusion/BLIP"
+  codeformer_dir: "models/StableDiffusion/Codeformer"
+  esrgan_dir: "models/StableDiffusion/ESRGAN"
+  gfpgan_dir: "models/StableDiffusion/GFPGAN"
+  realesrgan_dir: "models/StableDiffusion/RealESRGAN"
+  controlnet_dir: "models/StableDiffusion/ControlNet"
+  embeddings_dir: "models/Embeddings"
+  hypernetworks_dir: "models/StableDiffusion/Hypernetworks"
+
+  local_config_dir: "modules/local_configs"
+  tokenizer_dir: "modules/local_tokenizers/clip-vit-large-patch14"
+  data_dir: "data"
+  registry_db_path: "data/asset_registry.db"
+  output_dir: "output"
+  txt2img_output_dir: "output/txt2image"
+  cache_dir: "data/cache"
+  temporary_dir: "data/tmp"
+  diagnostics_dir: "artifacts/diagnostics"
+
+defaults:
+  model_path: "models/StableDiffusion/CheckPoints/goldenLegends_v10.safetensors"
+  vae_path: null
+  lora_paths: []
+  device: "auto"
+  dtype: "auto"
+
+generation:
+  prompt: "A cat on a woman's lap"
+  negative_prompt: "blurry, distorted, low resolution, sepia, black and white, kodak photograph"
+  seed: null
+  steps: 25
+  cfg_scale: 7.0
+  width: 640
+  height: 960
+  sampler: "kes"
+  scheduler: "simple_kes"
+  batch_size: 1
+
+registry:
+  enabled: true
+  compute_sha256_on_register: false
+  compute_blake3_on_register: false
+  mark_missing_on_startup: true
+
+model_library:
+  managed_roots:
+    CheckPoints: "models/StableDiffusion/CheckPoints"
+    VAE: "models/StableDiffusion/VAE"
+    VAE_approx: "models/StableDiffusion/VAE_approx"
+    Lora: "models/StableDiffusion/Lora"
+    BLIP: "models/StableDiffusion/BLIP"
+    Codeformer: "models/StableDiffusion/Codeformer"
+    ESRGAN: "models/StableDiffusion/ESRGAN"
+    GFPGAN: "models/StableDiffusion/GFPGAN"
+    RealESRGAN: "models/StableDiffusion/RealESRGAN"
+    ControlNet: "models/StableDiffusion/ControlNet"
+    Embeddings: "models/Embeddings"
+    Hypernetworks: "models/StableDiffusion/Hypernetworks"
+
+  additional_scan_roots: []
+
+loader:
+  strict_component_loading: false
+  allow_unknown_architecture: false
+  inspect_before_load: true
+  register_assets_before_load: true
+  log_load_history: true
+
+
+diagnostics:
+  # Normal runs emit warnings/errors only. Use verbose or trace for stage events.
+  verbosity: "normal"
+  failure_bundles: true
+  export_events: false
+  tensor_summaries: false
+  tensor_statistics: false
+  progress: true
+  sampler_trace:
+    enabled: false
+    export_json: true
+    export_csv: false
+    export_txt_summary: true
+    capture_latents: false
+    capture_latent_every_n: 0

@@ -1,0 +1,28 @@
+:root {
+  --sky-50: #eaf8ff;
+  --sky-100: #d5f1ff;
+  --sky-200: #a8dfff;
+  --sky-300: #65c7f7;
+  --sky-400: #36b5f3;
+  --sky-500: #179ee7;
+  --sky-600: #087fc7;
+  --charcoal-950: #081019;
+  --charcoal-900: #0d1620;
+  --charcoal-850: #111d29;
+  --charcoal-800: #172431;
+  --charcoal-700: #253647;
+  --line: #2b4358;
+  --text: #f4f9fd;
+  --muted: #9db2c4;
+  --input-text: #17202a;
+  --success: #35c978;
+  --warning: #f5b94b;
+  --danger: #ef6262;
+  --radius-small: 7px;
+  --radius: 12px;
+  --radius-large: 18px;
+  --control-height: 38px;
+  --panel-gap: 12px;
+  --ui-scale: 1;
+  --shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
+}

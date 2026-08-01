@@ -1,0 +1,40 @@
+prefer_config: false
+
+sampler:
+  sampler_type: "euler"
+  eta: 0.0
+  add_noise: true
+  verbose: false
+
+cfg_strategy:
+  legacy_clamp_guidance: false
+  legacy_guidance_multiplier: 1.0
+  # Backward-compatible aliases retained for replaying older manifests.
+  rescale_cfg: false
+  rescale_cfg_factor: 1.0
+  clamp_range: [-1.0, 1.0]
+
+  initial_noise_strength: 0.0
+  eta_scale_factor: 1.0
+  eta_schedule_mode: "none"
+  use_adaptive_eta: false
+  noise_schedule_scaling: "none"
+
+  adaptive_time_mode: "none"
+  adaptive_delta_low_floor: 0.1
+  adaptive_delta_high_floor: 1.0
+  adaptive_low_adjustment_multiplier: 1.5
+  adaptive_high_adjustment_multiplier: 0.5
+  adaptive_denoised_floor: 0.05
+  adaptive_denoised_adjustment_multiplier: 1.25
+  adaptive_manual_low_adjustment: 1.0
+  adaptive_manual_high_adjustment: 1.0
+  cfg_guidance_mode: "legacy_flat"
+  cfg_curve_type: "smoothstep"
+  cfg_curve_strength: 1.0
+  cfg_high_sigma_boost: 1.2
+  cfg_low_sigma_taper: 0.3
+  cfg_auto_low_cfg_threshold: 6.5
+  cfg_early_floor_enabled: false
+  cfg_early_floor_value: 6.2
+  cfg_early_floor_until_fraction: 0.3

@@ -1,0 +1,160 @@
+<aside class="right-column" id="rightPanel">
+  <section class="panel live-preview-panel is-idle" id="livePreviewPanel" data-panel-scale-key="live_preview">
+    <div class="panel-heading">
+      <div class="live-preview-title-group">
+        <h2>Live Preview</h2>
+        <span class="live-stream-status idle" id="livePreviewStreamStatus">Idle</span>
+      </div>
+      <div class="live-preview-heading-actions">
+        <button class="text-button" id="livePreviewOpenLargeButton" type="button" disabled>Open Large</button>
+        <button class="icon-button" id="livePreviewToggle" type="button" aria-label="Collapse live preview" aria-expanded="true">⌃</button>
+      </div>
+    </div>
+    <div class="live-preview-idle-line" id="livePreviewIdleLine">No active or recent generation.</div>
+    <button class="live-preview-stage" id="livePreviewStage" type="button" disabled aria-label="Open current live preview frame">
+      <div class="preview-placeholder" id="livePreviewPlaceholder">
+        <strong>No active generation</strong>
+        <span>Live sampler frames will appear here during the next run.</span>
+      </div>
+      <img id="livePreviewImage" alt="Current live generation frame">
+    </button>
+    <div class="live-preview-details" id="livePreviewDetails">
+      <div class="live-progress-row">
+        <span id="livePreviewStep">Idle</span>
+        <span id="livePreviewPercent">—</span>
+      </div>
+      <div class="progress-track" id="liveProgressTrack" aria-label="Generation progress"><span id="liveProgressFill"></span></div>
+      <small class="field-status subtle" id="livePreviewStepTiming">Step time: — · Avg: — · ETA: —</small>
+      <section class="live-cfg-preview" id="livePreviewCfgVisual" aria-labelledby="livePreviewCfgTitle" hidden>
+        <header>
+          <strong id="livePreviewCfgTitle">Live CFG trajectory</strong>
+          <span id="livePreviewCfgStepLabel">Waiting for CFG telemetry</span>
+        </header>
+        <div id="livePreviewCfgGraph" class="cfg-curve-graph live-cfg-graph" role="img" aria-label="Live requested and effective CFG by denoising step"></div>
+        <div class="live-cfg-summary" id="livePreviewCfgSummary">
+          <span>Requested: —</span><span>Effective: —</span><span>Mode: —</span>
+        </div>
+      </section>
+      <div class="live-preview-controls" role="toolbar" aria-label="Live preview controls">
+        <button class="text-button" id="livePreviewFollowButton" type="button" aria-pressed="true">Following Latest</button>
+        <button class="text-button" id="livePreviewPauseButton" type="button" aria-pressed="false">Pause Preview</button>
+        <button class="text-button is-hidden" id="livePreviewJumpLatestButton" type="button">Jump to Latest</button>
+        <button class="text-button is-hidden" id="livePreviewViewFinalButton" type="button">View Final</button>
+      </div>
+      <div class="preview-meta live-preview-meta">
+        <span id="livePreviewJobStatus">Status: Idle</span>
+        <span id="livePreviewModel">Model: —</span>
+        <span id="livePreviewSampler">Sampler: —</span>
+        <span id="livePreviewScheduler">Scheduler: —</span>
+        <span id="livePreviewSeed">Seed: —</span>
+        <span id="livePreviewElapsed">Elapsed: —</span>
+        <span id="livePreviewDecodeMode">Decode: —</span>
+      </div>
+      <div class="live-preview-history-wrap" id="livePreviewHistoryWrap">
+        <div class="live-preview-history-heading">
+          <span>Preview Frames</span>
+          <span id="livePreviewHistoryStatus">No frames</span>
+        </div>
+        <div class="live-preview-history" id="livePreviewHistory" aria-label="Intermediate preview frames"></div>
+      </div>
+      <div class="live-preview-footer-actions">
+        <a class="small-button is-hidden" id="livePreviewDiagnosticsLink" target="_blank" rel="noopener">Run Diagnostics</a>
+        <a class="small-button is-hidden" id="livePreviewConsoleLink" target="_blank" rel="noopener">Console Log</a>
+        <button class="secondary-button is-hidden" id="livePreviewCancelButton" type="button">Cancel Generation</button>
+      </div>
+    </div>
+  </section>
+  <div class="panel-splitter panel-splitter--horizontal" id="livePreviewSplitter" role="separator" aria-label="Resize live preview" aria-orientation="horizontal" tabindex="0"></div>
+
+  <section class="panel utility-panel memory-status-panel" id="memoryStatusPanel" data-panel-scale-key="memory_status">
+    <div class="panel-heading"><h2>Memory</h2><span id="memoryPolicyBadge" class="status-badge">Auto</span></div>
+    <div class="memory-status-grid">
+      <article><strong>Physical VRAM used</strong><span id="memoryPhysicalVramUsed">Unavailable</span></article>
+      <article><strong>Physical VRAM free</strong><span id="memoryPhysicalVramFree">Unavailable</span></article>
+      <article><strong>Physical VRAM total</strong><span id="memoryPhysicalVramTotal">Unavailable</span></article>
+      <article><strong>PyTorch allocated</strong><span id="memoryTorchAllocated">Unavailable</span></article>
+      <article><strong>PyTorch reserved</strong><span id="memoryTorchReserved">Unavailable</span></article>
+      <article><strong>Job peak allocated</strong><span id="memoryJobPeakAllocated">Unavailable</span></article>
+      <article><strong>Job peak reserved</strong><span id="memoryJobPeakReserved">Unavailable</span></article>
+      <article><strong>Next-stage estimate</strong><span id="memoryNextStagePeak">Waiting</span></article>
+    </div>
+    <small id="memoryVramSemanticsStatus" class="field-status subtle">Physical VRAM and PyTorch allocator measurements are reported separately.</small>
+    <dl class="memory-component-status">
+      <div><dt>Active GPU components</dt><dd id="memoryActiveComponents">None reported</dd></div>
+      <div><dt>Offloaded components</dt><dd id="memoryOffloadedComponents">None reported</dd></div>
+      <div><dt>Active stage</dt><dd id="memoryActiveStage">Idle</dd></div>
+    </dl>
+    <div id="memoryAutomaticActions" class="memory-actions empty-state">No automatic memory actions yet.</div>
+    <small id="memoryPreviewStatus" class="field-status subtle">Image preview active; CFG telemetry is independent.</small>
+  </section>
+
+  <section class="panel utility-panel runtime-status-panel" id="runtimeStatusPanel" data-panel-scale-key="runtime_status">
+    <div class="panel-heading"><h2>Runtime</h2><span id="runtimeRestartBadge" class="status-badge">Active</span></div>
+    <dl class="runtime-status-list">
+      <div><dt>Profile</dt><dd id="runtimeProfileStatus">Loading…</dd></div>
+      <div><dt>Attention</dt><dd id="runtimeAttentionStatus">Loading…</dd></div>
+      <div><dt>Kernel provider</dt><dd id="runtimeKernelProviderStatus">Unverified</dd></div>
+      <div><dt>Memory policy</dt><dd id="runtimeMemoryPolicyStatus">Loading…</dd></div>
+      <div><dt>Hires memory</dt><dd id="runtimeHiresMemoryStatus">Loading…</dd></div>
+      <div><dt>Preview policy</dt><dd id="runtimePreviewPolicyStatus">Loading…</dd></div>
+      <div><dt>VAE</dt><dd id="runtimeVaeStatus">Loading…</dd></div>
+      <div><dt>OOM retry</dt><dd id="runtimeOomStatus">Loading…</dd></div>
+    </dl>
+    <div class="runtime-command-actions">
+      <button class="secondary-button compact-button" id="copyRuntimeCommandButton" type="button">Copy Runtime Command</button>
+      <small id="runtimeCommandCopyStatus" class="field-status subtle" aria-live="polite">Copies active settings, or saved pending settings when a restart is required.</small>
+    </div>
+    <small id="runtimeRestartStatus" class="field-status subtle">Process-start settings are active.</small>
+  </section>
+
+  <section class="panel utility-panel" id="queuePanel" data-panel-scale-key="queue">
+    <div class="panel-heading"><h2>Queue</h2><button class="icon-button panel-toggle" data-target="queuePanel" type="button" aria-label="Collapse queue">⌃</button></div>
+    <div class="queue-toolbar" role="toolbar" aria-label="Queue controls">
+      <button class="small-button queue-toolbar-button" id="clearCompletedQueueButton" type="button"><span class="queue-action-icon" aria-hidden="true">✓</span><span class="queue-action-label">Clear finished</span></button>
+      <button class="small-button queue-toolbar-button" id="queueFilterToggleButton" type="button" aria-controls="queueFilterPanel" aria-expanded="false"><span class="queue-action-icon" aria-hidden="true">☰</span><span class="queue-action-label">Filter</span></button>
+    </div>
+    <div class="queue-filter-panel is-hidden" id="queueFilterPanel">
+      <label><input type="checkbox" data-queue-filter="queued" checked> Pending</label>
+      <label><input type="checkbox" data-queue-filter="running" checked> In process</label>
+      <label><input type="checkbox" data-queue-filter="cancelling" checked> Cancelling</label>
+      <label><input type="checkbox" data-queue-filter="completed" checked> Completed</label>
+      <label><input type="checkbox" data-queue-filter="cancelled" checked> Cancelled</label>
+      <label><input type="checkbox" data-queue-filter="failed" checked> Failed</label>
+    </div>
+    <small id="queueFilterSummary" class="queue-filter-summary">No queue items visible.</small>
+    <div id="queueList" class="stack-list empty-state">No queued generations.</div>
+  </section>
+
+  <section class="panel utility-panel" id="recentRunsPanel" data-panel-scale-key="recent_runs">
+    <div class="panel-heading"><h2>Recent Runs</h2></div>
+    <div id="recentRuns" class="compact-list empty-state">No recent runs.</div>
+  </section>
+
+  <section class="panel utility-panel" id="promptPresetsPanel" data-panel-scale-key="prompt_presets">
+    <div class="panel-heading"><h2>Prompt Presets</h2></div>
+    <div class="preset-controls">
+      <select id="promptPreset"></select>
+      <div class="button-pair">
+        <button class="secondary-button" id="savePromptPresetButton" type="button">Save Current Prompt</button>
+        <button class="secondary-button" id="loadPromptPresetButton" type="button">Load Preset</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel utility-panel" id="modelRefreshPanel" data-panel-scale-key="model_refresh">
+    <div class="panel-heading"><h2>Model Refresh</h2></div>
+    <dl class="model-status">
+      <div><dt>Models</dt><dd id="modelCount">0</dd></div>
+      <div><dt>VAEs</dt><dd id="vaeCount">0</dd></div>
+      <div><dt>Refresh policy</dt><dd>Manual / startup</dd></div>
+    </dl>
+    <button class="secondary-button full-width" id="refreshModelsButton" type="button">Refresh Models</button>
+  </section>
+
+  <section class="panel utility-panel" id="maintenancePanel" data-panel-scale-key="maintenance">
+    <div class="panel-heading"><h2>Maintenance</h2></div>
+    <p class="maintenance-copy">Generation job data is session-only. Old requests, prompts, logs, diagnostics, and live-preview frames are cleared automatically when the WebUI starts.</p>
+    <button class="secondary-button full-width" id="clearJobCacheButton" type="button">Clear Job Cache</button>
+    <small class="field-status" id="jobCacheStatus">Final images in the output folder are never deleted.</small>
+  </section>
+</aside>

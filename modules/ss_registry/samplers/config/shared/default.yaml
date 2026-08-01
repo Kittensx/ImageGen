@@ -1,0 +1,9 @@
+prefer_config: false
+
+sampler:
+  integration_mode: "default"
+  verbose: false
+
+runtime:
+  allow_schedule_extra_step_counts: true
+  prefer_scheduler_reported_steps: true

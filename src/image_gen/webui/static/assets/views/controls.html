@@ -1,0 +1,469 @@
+<aside class="panel controls-panel" id="controlsPanel" data-panel-scale-key="controls">
+  <div class="panel-heading">
+    <h2>Generation Controls</h2>
+    <button class="icon-button panel-toggle" data-target="controlsPanel" type="button" aria-label="Collapse generation controls">⌃</button>
+  </div>
+
+  <form id="generationForm" autocomplete="off">
+    <label class="field-block">
+      <span>Checkpoint Model</span>
+      <select id="modelPath" name="model_path"></select>
+      <small id="modelLoadStatus" class="field-status">Waiting for backend model activation…</small>
+      <small id="modelArchitectureStatus" class="field-status subtle">Architecture: waiting for activation.</small>
+    </label>
+
+    <label class="field-block">
+      <span>VAE</span>
+      <select id="vaePath" name="vae_path"></select>
+      <small id="vaeSelectionStatus" class="field-status subtle">Automatic / checkpoint embedded.</small>
+    </label>
+
+    <section class="prompt-parser-panel" id="promptParserPanel">
+      <div class="prompt-parser-grid">
+        <label class="field-block">
+          <span>Prompt Parser</span>
+          <select id="promptParserName" name="prompt_parser_name"></select>
+          <small>Selects the parser engine that interprets the translated prompt.</small>
+        </label>
+        <label class="field-block">
+          <span>Shortcut Profile</span>
+          <select id="promptShortcutProfileName" name="prompt_shortcut_profile_name"></select>
+          <small>Controls user-facing aliases before the selected parser receives the prompt.</small>
+        </label>
+        <label class="field-block">
+          <span>Parser Preset</span>
+          <select id="promptParserPresetName" name="prompt_parser_preset_name"></select>
+          <small>Loads a saved parser, shortcut profile, and parser-option combination.</small>
+        </label>
+      </div>
+      <input id="promptParserKwargs" type="hidden" value="{}">
+      <input id="promptShortcutProfileSnapshot" type="hidden" value="{}">
+      <div id="promptParserExperimentalWarning" class="prompt-preflight-message is-warning" role="status" hidden></div>
+      <details class="prompt-parser-advanced" id="promptParserAdvancedSection">
+        <summary>Advanced Parser Settings</summary>
+        <div class="prompt-parser-settings-grid" id="promptParserAdvancedContent"></div>
+        <small id="promptParserSettingsStatus" class="field-status subtle">Settings are provided by the selected parser descriptor.</small>
+      </details>
+      <div class="prompt-parser-toolbar">
+        <button class="secondary-button compact-button" id="savePromptParserPresetButton" type="button">Save Parser Preset</button>
+        <button class="secondary-button compact-button" id="deletePromptParserPresetButton" type="button">Delete Preset</button>
+        <button class="secondary-button compact-button" id="editPromptShortcutProfilesButton" type="button">Edit Shortcut Profiles</button>
+        <button class="secondary-button compact-button" id="validateCurrentPromptButton" type="button">Validate / Preview</button>
+      </div>
+      <label class="checkbox-row prompt-shadow-toggle">
+        <input id="promptShadowCompare" name="prompt_shadow_compare" type="checkbox">
+        <span>Compare both parsers during model-free validation</span>
+      </label>
+      <small class="field-status subtle">Shadow comparison never changes the selected parser or route; it records differences for testing and diagnostics.</small>
+      <div class="prompt-symbol-target-row">
+        <strong>Parser Symbol Palette</strong>
+        <label>
+          <span>Insert into</span>
+          <select id="promptSymbolTarget">
+            <option value="auto">Auto-detect caret</option>
+            <option value="positive">Positive Prompt</option>
+            <option value="negative">Base Negative Prompt</option>
+            <option value="hires_positive">Hires Positive Prompt</option>
+            <option value="hires_negative">Hires Negative Prompt</option>
+          </select>
+        </label>
+      </div>
+      <div class="prompt-symbol-palette" id="promptSymbolPalette" role="toolbar" aria-label="Prompt parser symbol palette"></div>
+      <small id="promptParserSelectionStatus" class="field-status subtle">Select a parser and shortcut profile.</small>
+
+      <details class="prompt-hires-routing" id="promptHiresRoutingSection">
+        <summary>Hires / Second Pass</summary>
+        <label class="checkbox-row hires-enable-row">
+          <input id="hiresEnabled" name="hires_enabled" type="checkbox">
+          <span>Enable hires / second-pass generation</span>
+        </label>
+        <small class="field-status subtle">The base image is sampled first, its latent is enlarged, and a second denoising pass refines the selected hires dimensions.</small>
+        <div class="prompt-parser-grid" id="hiresRoutingControls">
+          <label class="field-block" id="hiresParserModeField">
+            <span>Hires parser mode</span>
+            <select id="hiresPromptParserMode" name="hires_prompt_parser_mode">
+              <option value="same_as_base">Same as base</option>
+              <option value="explicit">Choose parser</option>
+              <option value="canonical_only">Canonical shortcut input</option>
+            </select>
+          </label>
+          <label class="field-block" id="hiresParserNameField">
+            <span>Hires parser</span>
+            <select id="hiresPromptParserName" name="hires_prompt_parser_name"></select>
+          </label>
+          <label class="field-block" id="hiresShortcutModeField">
+            <span>Hires shortcut mode</span>
+            <select id="hiresShortcutProfileMode" name="hires_shortcut_profile_mode">
+              <option value="same_as_base">Same as base</option>
+              <option value="explicit">Choose profile</option>
+              <option value="canonical_only">Canonical profile</option>
+            </select>
+          </label>
+          <label class="field-block" id="hiresShortcutProfileField">
+            <span>Hires shortcut profile</span>
+            <select id="hiresShortcutProfileName" name="hires_shortcut_profile_name"></select>
+          </label>
+        </div>
+        <div class="prompt-parser-grid hires-size-grid">
+          <label class="field-block">
+            <span>Hires size mode</span>
+            <select id="hiresSizeMode" name="hires_size_mode">
+              <option value="scale_from_base" selected>Scale from base</option>
+              <option value="explicit_dimensions">Explicit width and height</option>
+            </select>
+          </label>
+          <label class="field-block" id="hiresScaleField">
+            <span>Hires scale factor</span>
+            <input id="hiresScale" name="hires_scale" type="number" min="1.01" max="8" step="0.05" value="1.5">
+          </label>
+          <label class="field-block" id="hiresWidthField">
+            <span>Hires width</span>
+            <input id="hiresWidth" name="hires_width" type="number" min="64" max="16384" step="1" value="1280">
+          </label>
+          <label class="field-block" id="hiresHeightField">
+            <span>Hires height</span>
+            <input id="hiresHeight" name="hires_height" type="number" min="64" max="16384" step="1" value="1920">
+          </label>
+        </div>
+        <small id="hiresSizeStatus" class="field-status subtle">Second-pass dimensions: calculated from the base image.</small>
+        <div class="prompt-parser-grid hires-quality-grid">
+          <label class="field-block">
+            <span>Hires refinement steps</span>
+            <input id="hiresSteps" name="hires_steps" type="number" min="1" max="200" step="1" value="20">
+          </label>
+          <label class="field-block">
+            <span>Denoising strength</span>
+            <input id="hiresDenoisingStrength" name="hires_denoising_strength" type="number" min="0.01" max="1" step="0.01" value="0.4">
+          </label>
+          <label class="field-block">
+            <span>Step policy</span>
+            <select id="hiresStepPolicy" name="hires_step_policy">
+              <option value="a1111_fixed_steps_v1" selected>Fixed executed steps (A1111-compatible)</option>
+              <option value="proportional_tail_v1">Legacy proportional tail</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Latent upscaler</span>
+            <select id="hiresUpscaler" name="hires_upscaler">
+              <option value="latent_bicubic" selected>Latent bicubic</option>
+              <option value="latent_bilinear">Latent bilinear</option>
+              <option value="latent_nearest">Latent nearest</option>
+            </select>
+          </label>
+        </div>
+        <small class="field-status subtle">Denoising strength controls how much freedom the second pass has to change the upscaled image. Refinement steps control how many denoising transitions are executed.</small>
+        <small id="hiresStepSummary" class="field-status hires-schedule-summary">Fixed executed steps: 20 requested · 50 internal schedule transitions · 20 executed.</small>
+        <div class="prompt-parser-grid hires-runtime-grid">
+          <label class="field-block">
+            <span>Hires sampler</span>
+            <select id="hiresSamplerName" name="hires_sampler_name">
+              <option value="">Inherit base sampler</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Hires scheduler</span>
+            <select id="hiresSchedulerName" name="hires_scheduler_name">
+              <option value="">Inherit base scheduler</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Hires CFG scale</span>
+            <input id="hiresCfgScale" name="hires_cfg_scale" type="number" min="0" max="50" step="0.1" placeholder="Inherit base CFG">
+          </label>
+          <label class="field-block">
+            <span>Hires CFG rescale</span>
+            <input id="hiresCfgRescale" name="hires_cfg_rescale" type="number" min="0" max="1" step="0.01" placeholder="Inherit base rescale">
+          </label>
+        </div>
+        <small id="hiresPairStatus" class="field-status subtle">The second pass inherits the base sampler, scheduler, and CFG settings.</small>
+        <label class="checkbox-row hires-save-lowres-row">
+          <input id="hiresSaveLowres" name="hires_save_lowres" type="checkbox" checked>
+          <span>Save the exact low-resolution base artifact</span>
+        </label>
+        <small class="field-status subtle">The low-resolution artifact is decoded from the exact in-memory base latent used by the hires pass; it is not generated a second time.</small>
+        <input id="hiresPromptParserKwargs" type="hidden" value="{}">
+        <input id="hiresShortcutProfileSnapshot" type="hidden" value="{}">
+        <div class="prompt-parser-settings-grid" id="hiresPromptParserAdvancedContent"></div>
+        <label class="field-block prompt-field">
+          <span>Hires positive prompt override</span>
+          <textarea id="hiresPositivePrompt" name="hires_positive_prompt" rows="2" placeholder="Leave blank to inherit the base positive prompt."></textarea>
+        </label>
+        <label class="field-block prompt-field">
+          <span>Hires negative prompt override</span>
+          <textarea id="hiresNegativePrompt" name="hires_negative_prompt" rows="2" placeholder="Leave blank to inherit the base negative prompt."></textarea>
+        </label>
+        <small id="hiresPromptRoutingStatus" class="field-status subtle">The second pass currently inherits base prompt processing.</small>
+        <details class="prompt-translation-preview hires-prompt-preview" id="hiresPromptTranslationPreview">
+          <summary>Hires Prompt Translation and Route Preview</summary>
+          <section class="prompt-route-summary" id="hiresPromptRouteSummarySection">
+            <div class="prompt-route-grid">
+              <section><h4>Hires positive route</h4><pre id="promptRouteHiresPositive"></pre></section>
+              <section><h4>Hires negative route</h4><pre id="promptRouteHiresNegative"></pre></section>
+            </div>
+            <div class="prompt-route-grid">
+              <section><h4>Hires positive shadow</h4><pre id="promptShadowHiresPositive"></pre></section>
+              <section><h4>Hires negative shadow</h4><pre id="promptShadowHiresNegative"></pre></section>
+            </div>
+          </section>
+          <div id="promptHiresInterpretationWarning" class="prompt-preflight-message is-warning" hidden></div>
+          <div class="prompt-translation-grid">
+            <section><h4>Positive: raw</h4><pre id="promptTranslationHiresPositiveRaw"></pre></section>
+            <section><h4>Positive: parser input</h4><pre id="promptTranslationHiresPositiveExpanded"></pre></section>
+            <section><h4>Positive: canonical</h4><pre id="promptTranslationHiresPositiveCanonical"></pre></section>
+            <section><h4>Negative: raw</h4><pre id="promptTranslationHiresNegativeRaw"></pre></section>
+            <section><h4>Negative: parser input</h4><pre id="promptTranslationHiresNegativeExpanded"></pre></section>
+            <section><h4>Negative: canonical</h4><pre id="promptTranslationHiresNegativeCanonical"></pre></section>
+          </div>
+        </details>
+      </details>
+
+      <details class="prompt-translation-preview" id="promptTranslationPreview">
+        <summary>Prompt Translation and Preflight Preview</summary>
+        <div class="prompt-preflight-messages">
+          <section id="promptPreflightBlockingSection" hidden><h4>Blocking errors</h4><ul id="promptPreflightBlocking"></ul></section>
+          <section id="promptPreflightWarningSection" hidden><h4>Behavior warnings</h4><ul id="promptPreflightWarnings"></ul></section>
+          <section id="promptPreflightNoticeSection" hidden><h4>Notices</h4><ul id="promptPreflightNotices"></ul></section>
+        </div>
+        <div id="promptTranslationWarnings" class="field-status subtle"></div>
+        <section class="prompt-route-summary" id="promptRouteSummarySection" hidden>
+          <h3>Combined-dispatch route and parser shadow comparison</h3>
+          <div class="prompt-route-grid">
+            <section><h4>Base positive route</h4><pre id="promptRouteBasePositive"></pre></section>
+            <section><h4>Base negative route</h4><pre id="promptRouteBaseNegative"></pre></section>
+          </div>
+          <div class="prompt-route-grid">
+            <section><h4>Base positive shadow</h4><pre id="promptShadowBasePositive"></pre></section>
+            <section><h4>Base negative shadow</h4><pre id="promptShadowBaseNegative"></pre></section>
+          </div>
+        </section>
+        <h3 class="prompt-pass-heading">Base pass</h3>
+        <div class="prompt-translation-grid">
+          <section><h4>Positive: raw</h4><pre id="promptTranslationPositiveRaw"></pre></section>
+          <section><h4>Positive: parser input</h4><pre id="promptTranslationPositiveExpanded"></pre></section>
+          <section><h4>Positive: canonical</h4><pre id="promptTranslationPositiveCanonical"></pre></section>
+          <section><h4>Negative: raw</h4><pre id="promptTranslationNegativeRaw"></pre></section>
+          <section><h4>Negative: parser input</h4><pre id="promptTranslationNegativeExpanded"></pre></section>
+          <section><h4>Negative: canonical</h4><pre id="promptTranslationNegativeCanonical"></pre></section>
+        </div>
+      </details>
+    </section>
+
+    <label class="field-block prompt-field">
+      <span>Positive Prompt</span>
+      <textarea id="positivePrompt" name="positive_prompt" rows="4"></textarea>
+    </label>
+
+    <label class="field-block prompt-field">
+      <span>Negative Prompt</span>
+      <textarea id="negativePrompt" name="negative_prompt" rows="3"></textarea>
+    </label>
+
+    <div class="dimension-control-row">
+      <label><span>Width</span><input id="width" name="width" type="number" min="64" step="1" title="Exact output width. The runtime uses a model-compatible canvas and center-crops to this size."></label>
+      <button
+        class="dimension-swap-button"
+        id="swapDimensionsButton"
+        type="button"
+        title="Swap width and height"
+        aria-label="Swap width and height"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+          <path d="M5 7h13m0 0-3-3m3 3-3 3M19 17H6m0 0 3 3m-3-3 3-3"></path>
+        </svg>
+      </button>
+      <label><span>Height</span><input id="height" name="height" type="number" min="64" step="1" title="Exact output height. The runtime uses a model-compatible canvas and center-crops to this size."></label>
+    </div>
+
+    <div class="field-grid two-column">
+      <label><span>Steps</span><input id="steps" name="steps" type="number" min="1" max="200"></label>
+      <label><span>CFG Scale</span><input id="cfgScale" name="cfg_scale" type="number" min="0" max="30" step="0.1"></label>
+    </div>
+
+    <details class="advanced-section cfg-lab-section" id="cfgLabSection">
+      <summary>Guidance / CFG Lab</summary>
+      <div class="advanced-content cfg-lab-content">
+        <div class="cfg-lab-toolbar">
+          <label class="field-block">
+            <span>Guidance preset</span>
+            <select id="cfgGuidancePreset">
+              <option value="classic_flat">Classic / Flat</option>
+              <option value="low_cfg_safe">Low-CFG Safe</option>
+              <option value="low_cfg_strong">Low-CFG Strong Composition</option>
+              <option value="soft_detail_taper">Soft Detail Taper</option>
+            </select>
+          </label>
+          <button class="secondary-button compact-button" id="applyCfgPresetButton" type="button">Apply Preset</button>
+          <button class="secondary-button compact-button" id="openCfgSweepButton" type="button">Open Seed-Locked CFG Sweep</button>
+        </div>
+
+        <div class="cfg-lab-grid">
+          <label class="field-block">
+            <span>Guidance mode</span>
+            <select id="cfgGuidanceMode">
+              <option value="legacy_flat">Legacy flat</option>
+              <option value="auto_low_cfg">Auto low-CFG</option>
+              <option value="sigma_shaped">Sigma-shaped</option>
+              <option value="step_shaped">Step-shaped</option>
+            </select>
+            <small>Controls whether the requested CFG stays flat or becomes an explicit per-step effective curve.</small>
+          </label>
+          <label class="field-block">
+            <span>Curve type</span>
+            <select id="cfgCurveType">
+              <option value="smoothstep">Smoothstep</option>
+              <option value="cosine">Cosine</option>
+              <option value="linear">Linear</option>
+              <option value="exp_decay">Exponential decay</option>
+            </select>
+            <small>Shapes the transition between early composition support and late detail refinement.</small>
+          </label>
+
+          <label class="field-block cfg-range-field">
+            <span>Canonical CFG rescale</span>
+            <span class="cfg-range-control"><input id="cfgRescaleRange" type="range" min="0" max="1" step="0.01" value="0"><input id="cfgRescaleNumber" name="cfg_rescale" type="number" min="0" max="1" step="0.01" value="0"></span>
+            <small>Blends guided-output variance toward the conditional branch. This is not the legacy KES clamp path.</small>
+          </label>
+          <label class="field-block cfg-range-field cfg-kes-only">
+            <span>Curve strength</span>
+            <span class="cfg-range-control"><input id="cfgCurveStrengthRange" type="range" min="0" max="3" step="0.01" value="1"><input id="cfgCurveStrengthNumber" type="number" min="0" max="3" step="0.01" value="1"></span>
+            <small>Scales both the early boost and late taper.</small>
+          </label>
+          <label class="field-block cfg-range-field cfg-kes-only">
+            <span>High-sigma boost</span>
+            <span class="cfg-range-control"><input id="cfgHighSigmaBoostRange" type="range" min="0" max="10" step="0.05" value="1.2"><input id="cfgHighSigmaBoostNumber" type="number" min="0" max="10" step="0.05" value="1.2"></span>
+            <small>Adds effective CFG during early composition-forming steps.</small>
+          </label>
+          <label class="field-block cfg-range-field cfg-kes-only">
+            <span>Late-step taper</span>
+            <span class="cfg-range-control"><input id="cfgLateTaperRange" type="range" min="0" max="10" step="0.05" value="0.3"><input id="cfgLateTaperNumber" type="number" min="0" max="10" step="0.05" value="0.3"></span>
+            <small>Reduces effective CFG near the end to soften over-guided detail.</small>
+          </label>
+          <label class="field-block cfg-range-field cfg-kes-only">
+            <span>Auto low-CFG threshold</span>
+            <span class="cfg-range-control"><input id="cfgAutoThresholdRange" type="range" min="0" max="30" step="0.1" value="6.5"><input id="cfgAutoThresholdNumber" type="number" min="0" max="30" step="0.1" value="6.5"></span>
+            <small>Auto shaping engages only when requested CFG is below this value.</small>
+          </label>
+          <label class="checkbox-row cfg-kes-only"><input id="cfgEarlyFloorEnabled" type="checkbox"><span>Enable early guidance floor</span></label>
+          <label class="field-block cfg-range-field cfg-kes-only">
+            <span>Early floor value</span>
+            <span class="cfg-range-control"><input id="cfgEarlyFloorValueRange" type="range" min="0" max="30" step="0.1" value="6.2"><input id="cfgEarlyFloorValueNumber" type="number" min="0" max="30" step="0.1" value="6.2"></span>
+            <small>Minimum effective CFG during the opening portion of the run.</small>
+          </label>
+          <label class="field-block cfg-range-field cfg-kes-only">
+            <span>Early floor duration</span>
+            <span class="cfg-range-control"><input id="cfgEarlyFloorDurationRange" type="range" min="0" max="1" step="0.01" value="0.3"><input id="cfgEarlyFloorDurationNumber" type="number" min="0" max="1" step="0.01" value="0.3"></span>
+            <small>Fraction of total denoising steps covered by the floor.</small>
+          </label>
+        </div>
+        <small id="cfgLabSamplerStatus" class="field-status subtle"></small>
+        <section class="cfg-curve-preview" aria-labelledby="cfgCurvePreviewTitle">
+          <header><strong id="cfgCurvePreviewTitle">Configured CFG by step</strong><span id="cfgCurvePreviewSummary"></span></header>
+          <div id="cfgCurvePreviewGraph" class="cfg-curve-graph" role="img" aria-label="Configured requested and effective CFG curve"></div>
+          <small>Previewed from the current controls. The completed image records the actual step-by-step series used by the sampler.</small>
+        </section>
+      </div>
+    </details>
+
+    <label class="field-block inline-action-field">
+      <span>Seed</span>
+      <span class="input-action-row">
+        <input id="seed" name="seed" type="number" step="1">
+        <button class="small-button" id="randomSeedButton" type="button" title="Use random seed">◇</button>
+      </span>
+    </label>
+
+    <div class="field-grid two-column">
+      <label><span>Batch Size</span><input id="batchSize" name="batch_size" type="number" min="1" max="32"></label>
+      <label><span>Batch Count</span><input id="batchCount" name="batch_count" type="number" min="1" max="9999"></label>
+    </div>
+
+    <label class="field-block plugin-field">
+      <span>Sampler</span>
+      <span class="input-action-row">
+        <select id="samplerName" name="sampler_name"></select>
+        <button class="small-button" id="samplerSettingsButton" type="button" title="Sampler settings">⚙</button>
+      </span>
+    </label>
+
+    <label class="field-block plugin-field">
+      <span>Scheduler</span>
+      <span class="input-action-row">
+        <select id="schedulerName" name="scheduler_name"></select>
+        <button class="small-button" id="schedulerSettingsButton" type="button" title="Scheduler settings">⚙</button>
+      </span>
+    </label>
+
+    <label class="field-block">
+      <span>Generation Profile</span>
+      <span class="input-action-row">
+        <select id="generationProfile"></select>
+        <button class="small-button" id="saveGenerationProfileButton" type="button" title="Save generation profile">▣</button>
+      </span>
+    </label>
+
+    <details class="advanced-section" id="samplerAdvanced">
+      <summary>Sampler Advanced</summary>
+      <div class="advanced-content" id="samplerAdvancedContent"></div>
+    </details>
+
+    <details class="advanced-section" id="schedulerAdvanced">
+      <summary>Scheduler Advanced</summary>
+      <div id="schedulerPresetToolbar" class="advanced-content preset-toolbar" hidden>
+        <label class="field-block preset-selector-block">
+          <span>Scheduler preset</span>
+          <span class="input-action-row">
+            <input id="schedulerPresetSelect" type="text" list="schedulerPresetList" autocomplete="off" placeholder="Type or select a scheduler preset…">
+            <button type="button" id="schedulerPresetPickerButton" class="small-button" title="Show scheduler presets">⌄</button>
+          </span>
+          <datalist id="schedulerPresetList"></datalist>
+        </label>
+        <div class="preset-actions">
+          <button type="button" id="schedulerPresetLoadButton" class="secondary-button compact-button">Load</button>
+          <button type="button" id="schedulerPresetUpdateButton" class="secondary-button compact-button">Save</button>
+          <button type="button" id="schedulerPresetSaveButton" class="secondary-button compact-button">Save as</button>
+          <button type="button" id="schedulerPresetDeleteButton" class="danger-button compact-button">Delete</button>
+          <button type="button" id="schedulerPresetExportButton" class="secondary-button compact-button">Save local</button>
+          <button type="button" id="schedulerPresetImportButton" class="secondary-button compact-button">Load local</button>
+          <input type="file" id="schedulerPresetImportInput" accept=".json,application/json" hidden>
+        </div>
+        <small id="schedulerPresetStatus" class="field-status subtle">Preset management is available for supported schedulers.</small>
+      </div>
+      <div class="advanced-content" id="schedulerAdvancedContent"></div>
+    </details>
+
+    <details class="advanced-section">
+      <summary>Output Settings</summary>
+      <div class="advanced-content compact-fields">
+        <label><span>Output Folder</span><input id="outputDir" name="output_dir" type="text"></label>
+        <label><span>Filename Pattern</span><input id="outputPrefix" name="output_prefix" type="text"></label>
+        <div class="output-pattern-builder-panel">
+          <div class="output-pattern-toolbar">
+            <label class="output-pattern-default-spacer"><span>Default spacer</span><input id="outputPatternDefaultSpacer" type="text" value="_"></label>
+            <div class="output-pattern-toolbar-actions">
+              <button type="button" id="outputPatternSyncButton" class="secondary-button compact-button">Sync from text</button>
+              <button type="button" id="outputPatternClearButton" class="secondary-button compact-button">Reset builder</button>
+            </div>
+          </div>
+          <small class="field-status subtle">Click a token to add it. Drag token chips to reorder them. Edit the prefix, spacers, or suffix directly in the builder.</small>
+          <div id="outputPatternPalette" class="output-pattern-palette"></div>
+          <div id="outputPatternBuilder" class="output-pattern-builder"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="advanced-section">
+      <summary>UI Settings</summary>
+      <div class="advanced-content compact-fields">
+        <label class="checkbox-row"><input id="restoreLastSession" type="checkbox"><span>Restore last settings on startup</span></label>
+        <label><span>UI Scale</span><input id="uiScale" type="range" min="80" max="150" step="5"><output id="uiScaleOutput">100%</output></label>
+      </div>
+    </details>
+
+    <div class="generate-row">
+      <button class="primary-button generate-button" id="generateButton" type="button">Generate</button>
+      <button class="primary-button split-arrow" id="generateMenuButton" type="button" aria-label="Generation options">⌄</button>
+      <button class="infinity-button" id="infinityButton" type="button">∞ Generate Forever</button>
+    </div>
+    <button class="danger-button is-hidden" id="cancelButton" type="button">Cancel Active Generation</button>
+  </form>
+</aside>

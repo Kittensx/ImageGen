@@ -1,0 +1,91 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+  font-size: calc(16px * var(--ui-scale));
+  background: var(--sky-500);
+  color: var(--text);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 78% 2%, rgba(255, 255, 255, 0.2), transparent 25rem),
+    linear-gradient(135deg, var(--sky-600), var(--sky-400));
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: var(--control-height);
+  border: 1px solid #c3d0db;
+  border-radius: var(--radius-small);
+  background: #ffffff;
+  color: var(--input-text);
+  padding: 0.55rem 0.7rem;
+  outline: none;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.35;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--sky-300);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-size: 1.65rem;
+  letter-spacing: 0.04em;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 0.98rem;
+}
+
+label > span:first-child,
+.field-block > span:first-child {
+  color: var(--sky-300);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+.empty-state {
+  color: var(--muted);
+  font-size: 0.85rem;
+}

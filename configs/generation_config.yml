@@ -1,0 +1,27 @@
+# Scripted generation sheet for run_config.bat.
+# This uses the same modules.txt2img.cli pipeline as run.bat, without prompts.
+
+positive_prompt: "an oil painting of a small kitten sitting on a woman's lap, detailed fur, expressive eyes"
+negative_prompt: ""
+
+# Use a non-negative integer for a reproducible result.
+seed: 123456789
+steps: 25
+cfg_scale: 7.0
+width: 640
+height: 960
+batch_size: 1
+batch_count: 1
+unlimited: false
+
+model_path: "models/StableDiffusion/CheckPoints/goldenLegends_v10.safetensors"
+sampler_name: "kes"
+scheduler_name: "simple_kes"
+
+scheduler_kwargs: {}
+sampler_kwargs: {}
+parser_kwargs: {}
+
+save_images: true
+output_dir: "output/txt2image"
+output_prefix: "{index:05d}-{seed}"

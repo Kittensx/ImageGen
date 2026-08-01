@@ -1,0 +1,706 @@
+<div class="menu-popover is-hidden" id="generateMenu">
+  <button type="button" data-generation-mode="once">Generate Once</button>
+  <button type="button" data-generation-mode="forever">Generate Forever</button>
+  <button type="button" data-generation-mode="cancel">Cancel Active Generation</button>
+</div>
+
+<dialog id="settingsDialog" class="settings-dialog">
+  <form method="dialog">
+    <div class="dialog-heading">
+      <h2>WebUI Settings</h2>
+      <button class="icon-button" value="cancel" aria-label="Close settings">×</button>
+    </div>
+    <p>The first UI uses current txt2img capabilities only. Model discovery occurs on startup or manual refresh.</p>
+    <label class="checkbox-row"><input id="dialogRestoreLastSession" type="checkbox"><span>Restore last generation settings after reopening</span></label>
+    <label class="checkbox-row"><input id="followNewestOutput" type="checkbox"><span>Follow newest completed output automatically</span></label>
+    <fieldset class="settings-group">
+      <legend>Live Preview</legend>
+      <label class="checkbox-row"><input id="dialogLivePreviewEnabled" type="checkbox"><span>Generate live preview frames while sampling</span></label>
+      <label class="checkbox-row"><input id="dialogCfgLabEnabled" type="checkbox"><span>Enable CFG Lab telemetry and live trajectory</span></label>
+      <label class="checkbox-row"><input id="dialogLivePreviewCfgVisualEnabled" type="checkbox"><span>Show live CFG curve and current-step cursor</span></label>
+      <p>When CFG Lab is disabled, the WebUI does not retain per-step CFG trajectory points and the graph is hidden. Normal classifier-free guidance still operates.</p>
+      <label class="field-block"><span>Preview mode</span>
+        <select id="dialogLivePreviewMode">
+          <option value="fast">A1111-style Fast — lightweight latent preview</option>
+          <option value="balanced" disabled>Balanced — temporarily disabled</option>
+          <option value="accurate" disabled>Accurate — temporarily disabled</option>
+        </select>
+      </label>
+      <p class="field-status subtle" id="livePreviewModeLockNote">Preview mode is temporarily locked to the lower-overhead A1111-style fast preview path while preview performance is being qualified.</p>
+      <p class="settings-warning is-hidden" id="accuratePreviewWarning">Accurate mode can noticeably increase generation time and VRAM activity, especially at larger preview sizes.</p>
+      <label class="field-block"><span>Preview / VAE interval</span>
+        <select id="dialogLivePreviewInterval">
+          <option value="1">Every step</option>
+          <option value="2">Every 2 steps</option>
+          <option value="3">Every 3 steps</option>
+          <option value="4">Every 4 steps</option>
+          <option value="5">Every 5 steps</option>
+          <option value="8">Every 8 steps</option>
+          <option value="10">Every 10 steps</option>
+        </select>
+      </label>
+      <label class="field-block"><span>Preview long edge</span>
+        <select id="dialogLivePreviewWidth">
+          <option value="256">256 px</option>
+          <option value="384">384 px</option>
+          <option value="512">512 px</option>
+          <option value="640">640 px</option>
+        </select>
+      </label>
+      <label class="field-block"><span>Preview format</span>
+        <select id="dialogLivePreviewFormat">
+          <option value="webp">WebP — recommended</option>
+          <option value="png">PNG — diagnostic</option>
+        </select>
+      </label>
+      <label class="field-block"><span>Step history</span>
+        <select id="dialogLivePreviewHistory">
+          <option value="current_job">Keep current job steps</option>
+          <option value="latest_only">Keep latest frame only</option>
+        </select>
+      </label>
+      <label class="field-block"><span>Batch item</span><input id="dialogLivePreviewBatchIndex" type="number" min="0" step="1" value="0"></label>
+      <p>Batch item 0 is the first generated image and remains the recommended deterministic default.</p>
+      <label class="checkbox-row"><input id="dialogLivePreviewAdaptiveThrottle" type="checkbox"><span>Adapt preview cadence when preview work approaches sampler-step time</span></label>
+      <label class="field-block"><span>Adaptive overhead target</span><input id="dialogLivePreviewAdaptiveTarget" type="number" min="0.20" max="1.50" step="0.05" value="0.75"></label>
+      <p>A value of 0.75 starts reducing preview frequency when recent preview work reaches roughly 75% of a sampler step.</p>
+      <label class="field-block"><span>Maximum adaptive interval</span>
+        <select id="dialogLivePreviewAdaptiveMaxInterval">
+          <option value="2">Every 2 steps</option>
+          <option value="4">Every 4 steps</option>
+          <option value="8">Every 8 steps</option>
+          <option value="12">Every 12 steps</option>
+          <option value="16">Every 16 steps</option>
+        </select>
+      </label>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Runtime Status</legend>
+      <p id="dialogRuntimeRestartStatus" class="settings-warning is-hidden" role="status"></p>
+      <dl class="runtime-status-list runtime-status-list--dialog">
+        <div><dt>Profile</dt><dd id="dialogRuntimeProfileStatus">Loading…</dd></div>
+        <div><dt>Attention</dt><dd id="dialogRuntimeAttentionStatus">Loading…</dd></div>
+        <div><dt>Kernel provider</dt><dd id="dialogRuntimeKernelProviderStatus">Unverified</dd></div>
+        <div><dt>Next-job memory</dt><dd id="dialogRuntimeMemoryStatus">Loading…</dd></div>
+      </dl>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Process-Start Runtime Settings</legend>
+      <p>These settings are fixed after the worker initializes. Saving a different value marks it pending; it does not become active until a full IMAGE_GEN restart.</p>
+      <label class="field-block"><span>Attention backend</span>
+        <select id="dialogAttentionBackend">
+          <option value="auto">Auto</option><option value="default">Default / unchanged</option><option value="eager">PyTorch eager</option><option value="sdpa">PyTorch SDPA</option><option value="xformers">xFormers</option>
+        </select>
+      </label>
+      <label class="field-block"><span>CUDA allocator configuration</span><input id="dialogCudaAllocatorConfig" type="text" placeholder="expandable_segments:True"></label>
+      <p class="settings-hint">Active and pending values are shown in Runtime Status. Browser refresh alone cannot activate these changes.</p>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Per-Job Memory Runtime</legend>
+      <p>These values apply to the next queued job and do not require restart.</p>
+      <button class="secondary-button compact-button" id="inheritStartupRuntimeButton" type="button" aria-pressed="false">Inherit Startup Profile</button>
+      <p class="settings-hint" id="runtimeInheritanceStatus">Clears all saved per-job runtime overrides immediately. Process-start attention, allocator, and MSLK settings are not changed.</p>
+      <label class="field-block"><span>Memory policy</span>
+        <select id="dialogMemoryPolicy">
+          <option value="auto">Auto — choose from measured headroom</option><option value="high_vram">High VRAM</option><option value="balanced">Balanced</option><option value="low_vram">Low VRAM</option><option value="cpu_fallback">CPU fallback</option>
+        </select>
+      </label>
+      <label class="field-block"><span>VRAM safety margin (MB)</span><input id="dialogMemorySafetyMargin" type="number" min="0" max="16384" step="128" value="1024"></label>
+      <label class="field-block"><span>Attention slicing</span><select id="dialogAttentionSlicing"><option value="off">Off</option><option value="auto">Auto</option><option value="max">Maximum</option></select></label>
+      <label class="field-block"><span>Hires memory profile</span><select id="dialogHiresMemoryProfile"><option value="inherit">Inherit</option><option value="balanced">Balanced</option><option value="low_vram">Low VRAM</option><option value="maximum">Maximum savings</option></select></label>
+      <label class="checkbox-row"><input id="dialogPreHiresCleanup" type="checkbox"><span>Run pre-hires cleanup</span></label>
+      <label class="field-block"><span>Preview policy</span><select id="dialogPreviewPolicy"><option value="normal">Normal</option><option value="suspend_on_pressure">Suspend on pressure</option><option value="disable_during_hires">Disable during hires</option><option value="disabled">Disabled</option></select></label>
+      <label class="checkbox-row"><input id="dialogVaeTiling" type="checkbox"><span>Enable VAE tiling</span></label>
+      <label class="checkbox-row"><input id="dialogVaeSlicing" type="checkbox"><span>Enable VAE slicing</span></label>
+      <label class="field-block"><span>VAE device</span><select id="dialogVaeDevice"><option value="auto">Auto</option><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label>
+      <label class="field-block"><span>OOM retry profile</span><select id="dialogOomRetryProfile"><option value="disabled">Disabled</option><option value="cleanup">Cleanup</option><option value="low_vram">Low VRAM</option><option value="maximum">Maximum</option></select></label>
+      <label class="field-block"><span>OOM retry limit</span><input id="dialogOomRetryLimit" type="number" min="0" max="1" step="1" value="1"></label>
+      <label class="checkbox-row"><input id="dialogRetainCheckpoint" type="checkbox"><span>Retain checkpoint between jobs when policy permits</span></label>
+      <label class="checkbox-row"><input id="dialogRetainVae" type="checkbox"><span>Retain VAE between jobs when policy permits</span></label>
+      <label class="checkbox-row"><input id="dialogRetainTextEncoder" type="checkbox"><span>Retain text encoder between jobs when policy permits</span></label>
+      <label class="checkbox-row"><input id="dialogMemoryPinnedCpu" type="checkbox"><span>Allow pinned CPU storage for supported reusable components</span></label>
+      <label class="checkbox-row"><input id="dialogMemoryTiledVaeFallback" type="checkbox"><span>Allow tiled VAE fallback during recovery</span></label>
+      <label class="checkbox-row"><input id="dialogMemoryPreviewSuspension" type="checkbox"><span>Allow one-way image-preview suspension during OOM recovery</span></label>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>MSLK / Triton Startup</legend>
+      <p id="dialogMslkRestartStatus" class="settings-warning is-hidden" role="status"></p>
+      <p id="dialogMslkActiveSummary" class="settings-hint">Active process settings are loading…</p>
+      <label class="field-block"><span>FMHA policy</span>
+        <select id="dialogMslkPolicy">
+          <option value="blackwell_safe">Blackwell safe — validated SM120 policy</option>
+          <option value="auto">Auto</option>
+          <option value="default">Default</option>
+          <option value="env">Environment overrides</option>
+          <option value="off">Policy disabled</option>
+          <option value="benchmark">Benchmark</option>
+        </select>
+      </label>
+      <label class="checkbox-row"><input id="dialogMslkDebug" type="checkbox"><span>Enable MSLK FMHA launch diagnostics after restart</span></label>
+      <label class="field-block"><span>BLOCK_N</span><select id="dialogMslkBlockN"><option value="">Automatic</option><option value="16">16</option><option value="32">32</option><option value="64">64</option><option value="128">128</option></select></label>
+      <label class="field-block"><span>BLOCK_M</span><select id="dialogMslkBlockM"><option value="">Automatic</option><option value="16">16</option><option value="32">32</option><option value="64">64</option><option value="128">128</option></select></label>
+      <label class="field-block"><span>Warps</span><select id="dialogMslkNumWarps"><option value="">Automatic</option><option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></label>
+      <label class="field-block"><span>Stages</span><select id="dialogMslkNumStages"><option value="">Automatic</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+      <label class="field-block"><span>Experimental head dimensions</span><input id="dialogMslkExperimentalHeadDims" type="text" inputmode="numeric" placeholder="40,80,160"></label>
+      <p>These values are immutable after process start. Saving changes stores them for the next full IMAGE_GEN restart; refreshing the browser does not activate them.</p>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Diagnostics</legend>
+      <label class="field-block"><span>Generation diagnostics mode</span>
+        <select id="dialogDiagnosticsMode">
+          <option value="off">Off</option>
+          <option value="failures_only">Failures only — low overhead</option>
+          <option value="every_run">Every run — timings and events</option>
+          <option value="deep_tensor">Deep tensor analysis — slow</option>
+        </select>
+      </label>
+      <label class="checkbox-row"><input id="dialogDiagnosticDecodeEnabled" type="checkbox"><span>Diagnostic decode</span></label>
+      <p>Diagnostic decode is off by default. When enabled, diagnostics may use the VAE to decode requested sampler-trace previews. Final output decoding and live preview are unaffected.</p>
+      <p>Failures-only keeps lightweight tensor shape/dtype/device summaries for failure bundles. Every-run adds timing/event exports without full tensor statistics. Deep tensor analysis adds GPU-synchronizing tensor statistics, sampler traces, and output-quality reports and should be used only for targeted troubleshooting.</p>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Recent Outputs</legend>
+      <label class="checkbox-row"><input id="dialogRecentOutputsBackgroundRefreshEnabled" type="checkbox"><span>Refresh Recent Outputs automatically in the background</span></label>
+      <label class="field-block"><span>Recent Outputs refresh while generating (ms)</span><input id="dialogRecentOutputsRefreshMsActive" type="number" min="1000" step="500" value="4000"></label>
+      <label class="field-block"><span>Recent Outputs refresh while idle (ms)</span><input id="dialogRecentOutputsRefreshMsIdle" type="number" min="2000" step="500" value="12000"></label>
+      <p>New outputs still refresh immediately on job events. Slower idle refresh reduces thumbnail backlog and keeps queue actions responsive.</p>
+    </fieldset>
+    <label class="field-block"><span>Interface scale</span><input id="dialogUiScale" type="range" min="80" max="150" step="5"></label>
+    <p class="settings-hint">You can save the current screen layout as the default layout for the selected UI scale, then use Reset UI Layout to restore that scale-specific default later.</p>
+    <menu>
+      <button class="secondary-button" id="saveScaleLayoutDefaultButton" value="none" type="button">Save Layout for This Scale</button>
+      <button class="secondary-button" id="resetLayoutButton" value="none" type="button">Reset UI Layout</button>
+      <button class="primary-button" id="saveSettingsButton" value="none" type="button">Save Settings</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="promptShortcutProfileDialog" class="settings-dialog prompt-shortcut-profile-dialog">
+  <form method="dialog">
+    <div class="dialog-heading">
+      <div>
+        <h2>Prompt Shortcut Profiles</h2>
+        <p>Built-in profiles are read-only. Duplicate one to create a customizable user profile.</p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="Close prompt shortcut profiles">×</button>
+    </div>
+    <div class="prompt-profile-editor-toolbar">
+      <label class="field-block"><span>Profile</span><select id="promptShortcutProfileEditorSelect"></select></label>
+      <button class="secondary-button compact-button" id="duplicatePromptShortcutProfileButton" type="button">Duplicate</button>
+      <button class="secondary-button compact-button" id="newPromptShortcutProfileButton" type="button">New</button>
+      <button class="secondary-button compact-button" id="importPromptShortcutProfileButton" type="button">Import JSON</button>
+      <input id="importPromptShortcutProfileInput" type="file" accept=".json,application/json" hidden>
+    </div>
+    <div class="prompt-profile-editor-grid">
+      <label class="field-block"><span>Profile ID</span><input id="promptShortcutProfileEditorId" type="text" maxlength="120"></label>
+      <label class="field-block"><span>Display label</span><input id="promptShortcutProfileEditorLabel" type="text" maxlength="120"></label>
+      <label class="field-block"><span>Version</span><input id="promptShortcutProfileEditorVersion" type="text" maxlength="40" value="1"></label>
+      <label class="field-block"><span>Compatible parsers</span><input id="promptShortcutProfileEditorParsers" type="text" value="legacy, parser21"></label>
+    </div>
+    <label class="field-block">
+      <span>Profile JSON mappings</span>
+      <textarea id="promptShortcutProfileEditorJson" rows="18" spellcheck="false"></textarea>
+    </label>
+    <div id="promptShortcutProfileValidation" class="field-status subtle" role="status"></div>
+    <menu>
+      <button class="secondary-button" id="validatePromptShortcutProfileButton" value="none" type="button">Validate</button>
+      <button class="secondary-button" id="exportPromptShortcutProfileButton" value="none" type="button">Export JSON</button>
+      <button class="danger-button" id="deletePromptShortcutProfileButton" value="none" type="button">Delete User Profile</button>
+      <span class="status-spacer"></span>
+      <button class="primary-button" id="savePromptShortcutProfileButton" value="none" type="button">Save User Profile</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="themePaletteDialog" class="settings-dialog theme-palette-dialog">
+  <form method="dialog">
+    <div class="dialog-heading">
+      <div>
+        <h2>Theme Colors</h2>
+        <p>Choose the accent and dark surface colors used throughout the WebUI. Names appear in the footer.</p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="Close theme colors">×</button>
+    </div>
+
+    <div class="theme-palette-grid">
+      <section class="theme-color-section" id="accentThemeSection" data-theme-kind="accent">
+        <header>
+          <div>
+            <h3>Accent color</h3>
+            <p>Buttons, highlights, borders, and the outer blue surface.</p>
+          </div>
+          <span class="theme-color-preview" id="accentThemePreview" aria-hidden="true"></span>
+        </header>
+        <label class="field-block">
+          <span>Display name</span>
+          <span class="input-action-row">
+            <input id="accentThemeName" type="text" maxlength="40" value="Sky Blue">
+            <button type="button" class="small-button" id="accentThemeSuggestName">Suggest</button>
+          </span>
+          <small id="accentThemeNameHint">Automatically matched to the closest named color.</small>
+        </label>
+        <div class="theme-color-input-row">
+          <label class="field-block"><span>Color picker</span><input id="accentThemeColor" type="color" value="#179ee7"></label>
+          <label class="field-block"><span>Hex color</span><input id="accentThemeHex" type="text" inputmode="text" maxlength="7" value="#179ee7"></label>
+        </div>
+        <div class="theme-swatch-grid" id="accentThemeSwatches" aria-label="Accent color presets">
+          <button type="button" class="theme-swatch" data-theme-name="Sky Blue" data-theme-color="#179ee7" style="--swatch-color:#179ee7">Sky Blue</button>
+          <button type="button" class="theme-swatch" data-theme-name="Ocean" data-theme-color="#0284c7" style="--swatch-color:#0284c7">Ocean</button>
+          <button type="button" class="theme-swatch" data-theme-name="Teal" data-theme-color="#0d9488" style="--swatch-color:#0d9488">Teal</button>
+          <button type="button" class="theme-swatch" data-theme-name="Emerald" data-theme-color="#16a34a" style="--swatch-color:#16a34a">Emerald</button>
+          <button type="button" class="theme-swatch" data-theme-name="Violet" data-theme-color="#7c3aed" style="--swatch-color:#7c3aed">Violet</button>
+          <button type="button" class="theme-swatch" data-theme-name="Rose" data-theme-color="#e11d48" style="--swatch-color:#e11d48">Rose</button>
+          <button type="button" class="theme-swatch" data-theme-name="Amber" data-theme-color="#d97706" style="--swatch-color:#d97706">Amber</button>
+        </div>
+      </section>
+
+      <section class="theme-color-section" id="surfaceThemeSection" data-theme-kind="surface">
+        <header>
+          <div>
+            <h3>Dark surface color</h3>
+            <p>Panels, controls, cards, dialogs, and the primary dark background family.</p>
+          </div>
+          <span class="theme-color-preview" id="surfaceThemePreview" aria-hidden="true"></span>
+        </header>
+        <label class="field-block">
+          <span>Display name</span>
+          <span class="input-action-row">
+            <input id="surfaceThemeName" type="text" maxlength="40" value="Charcoal">
+            <button type="button" class="small-button" id="surfaceThemeSuggestName">Suggest</button>
+          </span>
+          <small id="surfaceThemeNameHint">Automatically matched to the closest named color.</small>
+        </label>
+        <div class="theme-color-input-row">
+          <label class="field-block"><span>Color picker</span><input id="surfaceThemeColor" type="color" value="#111d29"></label>
+          <label class="field-block"><span>Hex color</span><input id="surfaceThemeHex" type="text" inputmode="text" maxlength="7" value="#111d29"></label>
+        </div>
+        <div class="theme-swatch-grid" id="surfaceThemeSwatches" aria-label="Dark surface color presets">
+          <button type="button" class="theme-swatch" data-theme-name="Charcoal" data-theme-color="#111d29" style="--swatch-color:#111d29">Charcoal</button>
+          <button type="button" class="theme-swatch" data-theme-name="Midnight" data-theme-color="#111827" style="--swatch-color:#111827">Midnight</button>
+          <button type="button" class="theme-swatch" data-theme-name="Slate" data-theme-color="#1e293b" style="--swatch-color:#1e293b">Slate</button>
+          <button type="button" class="theme-swatch" data-theme-name="Navy" data-theme-color="#101b33" style="--swatch-color:#101b33">Navy</button>
+          <button type="button" class="theme-swatch" data-theme-name="Espresso" data-theme-color="#251914" style="--swatch-color:#251914">Espresso</button>
+          <button type="button" class="theme-swatch" data-theme-name="Plum" data-theme-color="#241625" style="--swatch-color:#241625">Plum</button>
+          <button type="button" class="theme-swatch" data-theme-name="Forest" data-theme-color="#12251c" style="--swatch-color:#12251c">Forest</button>
+        </div>
+      </section>
+    </div>
+
+    <section class="theme-live-preview" aria-label="Theme preview">
+      <header><strong>Live preview</strong><span>Accent header</span></header>
+      <div>
+        <article><strong>Dark surface panel</strong><small>Controls and panels use the selected dark color family.</small></article>
+        <button type="button" class="primary-button">Primary action</button>
+        <button type="button" class="secondary-button">Secondary action</button>
+      </div>
+    </section>
+
+    <p class="settings-warning is-hidden" id="themePaletteWarning"></p>
+    <menu>
+      <button class="secondary-button" id="resetThemePaletteButton" value="none" type="button">Reset Theme</button>
+      <span class="status-spacer"></span>
+      <button class="secondary-button" id="cancelThemePaletteButton" value="cancel" type="button">Cancel</button>
+      <button class="primary-button" id="saveThemePaletteButton" value="none" type="button">Save Theme</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog
+  id="imageLightbox"
+  class="image-lightbox"
+  aria-modal="true"
+  aria-labelledby="lightboxTitle"
+  aria-describedby="lightboxMeta"
+>
+  <section class="lightbox-shell" id="lightboxShell">
+    <header class="lightbox-heading">
+      <div class="lightbox-heading-copy">
+        <span id="lightboxSourceLabel">Completed Output</span>
+        <h2 id="lightboxTitle">Image preview</h2>
+      </div>
+      <button class="lightbox-close-button" id="lightboxCloseButton" type="button" aria-label="Close image lightbox">×</button>
+    </header>
+
+    <div class="lightbox-viewport is-fit is-pan-enabled" id="lightboxViewport" tabindex="0" aria-label="Large image view. Drag to pan, use the scrollbars, or zoom out when the image is larger than the window.">
+      <div class="lightbox-canvas" id="lightboxCanvas">
+        <img id="lightboxImage" alt="Large image preview" draggable="false">
+      </div>
+    </div>
+
+    <div class="lightbox-caption">
+      <span id="lightboxMeta">—</span>
+      <strong id="lightboxZoomStatus" aria-live="polite">100% · Fit</strong>
+    </div>
+
+    <div class="lightbox-controls" role="toolbar" aria-label="Image lightbox controls">
+      <button class="secondary-button" id="lightboxPreviousButton" type="button" aria-label="Previous completed output">Previous</button>
+      <button class="secondary-button" id="lightboxNextButton" type="button" aria-label="Next completed output">Next</button>
+      <span class="lightbox-control-divider" aria-hidden="true"></span>
+      <button class="secondary-button" id="lightboxFitButton" type="button" aria-label="Fit image to screen" aria-pressed="true">Fit</button>
+      <button class="secondary-button" id="lightboxActualButton" type="button" aria-label="Show image at 100 percent" aria-pressed="false">100%</button>
+      <button class="secondary-button" id="lightboxPanButton" type="button" aria-label="Toggle click-and-drag panning" aria-pressed="true">Pan</button>
+      <button class="secondary-button" id="lightboxZoomOutButton" type="button" aria-label="Zoom out">Zoom −</button>
+      <button class="secondary-button" id="lightboxZoomInButton" type="button" aria-label="Zoom in">Zoom +</button>
+      <button class="secondary-button" id="lightboxFollowLatestButton" type="button" aria-label="Follow newest live preview frame" aria-pressed="true" hidden>Following Latest</button>
+      <span class="lightbox-control-spacer"></span>
+      <button class="primary-button" id="lightboxCloseToolbarButton" type="button">Close</button>
+    </div>
+  </section>
+</dialog>
+
+<dialog
+  id="outputDetailsDialog"
+  class="output-details-dialog"
+  aria-modal="true"
+  aria-labelledby="outputDetailsTitle"
+  aria-describedby="outputDetailsLiveRegion"
+>
+  <section class="output-details-shell">
+    <header class="output-details-heading">
+      <div>
+        <span>Completed Output Metadata</span>
+        <h2 id="outputDetailsTitle">Image Details</h2>
+      </div>
+      <button class="lightbox-close-button" id="outputDetailsCloseButton" type="button" aria-label="Close image details">×</button>
+    </header>
+
+    <div class="output-details-loading" id="outputDetailsLoading" role="status">Loading image metadata…</div>
+    <div class="output-details-error" id="outputDetailsError" role="alert" hidden></div>
+
+    <div class="output-details-body" id="outputDetailsBody" hidden>
+      <aside class="output-details-summary">
+        <img id="outputDetailsImage" alt="Selected output">
+        <span class="metadata-source-badge" id="outputDetailsSourceBadge">unknown</span>
+        <div class="output-details-warnings" id="outputDetailsWarnings" role="status" hidden></div>
+      </aside>
+
+      <main class="output-details-scroll" id="outputDetailsContent"></main>
+
+      <section class="metadata-section unsupported-metadata" id="outputDetailsUnsupportedSection" hidden>
+        <h3>Recorded but not editable in the current UI</h3>
+        <p>These values remain visible and copyable, but Phase 10A will not silently force them into unsupported controls.</p>
+        <ul id="outputDetailsUnsupportedList"></ul>
+      </section>
+    </div>
+
+    <section class="output-details-confirmation" id="outputDetailsConfirmation" role="alertdialog" aria-labelledby="outputDetailsConfirmationTitle" hidden>
+      <div>
+        <strong id="outputDetailsConfirmationTitle">Replace current form values?</strong>
+        <p><span id="outputDetailsConfirmationCount">0</span> non-empty field(s) will change: <span id="outputDetailsConfirmationFields">—</span></p>
+      </div>
+      <div>
+        <button class="secondary-button" id="outputDetailsConfirmationCancelButton" type="button">Cancel</button>
+        <button class="primary-button" id="outputDetailsConfirmationApplyButton" type="button">Apply</button>
+      </div>
+    </section>
+
+    <div class="output-details-live" id="outputDetailsLiveRegion" aria-live="polite"></div>
+
+    <footer class="output-details-actions">
+      <button class="secondary-button" id="outputDetailsCopyFullButton" type="button">Copy Full Metadata</button>
+      <button class="secondary-button" id="outputDetailsSendSelectedButton" type="button">Send Selected Fields to Form</button>
+      <button class="secondary-button" id="outputDetailsDuplicateButton" type="button">Duplicate Full Run to Form</button>
+      <span class="output-details-action-spacer"></span>
+      <label class="output-details-replay-prompt-mode">
+        <span>Replay prompt</span>
+        <select id="outputDetailsReplayPromptMode">
+          <option value="raw_original">Raw original</option>
+          <option value="canonical_recorded">Canonical recorded</option>
+          <option value="best_available">Best available</option>
+        </select>
+      </label>
+      <button class="secondary-button" id="outputDetailsPreviewMergedButton" type="button">Preview Merged Request</button>
+      <button class="secondary-button" id="outputDetailsNewSeedButton" type="button">Replay with New Seed</button>
+      <button class="secondary-button" id="outputDetailsCurrentModelButton" type="button">Replay Using Current Model</button>
+      <button class="primary-button" id="outputDetailsExactReplayButton" type="button">Queue Exact Replay</button>
+      <button class="secondary-button" id="outputDetailsVariationButton" type="button">Open in Variation Matrix</button>
+      <button class="secondary-button" id="outputDetailsExportButton" type="button">Export Request (1)</button>
+      <button class="secondary-button" id="outputDetailsCloseFooterButton" type="button">Close</button>
+    </footer>
+  </section>
+</dialog>
+
+
+<dialog
+  id="replayPreflightDialog"
+  class="replay-preflight-dialog"
+  aria-modal="true"
+  aria-labelledby="replayPreflightTitle"
+  aria-describedby="replayPreflightLiveRegion"
+>
+  <section class="replay-preflight-shell">
+    <header class="output-details-heading">
+      <div>
+        <span>Validated Replay Request</span>
+        <h2 id="replayPreflightTitle">Replay Preflight</h2>
+      </div>
+      <button class="lightbox-close-button" id="replayPreflightCloseButton" type="button" aria-label="Cancel replay preflight">×</button>
+    </header>
+
+    <div class="output-details-loading" id="replayPreflightLoading" role="status">Validating stored settings…</div>
+    <div class="output-details-error" id="replayPreflightError" role="alert" hidden></div>
+
+    <div class="replay-preflight-body" id="replayPreflightBody" hidden>
+      <section class="replay-quality-banner" id="replayPreflightQuality"></section>
+      <section class="replay-summary-grid" id="replayPreflightSummary" aria-label="Final replay request summary"></section>
+
+      <section class="replay-preflight-section" id="replayPreflightMissingSection" hidden>
+        <h3>Missing assets or plugins</h3>
+        <p>Choose explicit replacements, then run preflight again. Nothing is substituted automatically.</p>
+        <div class="replay-remap-list" id="replayPreflightMissingAssets"></div>
+        <button class="secondary-button" id="replayPreflightRerunButton" type="button">Run Preflight Again</button>
+      </section>
+
+      <section class="replay-preflight-section replay-message-list" id="replayPreflightWarningsSection" hidden>
+        <h3>Warnings</h3>
+        <ul id="replayPreflightWarnings"></ul>
+      </section>
+
+      <section class="replay-preflight-section replay-message-list is-error" id="replayPreflightErrorsSection" hidden>
+        <h3>Blocking errors</h3>
+        <ul id="replayPreflightErrors"></ul>
+      </section>
+
+      <section class="replay-preflight-section">
+        <div class="replay-section-heading">
+          <h3>Field-by-field round trip</h3>
+          <span id="replayPreflightCounts">—</span>
+        </div>
+        <div class="replay-field-results" id="replayPreflightFieldResults"></div>
+      </section>
+
+      <details class="replay-preflight-section replay-json-details">
+        <summary>Advanced and canonical request JSON</summary>
+        <pre id="replayPreflightAdvancedJson"></pre>
+      </details>
+    </div>
+
+    <div class="output-details-live" id="replayPreflightLiveRegion" aria-live="polite"></div>
+
+    <footer class="replay-preflight-actions">
+      <button class="secondary-button" id="replayPreflightReturnButton" type="button">Return to Details</button>
+      <span></span>
+      <button class="secondary-button" id="replayPreflightCancelButton" type="button">Cancel</button>
+      <button class="primary-button" id="replayPreflightQueueButton" type="button" disabled>Queue Replay</button>
+    </footer>
+  </section>
+</dialog>
+
+<dialog
+  id="batchImportDialog"
+  class="batch-import-dialog"
+  aria-modal="true"
+  aria-labelledby="batchImportTitle"
+  aria-describedby="batchImportLiveRegion"
+>
+  <section class="batch-import-shell">
+    <header class="output-details-heading">
+      <div>
+        <span>Native JSON · JSON Lines · CSV</span>
+        <h2 id="batchImportTitle">Import Queue</h2>
+      </div>
+      <button class="lightbox-close-button" id="batchImportCloseButton" type="button" aria-label="Close queue import">×</button>
+    </header>
+
+    <div class="output-details-error" id="batchImportError" role="alert" hidden></div>
+    <div class="batch-import-scroll">
+      <section id="batchImportFileStage">
+        <label class="field-block">
+          <span>Queue file</span>
+          <input id="batchImportFile" type="file" accept=".igqueue.json,.igqueue.jsonl,.json,.jsonl,.csv,application/json,application/x-ndjson,text/csv">
+        </label>
+        <div class="field-grid two-column">
+          <label><span>Format</span><select id="batchImportFormat"><option value="">Detect from filename</option><option value="native">Native .igqueue.json</option><option value="jsonl">JSON Lines</option><option value="csv">CSV</option></select></label>
+          <label><span>Missing-value policy</span><select id="batchImportDefaultsPolicy"><option value="file_only">Use file values only</option><option value="current_form">Fill missing values from current form</option><option value="saved_defaults">Fill missing values from saved generation defaults</option></select></label>
+        </div>
+        <p class="field-help">Defaults are never merged silently. Uploaded files are parsed server-side and are not stored permanently.</p>
+      </section>
+
+      <section id="batchImportJobsStage" hidden>
+        <div class="queue-composer-section-heading">
+          <div><h3>Parsed jobs</h3><span id="batchImportParsedSummary">0 parsed</span></div>
+          <p>Edit core values, remove rows, select jobs, then validate them through the canonical request path.</p>
+        </div>
+        <fieldset class="queue-composer-fieldset">
+          <legend>Optional common replacements</legend>
+          <div class="queue-override-grid">
+            <label><span>Model</span><select id="batchImportCommonModel"></select></label>
+            <label><span>VAE</span><select id="batchImportCommonVae"></select></label>
+            <label><span>Sampler</span><select id="batchImportCommonSampler"></select></label>
+            <label><span>Scheduler</span><select id="batchImportCommonScheduler"></select></label>
+          </div>
+        </fieldset>
+        <div class="batch-import-table-wrap">
+          <table class="batch-import-table">
+            <thead><tr><th>Select</th><th>Source</th><th>Positive prompt</th><th>Negative prompt</th><th>Seed</th><th>Width</th><th>Height</th><th>Steps</th><th>CFG</th><th>Batch size</th><th>Batch count</th><th>Model</th><th>Sampler</th><th>Scheduler</th><th>Parse status</th><th>Action</th></tr></thead>
+            <tbody id="batchImportJobsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="batchImportValidationStage" hidden>
+        <div class="queue-composer-summary-bar"><strong id="batchImportValidationSummary">0 selected valid · 0 selected invalid</strong></div>
+        <div class="batch-import-table-wrap">
+          <table class="batch-import-table">
+            <thead><tr><th>Source</th><th>Prompt</th><th>Seed</th><th>Model</th><th>Sampler</th><th>Scheduler</th><th>Status</th></tr></thead>
+            <tbody id="batchImportValidationBody"></tbody>
+          </table>
+        </div>
+        <p class="field-help">Invalid jobs remain visible. Queue Valid Jobs Only is always an explicit choice; invalid jobs are never silently discarded.</p>
+      </section>
+    </div>
+
+    <div class="output-details-live" id="batchImportLiveRegion" aria-live="polite"></div>
+    <footer class="replay-preflight-actions batch-import-actions">
+      <button class="secondary-button" id="batchImportCancelButton" type="button">Cancel</button>
+      <button class="secondary-button" id="batchImportBackButton" type="button" hidden>Back</button>
+      <span></span>
+      <button class="primary-button" id="batchImportParseButton" type="button">Parse File</button>
+      <button class="primary-button" id="batchImportValidateButton" type="button" hidden>Validate Selected Jobs</button>
+      <button class="secondary-button" id="batchImportQueueValidButton" type="button" hidden disabled>Queue Valid Jobs Only</button>
+      <button class="secondary-button" id="batchImportVariationButton" type="button" hidden disabled>Open Validated Jobs in Variation Matrix</button>
+      <button class="primary-button" id="batchImportQueueAllButton" type="button" hidden disabled>Queue All Selected Jobs</button>
+    </footer>
+  </section>
+</dialog>
+
+
+<dialog
+  id="queueComposerDialog"
+  class="queue-composer-dialog"
+  aria-modal="true"
+  aria-labelledby="queueComposerTitle"
+  aria-describedby="queueComposerError"
+>
+  <section class="queue-composer-shell">
+    <header class="output-details-heading">
+      <div>
+        <span>Multi-output Replay</span>
+        <h2 id="queueComposerTitle">Queue Composer</h2>
+      </div>
+      <button class="lightbox-close-button" id="queueComposerCloseButton" type="button" aria-label="Close queue composer">×</button>
+    </header>
+
+    <div class="output-details-error" id="queueComposerError" role="alert" hidden></div>
+
+    <div class="queue-composer-scroll">
+      <section id="queueComposerSetup">
+        <div class="queue-composer-section-heading">
+          <div>
+            <h3>Selected outputs</h3>
+            <span id="queueComposerSelectedCount">0 selected outputs</span>
+          </div>
+          <p>Each output keeps its own prompt, model, seed, sampler, scheduler, and advanced settings unless an override is explicitly enabled.</p>
+        </div>
+        <div class="queue-composer-selected-list" id="queueComposerSelectedList"></div>
+
+        <fieldset class="queue-composer-fieldset">
+          <legend>Common overrides</legend>
+          <p>Unchecked values are ignored, even when their controls contain a value.</p>
+          <div class="queue-override-grid">
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="model_path"><span>Model</span><select id="queueOverrideModelValue" data-queue-override-value="model_path"></select></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="vae_path"><span>VAE</span><select id="queueOverrideVaeValue" data-queue-override-value="vae_path"></select></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="width"><span>Width</span><input id="queueOverrideWidthValue" data-queue-override-value="width" type="number" min="1" step="1" value="640"></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="height"><span>Height</span><input id="queueOverrideHeightValue" data-queue-override-value="height" type="number" min="1" step="1" value="960"></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="steps"><span>Steps</span><input id="queueOverrideStepsValue" data-queue-override-value="steps" type="number" min="1" step="1" value="25"></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="cfg_scale"><span>CFG scale</span><input id="queueOverrideCfgValue" data-queue-override-value="cfg_scale" type="number" min="0" step="0.1" value="7"></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="sampler_name"><span>Sampler</span><select id="queueOverrideSamplerValue" data-queue-override-value="sampler_name"></select></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="scheduler_name"><span>Scheduler</span><select id="queueOverrideSchedulerValue" data-queue-override-value="scheduler_name"></select></label>
+            <label class="queue-override-row"><input type="checkbox" data-queue-override-field="batch_count"><span>Batch count</span><input id="queueOverrideBatchCountValue" data-queue-override-value="batch_count" type="number" min="1" step="1" value="1"></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="queue-composer-fieldset queue-seed-policy">
+          <legend>Seed policy</legend>
+          <label><span>Policy</span><select id="queueComposerSeedPolicy"><option value="keep_original">Keep original seed per image</option><option value="random">Randomize every job</option><option value="sequential">Sequential seeds</option></select></label>
+          <label><span>Starting seed</span><input id="queueComposerSequentialSeed" type="number" step="1" value="1" disabled></label>
+        </fieldset>
+      </section>
+
+      <section id="queueComposerPreview" hidden>
+        <div class="queue-composer-summary-bar">
+          <strong id="queueComposerValidationSummary">0 valid · 0 invalid</strong>
+          <span id="queueComposerQualitySummary">0 Exact Request · 0 Best Available</span>
+        </div>
+        <div class="queue-composer-table-wrap">
+          <table class="queue-composer-preview-table">
+            <thead><tr><th>Order</th><th>Prompt</th><th>Seed</th><th>Model</th><th>Dimensions</th><th>Steps</th><th>CFG</th><th>Sampler</th><th>Scheduler</th><th>Warnings</th><th>Status</th></tr></thead>
+            <tbody id="queueComposerPreviewBody"></tbody>
+          </table>
+        </div>
+        <section class="queue-composer-remap-section" id="queueComposerRemapSection" hidden>
+          <h3>Missing assets or plugins</h3>
+          <p>A common replacement is accepted only when the rerun preflight validates every affected job. Item-specific replacements remain available for conflicts.</p>
+          <div id="queueComposerRemapList"></div>
+          <button class="secondary-button" id="queueComposerRerunButton" type="button">Run Preflight Again</button>
+        </section>
+      </section>
+    </div>
+
+    <footer class="replay-preflight-actions queue-composer-actions">
+      <button class="secondary-button" id="queueComposerCancelButton" type="button">Cancel</button>
+      <button class="secondary-button" id="queueComposerBackButton" type="button" hidden>Return to Overrides</button>
+      <span></span>
+      <button class="secondary-button" id="queueComposerQueueValidButton" type="button" hidden disabled>Queue Valid Jobs Only</button>
+      <button class="secondary-button" id="queueComposerExportButton" type="button" disabled>Export Composed (0)</button>
+      <button class="secondary-button" id="queueComposerVariationButton" type="button" disabled>Open Preview in Variation Matrix</button>
+      <button class="primary-button" id="queueComposerPreflightButton" type="button">Preview Final Jobs</button>
+      <button class="primary-button" id="queueComposerSubmitButton" type="button" hidden disabled>Queue All Jobs</button>
+    </footer>
+  </section>
+</dialog>
+
+<dialog id="variationMatrixDialog" class="variation-matrix-dialog" aria-modal="true" aria-labelledby="variationMatrixTitle">
+  <section class="variation-matrix-shell">
+    <header class="output-details-heading">
+      <div><span>Phase 10E</span><h2 id="variationMatrixTitle">Advanced Variation Matrix</h2></div>
+      <button class="lightbox-close-button" id="variationCloseButton" type="button" aria-label="Close variation matrix">×</button>
+    </header>
+    <div class="output-details-error" id="variationMatrixError" role="alert" hidden></div>
+    <div class="variation-matrix-scroll">
+      <section class="variation-config-section">
+        <div class="queue-composer-section-heading">
+          <div><h3>Validated base requests</h3><span id="variationBaseSummary">1 validated base request</span></div>
+          <p>Imported bases are accepted only from Phase 10D validated preflight jobs. Every expanded job is independently validated again.</p>
+        </div>
+        <div class="variation-plan-grid">
+          <label><span>Recipe name</span><input id="variationRecipeName" maxlength="120" value="Variation Matrix"></label>
+          <label><span>Expansion mode</span><select id="variationMode"><option value="cartesian">Cartesian product</option><option value="paired">Paired / zip</option><option value="one_at_a_time">One-at-a-time sweep</option></select></label>
+          <label><span>Paired length policy</span><select id="variationZipPolicy"><option value="reject">Reject unequal lists</option><option value="repeat_last">Repeat last value</option><option value="cycle">Cycle shorter lists</option></select></label>
+          <label><span>Multiple-base ordering</span><select id="variationBaseMode"><option value="apply_to_each">Apply full matrix to each base</option><option value="base_dimension">Treat bases as a matrix dimension</option></select></label>
+          <label><span>Maximum jobs</span><input id="variationJobLimit" type="number" min="1" max="1000" step="1" value="250"></label>
+          <label class="checkbox-row"><input id="variationDeduplicate" type="checkbox" checked><span>Remove exact duplicates</span></label>
+          <label class="checkbox-row"><input id="variationConfirmLarge" type="checkbox"><span>Confirm plan above 50 jobs</span></label>
+          <label><span>Export format</span><select id="variationExportFormat"><option value="native">Native JSON</option><option value="jsonl">JSON Lines</option><option value="csv">CSV</option></select></label>
+        </div>
+      </section>
+
+      <section class="variation-config-section">
+        <div class="queue-composer-section-heading">
+          <div><h3>Dimensions</h3><span id="variationCountEstimate">—</span></div>
+          <button class="secondary-button" id="variationAddDimensionButton" type="button">Add Dimension</button>
+        </div>
+        <p class="field-help">Manual values use one complete value per line. Prompts are never split on commas. JSON arrays are also accepted. Numeric ranges include the stop value when exactly reachable.</p>
+        <div id="variationDimensions" class="variation-dimensions"></div>
+      </section>
+
+      <section class="variation-config-section" id="variationPreviewSection" hidden>
+        <div id="variationPreflightSummary" class="variation-summary">Preview the plan to validate every expanded request.</div>
+        <pre id="variationMessages" class="variation-messages" hidden></pre>
+        <div class="variation-preview-wrap">
+          <table class="variation-preview-table">
+            <thead><tr><th>Job</th><th>Base source</th><th>Varied values</th><th>Prompt</th><th>Seed</th><th>Model</th><th>Sampler</th><th>Scheduler</th><th>Status</th></tr></thead>
+            <tbody id="variationPreviewBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <footer class="replay-preflight-actions variation-actions">
+      <button class="secondary-button" id="variationCancelButton" type="button">Cancel</button>
+      <span></span>
+      <button class="secondary-button" id="variationExportButton" type="button" disabled>Export Expanded Queue</button>
+      <button class="primary-button" id="variationPreflightButton" type="button">Preview Final Jobs</button>
+      <button class="primary-button" id="variationSubmitButton" type="button" disabled>Queue Validated Jobs</button>
+    </footer>
+  </section>
+</dialog>

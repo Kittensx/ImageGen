@@ -1,0 +1,118 @@
+{
+  "settings_defaults_version": 9,
+  "restore_last_session": true,
+  "ui_scale": 105,
+  "density": "comfortable",
+  "theme": "dark",
+  "theme_palette": {
+    "accent": {
+      "name": "Sky Blue",
+      "color": "#179ee7"
+    },
+    "surface": {
+      "name": "Charcoal",
+      "color": "#111d29"
+    }
+  },
+  "live_preview_enabled": true,
+  "live_preview_mode": "fast",
+  "live_preview_interval": 10,
+  "live_preview_width": 384,
+  "live_preview_format": "webp",
+  "live_preview_keep_history": "latest_only",
+  "live_preview_batch_index": 0,
+  "live_preview_quality": 78,
+  "live_preview_adaptive_throttle": true,
+  "live_preview_adaptive_target_ratio": 0.75,
+  "live_preview_adaptive_recovery_ratio": 0.4,
+  "live_preview_adaptive_max_interval": 8,
+  "live_preview_adaptive_window": 6,
+  "live_preview_cfg_visual_enabled": false,
+  "live_preview_cleanup_enabled": true,
+  "live_preview_retention_days": 7,
+  "live_preview_retention_jobs": 24,
+  "live_preview_disk_budget_mb": 1024,
+  "ui_layout": {
+    "left_column_width": 330,
+    "right_column_width": 360,
+    "gallery_panel_height": 132,
+    "live_preview_panel_height": 360,
+    "live_preview_collapsed": false,
+    "follow_newest_output": false,
+    "panel_scales": {
+      "controls": 100,
+      "output_viewer": 100,
+      "recent_outputs": 100,
+      "live_preview": 100,
+      "queue": 100,
+      "recent_runs": 100,
+      "prompt_presets": 100,
+      "model_refresh": 100,
+      "maintenance": 100,
+      "memory_status": 100
+    }
+  },
+  "ui_scale_layout_defaults": {
+    "105": {
+      "left_column_width": 1006,
+      "right_column_width": 869,
+      "gallery_panel_height": 378.0001449584961,
+      "live_preview_panel_height": 360,
+      "live_preview_collapsed": false,
+      "follow_newest_output": false,
+      "panel_scales": {
+        "controls": 200,
+        "output_viewer": 100,
+        "recent_outputs": 100,
+        "live_preview": 140,
+        "queue": 130,
+        "recent_runs": 240,
+        "prompt_presets": 190,
+        "model_refresh": 190,
+        "maintenance": 200,
+        "memory_status": 100
+      }
+    }
+  },
+  "recent_outputs_browser": {
+    "time_window": "all",
+    "custom_hours": 24,
+    "include_subfolders": true,
+    "source_paths": [],
+    "require_metadata_for_external": true
+  },
+  "memory_policy": "auto",
+  "memory_vram_safety_margin_mb": 1024,
+  "memory_retain_checkpoint_between_jobs": true,
+  "memory_retain_vae_between_jobs": true,
+  "model_runtime_retain_text_encoder_between_jobs": true,
+  "memory_pinned_cpu_memory": false,
+  "memory_allow_tiled_vae_fallback": true,
+  "memory_allow_preview_suspension_on_oom": true,
+  "recent_outputs_background_refresh_enabled": true,
+  "recent_outputs_refresh_ms_active": 4000,
+  "recent_outputs_refresh_ms_idle": 12000,
+  "queue_watchdog_enabled": true,
+  "queue_watchdog_interval_seconds": 5,
+  "queue_watchdog_running_stall_timeout_seconds": 180,
+  "queue_watchdog_transition_stall_timeout_seconds": 120,
+  "cfg_lab_enabled": false,
+  "diagnostics_mode": "failures_only",
+  "diagnostic_decode_enabled": false,
+  "queue_watchdog_finalizing_stall_timeout_seconds": 600,
+  "phase13_troubleshooting_lock_removed": true,
+  "mslk_fmha": {
+    "policy": "blackwell_safe",
+    "debug": "",
+    "block_n": "",
+    "block_m": "",
+    "num_warps": "",
+    "num_stages": "",
+    "experimental_head_dims": ""
+  },
+  "attention_backend": "auto",
+  "allocator_options": {
+    "PYTORCH_CUDA_ALLOC_CONF": ""
+  },
+  "runtime_job_overrides": {}
+}

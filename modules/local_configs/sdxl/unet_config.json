@@ -1,0 +1,23 @@
+{
+  "_class_name": "UNet2DConditionModel",
+  "act_fn": "silu",
+  "attention_head_dim": [5, 10, 20],
+  "block_out_channels": [320, 640, 1280],
+  "cross_attention_dim": 2048,
+  "down_block_types": [
+    "CrossAttnDownBlock2D",
+    "CrossAttnDownBlock2D",
+    "DownBlock2D"
+  ],
+  "in_channels": 4,
+  "layers_per_block": 2,
+  "mid_block_type": "UNetMidBlock2DCrossAttn",
+  "norm_num_groups": 32,
+  "out_channels": 4,
+  "sample_size": 128,
+  "up_block_types": [
+    "UpBlock2D",
+    "CrossAttnUpBlock2D",
+    "CrossAttnUpBlock2D"
+  ]
+}

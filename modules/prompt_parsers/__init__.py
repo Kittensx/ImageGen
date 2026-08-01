@@ -1,0 +1,64 @@
+from modules.prompt_parsers.contracts import (
+    CANONICAL_PROMPT_CONTRACT_VERSION,
+    PROMPT_PARSER_CONTRACT_VERSION,
+    PromptParseRequest,
+    PromptParseResult,
+    PromptParserDescriptor,
+    PromptParserError,
+    PromptParserProtocol,
+)
+from modules.prompt_parsers.registry import PromptParserRegistry, default_prompt_parser_registry
+from modules.prompt_parsers.routing import (
+    PROMPT_MERGE_CONTRACT_VERSION,
+    PROMPT_ROUTE_CONTRACT_VERSION,
+    PROMPT_SHADOW_CONTRACT_VERSION,
+    CapabilityAnalysis,
+    PromptCapabilityAnalyzer,
+    PromptRoutePlan,
+    PromptRoutePlanner,
+    PromptMergeOperation,
+    PromptMergeRegistry,
+    shadow_compare_parsers,
+    assert_recorded_route_matches,
+)
+from modules.prompt_parsers.preflight import (
+    PROMPT_PREFLIGHT_CONTRACT_VERSION,
+    PromptProcessingPreflight,
+    apply_prompt_preflight,
+)
+from modules.prompt_parsers.legacy_lock import (
+    LEGACY_PROMPT_PARSER_ID,
+    LEGACY_SHORTCUT_PROFILE_ID,
+    force_legacy_prompt_mode,
+    legacy_shortcut_profile_snapshot,
+)
+
+__all__ = [
+    "CANONICAL_PROMPT_CONTRACT_VERSION",
+    "PROMPT_PARSER_CONTRACT_VERSION",
+    "PromptParseRequest",
+    "PromptParseResult",
+    "PromptParserDescriptor",
+    "PromptParserError",
+    "PromptParserProtocol",
+    "PromptParserRegistry",
+    "default_prompt_parser_registry",
+    "PROMPT_PREFLIGHT_CONTRACT_VERSION",
+    "PromptProcessingPreflight",
+    "apply_prompt_preflight",
+    "LEGACY_PROMPT_PARSER_ID",
+    "LEGACY_SHORTCUT_PROFILE_ID",
+    "force_legacy_prompt_mode",
+    "legacy_shortcut_profile_snapshot",
+    "PROMPT_MERGE_CONTRACT_VERSION",
+    "PROMPT_ROUTE_CONTRACT_VERSION",
+    "PROMPT_SHADOW_CONTRACT_VERSION",
+    "CapabilityAnalysis",
+    "PromptCapabilityAnalyzer",
+    "PromptRoutePlan",
+    "PromptRoutePlanner",
+    "PromptMergeOperation",
+    "PromptMergeRegistry",
+    "shadow_compare_parsers",
+    "assert_recorded_route_matches",
+]

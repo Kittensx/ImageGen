@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "release_id": "sm120-fp16-public-wheels-v1",
+  "installation_mode": "published_wheels",
+  "description": "Published Windows SM120 MSLK and xFormers wheel contract with capability-based runtime validation.",
+  "packages": {
+    "mslk": {
+      "release_tag": "v1.3.0-blackwell-sm120",
+      "filename": "mslk-1.3.0-py3-none-any.whl",
+      "url": "https://github.com/Kittensx/mslk-blackwell-windows/releases/download/v1.3.0-blackwell-sm120/mslk-1.3.0-py3-none-any.whl",
+      "sha256": "4402cdae1c2006d93179dc7a9341777c8521128459743242a894032edf8b4354",
+      "observed_version": "1.3.0",
+      "version_is_compatibility_gate": false
+    },
+    "xformers": {
+      "release_tag": "v1.1.0-blackwell-sm120",
+      "filename": "xformers-0.0.35+af84367e.sm120diag1-py39-none-win_amd64.whl",
+      "url": "https://github.com/Kittensx/xformers-blackwell-windows/releases/download/v1.1.0-blackwell-sm120/xformers-0.0.35%2Baf84367e.sm120diag1-py39-none-win_amd64.whl",
+      "sha256": "0f029db4738d94a4cd7dd5d55ba527e8b24ada3b6efbdad70b0759244b6c7bba",
+      "observed_version": "0.0.35+af84367e.sm120diag1",
+      "version_is_compatibility_gate": false
+    }
+  },
+  "requirements": {
+    "blackwell_path": "requirements/requirements-blackwell.txt",
+    "lock_path": "requirements/requirements-lock.txt"
+  },
+  "runtime_contract": {
+    "profile_filename": "sm120_triton_splitk_fp16.json",
+    "profile_id": "sm120-triton-splitk-fp16-v1",
+    "provider": "mslk_triton_splitk",
+    "operator": "triton_splitKF",
+    "dtype": "float16",
+    "compute_capability": [12, 0],
+    "policy": "blackwell_safe",
+    "logical_tile_mappings": {
+      "40": 64,
+      "80": 128,
+      "160": 256
+    },
+    "required_xformers_api": [
+      "execute_forward_with_evidence",
+      "get_fmha_provider_registry",
+      "get_operator_support_report",
+      "get_runtime_package_provenance",
+      "get_selected_operator",
+      "resolve_forward_operator"
+    ]
+  },
+  "runtime_policy": {
+    "package_versions_are_diagnostic_only": true,
+    "published_wheel_hashes_are_installation_provenance": true,
+    "mslk_profile_and_critical_file_hashes_are_runtime_gates": true,
+    "explicit_operator_execution_is_required": true,
+    "automatic_mode_falls_back_to_sdpa_then_eager": true
+  }
+}

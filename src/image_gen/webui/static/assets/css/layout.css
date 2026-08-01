@@ -1,0 +1,237 @@
+.app-shell {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 8px 8px 6px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.topbar {
+  min-width: 0;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 8px 18px;
+  border-radius: var(--radius-large);
+  background: linear-gradient(90deg, var(--sky-600), var(--sky-400));
+  box-shadow: var(--shadow);
+}
+
+.brand-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 245px;
+}
+
+.brand-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 2px solid white;
+  border-radius: 8px;
+  font-size: 1.65rem;
+}
+
+.version-label {
+  color: var(--sky-100);
+  font-size: 0.7rem;
+}
+
+.top-actions {
+  min-width: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace {
+  --left-column-width: 330px;
+  --right-column-width: 360px;
+  --center-column-min-width: 180px;
+  --gallery-panel-height: 148px;
+  --live-preview-panel-height: 360px;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns:
+    var(--left-column-width)
+    8px
+    minmax(var(--center-column-min-width), 1fr)
+    8px
+    var(--right-column-width);
+  gap: 8px;
+  overflow: hidden;
+}
+
+.center-column,
+.right-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.right-column {
+  gap: var(--panel-gap);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(145deg, var(--charcoal-900), var(--charcoal-850));
+  box-shadow: var(--shadow);
+}
+
+.controls-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.output-viewer-panel {
+  min-width: 0;
+  min-height: 120px;
+  flex: 1 1 auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.center-splitter {
+  flex: 0 0 10px;
+  min-height: 10px;
+}
+
+.center-splitter.is-hidden {
+  display: none;
+}
+
+.gallery-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 96px;
+  flex: 0 0 var(--gallery-panel-height);
+  max-height: calc(100% - 130px);
+  padding: 8px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.gallery-panel.is-collapsed {
+  min-height: 48px;
+  flex-basis: 48px;
+  max-height: 48px;
+  display: flex;
+  align-items: center;
+}
+
+.live-preview-panel {
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+
+.live-preview-panel.is-idle:not(.is-collapsed) {
+  min-height: 78px;
+  flex-basis: 78px;
+}
+
+.live-preview-panel.is-idle:not(.is-collapsed) .live-preview-idle-line {
+  display: block;
+}
+
+.live-preview-panel.is-idle:not(.is-collapsed) > :not(.panel-heading):not(.live-preview-idle-line) {
+  display: none;
+}
+
+.live-preview-panel.is-collapsed {
+  min-height: 48px;
+  flex-basis: 48px;
+}
+
+.live-preview-panel.is-collapsed > :not(.panel-heading) {
+  display: none;
+}
+
+.utility-panel {
+  min-width: 0;
+  padding: 10px;
+}
+
+.panel-heading {
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--sky-300);
+}
+
+.output-viewer-heading > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.output-viewer-heading #outputDimensions {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.statusbar {
+  min-width: 0;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 6px 14px;
+  margin-top: 0;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--sky-600) 82%, transparent);
+  color: var(--sky-50);
+  font-size: 0.75rem;
+  overflow: hidden;
+}
+
+.status-spacer {
+  flex: 1;
+}
+
+.panel.is-collapsed > :not(.panel-heading) {
+  display: none;
+}
+
+.controls-panel.is-collapsed {
+  align-self: start;
+  max-height: 56px;
+  overflow: hidden;
+}

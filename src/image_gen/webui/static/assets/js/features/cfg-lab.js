@@ -1,0 +1,374 @@
+import { $, notify } from "../utils.js";
+
+const GUIDANCE_FIELDS = {
+  cfg_guidance_mode: "#cfgGuidanceMode",
+  cfg_curve_type: "#cfgCurveType",
+  cfg_curve_strength: "#cfgCurveStrengthNumber",
+  cfg_high_sigma_boost: "#cfgHighSigmaBoostNumber",
+  cfg_low_sigma_taper: "#cfgLateTaperNumber",
+  cfg_auto_low_cfg_threshold: "#cfgAutoThresholdNumber",
+  cfg_early_floor_enabled: "#cfgEarlyFloorEnabled",
+  cfg_early_floor_value: "#cfgEarlyFloorValueNumber",
+  cfg_early_floor_until_fraction: "#cfgEarlyFloorDurationNumber",
+};
+
+const RANGE_PAIRS = [
+  ["#cfgRescaleRange", "#cfgRescaleNumber"],
+  ["#cfgCurveStrengthRange", "#cfgCurveStrengthNumber"],
+  ["#cfgHighSigmaBoostRange", "#cfgHighSigmaBoostNumber"],
+  ["#cfgLateTaperRange", "#cfgLateTaperNumber"],
+  ["#cfgAutoThresholdRange", "#cfgAutoThresholdNumber"],
+  ["#cfgEarlyFloorValueRange", "#cfgEarlyFloorValueNumber"],
+  ["#cfgEarlyFloorDurationRange", "#cfgEarlyFloorDurationNumber"],
+];
+
+export const CFG_PRESETS = {
+  classic_flat: {
+    label: "Classic / Flat",
+    cfg_scale: 7.0,
+    cfg_rescale: 0.0,
+    sampler_kwargs: {
+      cfg_guidance_mode: "legacy_flat",
+      cfg_curve_type: "smoothstep",
+      cfg_curve_strength: 1.0,
+      cfg_high_sigma_boost: 1.2,
+      cfg_low_sigma_taper: 0.3,
+      cfg_auto_low_cfg_threshold: 6.5,
+      cfg_early_floor_enabled: false,
+      cfg_early_floor_value: 6.2,
+      cfg_early_floor_until_fraction: 0.3,
+    },
+  },
+  low_cfg_safe: {
+    label: "Low-CFG Safe",
+    cfg_scale: 5.5,
+    cfg_rescale: 0.0,
+    sampler_kwargs: {
+      cfg_guidance_mode: "auto_low_cfg",
+      cfg_curve_type: "smoothstep",
+      cfg_curve_strength: 1.0,
+      cfg_high_sigma_boost: 1.2,
+      cfg_low_sigma_taper: 0.3,
+      cfg_auto_low_cfg_threshold: 6.5,
+      cfg_early_floor_enabled: true,
+      cfg_early_floor_value: 6.2,
+      cfg_early_floor_until_fraction: 0.3,
+    },
+  },
+  low_cfg_strong: {
+    label: "Low-CFG Strong Composition",
+    cfg_scale: 5.0,
+    cfg_rescale: 0.0,
+    sampler_kwargs: {
+      cfg_guidance_mode: "auto_low_cfg",
+      cfg_curve_type: "smoothstep",
+      cfg_curve_strength: 1.0,
+      cfg_high_sigma_boost: 1.8,
+      cfg_low_sigma_taper: 0.25,
+      cfg_auto_low_cfg_threshold: 6.8,
+      cfg_early_floor_enabled: true,
+      cfg_early_floor_value: 6.8,
+      cfg_early_floor_until_fraction: 0.4,
+    },
+  },
+  soft_detail_taper: {
+    label: "Soft Detail Taper",
+    cfg_scale: 6.0,
+    cfg_rescale: 0.15,
+    sampler_kwargs: {
+      cfg_guidance_mode: "sigma_shaped",
+      cfg_curve_type: "cosine",
+      cfg_curve_strength: 1.0,
+      cfg_high_sigma_boost: 0.8,
+      cfg_low_sigma_taper: 0.65,
+      cfg_auto_low_cfg_threshold: 6.5,
+      cfg_early_floor_enabled: false,
+      cfg_early_floor_value: 6.2,
+      cfg_early_floor_until_fraction: 0.3,
+    },
+  },
+};
+
+function isKesSampler() {
+  return ["kes", "kes_sampler", "simple_kes_sampler"].includes(String($("#samplerName")?.value || "").toLowerCase());
+}
+
+function numberValue(selector, fallback) {
+  const value = Number($(selector)?.value);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+export function readCfgLabValues() {
+  const sampler_kwargs = {};
+  if (isKesSampler()) {
+    Object.entries(GUIDANCE_FIELDS).forEach(([name, selector]) => {
+      const input = $(selector);
+      if (!input) return;
+      if (input.type === "checkbox") sampler_kwargs[name] = Boolean(input.checked);
+      else if (input.type === "number" || input.type === "range") sampler_kwargs[name] = Number(input.value);
+      else sampler_kwargs[name] = input.value;
+    });
+  }
+  return {
+    cfg_rescale: numberValue("#cfgRescaleNumber", 0),
+    sampler_kwargs,
+  };
+}
+
+function assignControl(selector, value) {
+  const input = $(selector);
+  if (!input || value === undefined || value === null) return;
+  if (input.type === "checkbox") input.checked = Boolean(value);
+  else input.value = String(value);
+}
+
+export function applyCfgLabValues(values = {}) {
+  if (Object.prototype.hasOwnProperty.call(values, "cfg_rescale")) {
+    assignControl("#cfgRescaleNumber", values.cfg_rescale);
+    assignControl("#cfgRescaleRange", values.cfg_rescale);
+  }
+  const kwargs = values.sampler_kwargs || {};
+  Object.entries(GUIDANCE_FIELDS).forEach(([name, selector]) => {
+    if (!Object.prototype.hasOwnProperty.call(kwargs, name)) return;
+    assignControl(selector, kwargs[name]);
+  });
+  RANGE_PAIRS.forEach(([rangeSelector, numberSelector]) => {
+    const number = $(numberSelector);
+    if (number) assignControl(rangeSelector, number.value);
+  });
+  renderCfgCurvePreview();
+  updateSamplerAvailability();
+}
+
+function clamp01(value) { return Math.max(0, Math.min(1, Number(value))); }
+function curveWeight(value, curveType) {
+  const x = clamp01(value);
+  if (curveType === "linear") return x;
+  if (curveType === "cosine") return 0.5 - 0.5 * Math.cos(Math.PI * x);
+  if (curveType === "exp_decay") return x <= 0 ? 0 : (x >= 1 ? 1 : (1 - Math.exp(-4 * x)) / (1 - Math.exp(-4)));
+  return x * x * (3 - 2 * x);
+}
+
+function configuredSeries() {
+  const steps = Math.max(1, Math.round(numberValue("#steps", 20)));
+  const requested = numberValue("#cfgScale", 7);
+  const mode = $("#cfgGuidanceMode")?.value || "legacy_flat";
+  const curveType = $("#cfgCurveType")?.value || "smoothstep";
+  const strength = numberValue("#cfgCurveStrengthNumber", 1);
+  const boostAmount = numberValue("#cfgHighSigmaBoostNumber", 1.2);
+  const taperAmount = numberValue("#cfgLateTaperNumber", 0.3);
+  const threshold = numberValue("#cfgAutoThresholdNumber", 6.5);
+  const floorEnabled = Boolean($("#cfgEarlyFloorEnabled")?.checked);
+  const floorValue = numberValue("#cfgEarlyFloorValueNumber", 6.2);
+  const floorDuration = numberValue("#cfgEarlyFloorDurationNumber", 0.3);
+  return Array.from({ length: steps }, (_, stepIndex) => {
+    const progress = steps <= 1 ? 0 : stepIndex / (steps - 1);
+    const sigmaFraction = 1 - progress;
+    let early = 0;
+    let late = 0;
+    let active = mode !== "legacy_flat";
+    if (mode === "step_shaped") {
+      early = curveWeight(1 - progress, curveType);
+      late = curveWeight(progress, curveType);
+    } else if (mode === "sigma_shaped") {
+      early = curveWeight(sigmaFraction, curveType);
+      late = curveWeight(1 - sigmaFraction, curveType);
+    } else if (mode === "auto_low_cfg" && requested < threshold) {
+      early = curveWeight(sigmaFraction, curveType);
+      late = curveWeight(1 - sigmaFraction, curveType);
+    } else if (mode === "auto_low_cfg") {
+      active = false;
+    }
+    let effective = active ? requested + boostAmount * strength * early - taperAmount * strength * late : requested;
+    if (floorEnabled && progress <= floorDuration) effective = Math.max(effective, floorValue);
+    return { step_index: stepIndex, requested_cfg_scale: requested, effective_cfg_scale: Math.max(0, effective) };
+  });
+}
+
+function svgElement(name, attributes = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+  return node;
+}
+
+export function renderCfgGraph(container, points, { compact = false, currentStepIndex = null } = {}) {
+  if (!container) return;
+  const clean = (points || []).filter((point) => Number.isFinite(Number(point.effective_cfg_scale)));
+  if (!clean.length) {
+    container.textContent = "No per-step CFG data is available.";
+    return;
+  }
+  const width = compact ? 560 : 720;
+  const height = compact ? 210 : 240;
+  const pad = { left: 42, right: 18, top: 18, bottom: 34 };
+  const values = clean.flatMap((point) => [Number(point.requested_cfg_scale), Number(point.effective_cfg_scale)]).filter(Number.isFinite);
+  const minValue = Math.min(...values, 0);
+  const maxValue = Math.max(...values, 1);
+  const span = Math.max(maxValue - minValue, 1);
+  const x = (index) => pad.left + (clean.length <= 1 ? 0 : index / (clean.length - 1)) * (width - pad.left - pad.right);
+  const y = (value) => pad.top + (1 - (Number(value) - minValue) / span) * (height - pad.top - pad.bottom);
+  const pathFor = (field) => clean.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(2)},${y(point[field]).toFixed(2)}`).join(" ");
+
+  const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Requested and effective CFG by denoising step" });
+  svg.classList.add("cfg-series-svg");
+  for (let grid = 0; grid <= 4; grid += 1) {
+    const value = minValue + (span * grid / 4);
+    const lineY = y(value);
+    svg.append(svgElement("line", { x1: pad.left, y1: lineY, x2: width - pad.right, y2: lineY, class: "cfg-grid-line" }));
+    const label = svgElement("text", { x: pad.left - 7, y: lineY + 4, class: "cfg-axis-label", "text-anchor": "end" });
+    label.textContent = value.toFixed(1);
+    svg.append(label);
+  }
+  svg.append(svgElement("path", { d: pathFor("requested_cfg_scale"), class: "cfg-requested-line" }));
+  svg.append(svgElement("path", { d: pathFor("effective_cfg_scale"), class: "cfg-effective-line" }));
+  clean.forEach((point, index) => {
+    const marker = svgElement("circle", { cx: x(index), cy: y(point.effective_cfg_scale), r: 2.4, class: "cfg-effective-marker" });
+    const title = svgElement("title");
+    title.textContent = `Step ${Number(point.step_index) + 1}: requested ${Number(point.requested_cfg_scale).toFixed(2)}, effective ${Number(point.effective_cfg_scale).toFixed(2)}`;
+    marker.append(title);
+    svg.append(marker);
+
+    const overrideSource = String(point.override_source || "base_request");
+    if (point.transition_id || overrideSource !== "base_request") {
+      const transition = svgElement("rect", {
+        x: x(index) - 3.5,
+        y: y(point.effective_cfg_scale) - 3.5,
+        width: 7,
+        height: 7,
+        transform: `rotate(45 ${x(index)} ${y(point.effective_cfg_scale)})`,
+        class: "cfg-transition-marker",
+      });
+      const transitionTitle = svgElement("title");
+      transitionTitle.textContent = `CFG transition at step ${Number(point.step_index) + 1}: ${overrideSource}${point.transition_id ? ` · ${point.transition_id}` : ""}`;
+      transition.append(transitionTitle);
+      svg.append(transition);
+    }
+  });
+
+  if (currentStepIndex !== null && currentStepIndex !== undefined) {
+    const currentArrayIndex = clean.findIndex((point) => Number(point.step_index) === Number(currentStepIndex));
+    if (currentArrayIndex >= 0) {
+      const currentPoint = clean[currentArrayIndex];
+      svg.append(svgElement("line", {
+        x1: x(currentArrayIndex),
+        y1: pad.top,
+        x2: x(currentArrayIndex),
+        y2: height - pad.bottom,
+        class: "cfg-live-cursor-line",
+      }));
+      const cursor = svgElement("circle", {
+        cx: x(currentArrayIndex),
+        cy: y(currentPoint.effective_cfg_scale),
+        r: 5.5,
+        class: "cfg-live-cursor-marker",
+      });
+      const cursorTitle = svgElement("title");
+      cursorTitle.textContent = `Current live step ${Number(currentPoint.step_index) + 1}: effective CFG ${Number(currentPoint.effective_cfg_scale).toFixed(2)}`;
+      cursor.append(cursorTitle);
+      svg.append(cursor);
+    }
+  }
+  const start = svgElement("text", { x: pad.left, y: height - 9, class: "cfg-axis-label" });
+  start.textContent = "Step 1";
+  const end = svgElement("text", { x: width - pad.right, y: height - 9, class: "cfg-axis-label", "text-anchor": "end" });
+  end.textContent = `Step ${clean.length}`;
+  svg.append(start, end);
+  container.replaceChildren(svg);
+}
+
+export function renderCfgCurvePreview() {
+  const points = configuredSeries();
+  renderCfgGraph($("#cfgCurvePreviewGraph"), points, { compact: true });
+  const effective = points.map((point) => point.effective_cfg_scale);
+  const requested = points[0]?.requested_cfg_scale ?? 0;
+  const min = Math.min(...effective);
+  const max = Math.max(...effective);
+  const summary = $("#cfgCurvePreviewSummary");
+  if (summary) summary.textContent = `Requested ${requested.toFixed(2)} · effective ${min.toFixed(2)}–${max.toFixed(2)} · ${points.length} steps`;
+}
+
+function updateSamplerAvailability() {
+  const kes = isKesSampler();
+  document.querySelectorAll(".cfg-kes-only").forEach((node) => {
+    node.classList.toggle("is-disabled", !kes);
+    node.querySelectorAll("input, select").forEach((input) => { input.disabled = !kes; });
+  });
+  const status = $("#cfgLabSamplerStatus");
+  if (status) status.textContent = kes
+    ? "KES effective-guidance shaping is available. Completed outputs will record the actual CFG used at every step."
+    : "The selected sampler uses flat pipeline guidance. Canonical CFG rescale remains available; KES shaping controls are disabled.";
+}
+
+function applyPreset(name, saveSession) {
+  const preset = CFG_PRESETS[name];
+  if (!preset) return;
+  assignControl("#cfgScale", preset.cfg_scale);
+  applyCfgLabValues(preset);
+  saveSession?.();
+  notify(`Applied CFG preset: ${preset.label}`);
+}
+
+function seedLockedBases(current) {
+  let seed = Number(current.seed);
+  if (!Number.isInteger(seed) || seed < 0) {
+    const buffer = new Uint32Array(1);
+    crypto.getRandomValues(buffer);
+    seed = Number(buffer[0]);
+  }
+  const lanes = [
+    [5.0, "legacy_flat", "CFG 5.0 flat"],
+    [5.0, "auto_low_cfg", "CFG 5.0 auto low-CFG"],
+    [6.0, "legacy_flat", "CFG 6.0 flat"],
+    [6.0, "auto_low_cfg", "CFG 6.0 auto low-CFG"],
+    [7.0, "legacy_flat", "CFG 7.0 flat baseline"],
+  ];
+  return {
+    seed,
+    bases: lanes.map(([cfgScale, mode]) => ({
+      ...structuredClone(current),
+      seed,
+      cfg_scale: cfgScale,
+      batch_size: 1,
+      batch_count: 1,
+      sampler_kwargs: {
+        ...(current.sampler_kwargs || {}),
+        cfg_guidance_mode: mode,
+      },
+    })),
+    lineage: lanes.map(([, , label]) => ({ source: "cfg_lab", source_id: null, source_label: label })),
+  };
+}
+
+export function bindCfgLab({ collect = () => ({}), saveSession = () => {}, openVariationMatrix = () => {} } = {}) {
+  RANGE_PAIRS.forEach(([rangeSelector, numberSelector]) => {
+    const range = $(rangeSelector);
+    const number = $(numberSelector);
+    if (!range || !number) return;
+    const sync = (source, target) => {
+      target.value = source.value;
+      renderCfgCurvePreview();
+      saveSession();
+    };
+    range.addEventListener("input", () => sync(range, number));
+    number.addEventListener("input", () => sync(number, range));
+  });
+  ["#cfgScale", "#steps", "#cfgGuidanceMode", "#cfgCurveType", "#cfgEarlyFloorEnabled"].forEach((selector) => {
+    $(selector)?.addEventListener("input", () => { renderCfgCurvePreview(); saveSession(); });
+    $(selector)?.addEventListener("change", () => { renderCfgCurvePreview(); saveSession(); });
+  });
+  $("#samplerName")?.addEventListener("change", () => { updateSamplerAvailability(); renderCfgCurvePreview(); });
+  $("#applyCfgPresetButton")?.addEventListener("click", () => applyPreset($("#cfgGuidancePreset").value, saveSession));
+  $("#openCfgSweepButton")?.addEventListener("click", () => {
+    const current = collect();
+    const { seed, bases, lineage } = seedLockedBases(current);
+    openVariationMatrix({
+      baseRequests: bases,
+      baseLineage: lineage,
+      initialDimensions: [],
+      recipeName: `CFG Lab seed ${seed}`,
+      title: "Seed-Locked CFG Lab",
+    });
+  });
+  updateSamplerAvailability();
+  renderCfgCurvePreview();
+}

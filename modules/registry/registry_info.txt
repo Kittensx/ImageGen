@@ -1,0 +1,984 @@
+Yes. Here’s a project-ready first draft for all six files, designed to slot into the rebuild path cleanly.
+
+This stays aligned with the current direction of your project: `basic_load.py` is acting as a high-level orchestrator and `load_safetensors_model.py` is where checkpoint prep logic is being centralized, so the registry layer should sit beside that flow rather than inside the tensor-loading details.  
+
+Recommended folder:
+
+```text
+modules/
+  registry/
+    __init__.py
+    asset_registry.py
+    fingerprint.py
+    models.py
+    scanner.py
+    schema.py
+```
+
+I’m keeping this first version:
+
+* SQLite-based
+* local-only
+* simple to extend
+* safe to use before the full loader is finished
+
+---
+
+## `modules/registry/__init__.py`
+
+```python
+from .asset_registry import AssetRegistry
+from .fingerprint import FileFingerprint, FingerprintResult
+from .models import AssetRecord, InspectionRecord, LoadHistoryRecord, ScanResult
+from .scanner import AssetScanner
+```
+
+---
+
+## `modules/registry/models.py`
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional, Any
+
+
+@dataclass
+class AssetRecord:
+    id: int
+    path: str
+    filename: str
+    extension: str
+    file_size: int
+    modified_time: float
+    created_time: float
+    first_seen_at: str
+    last_seen_at: str
+    exists_on_disk: bool
+
+    quick_fingerprint: Optional[str] = None
+    sha256: Optional[str] = None
+    blake3: Optional[str] = None
+
+    asset_type: str = "unknown"
+    format_type: str = "other"
+    architecture: str = "unknown"
+
+    checkpoint_kind: str = "unknown"
+    has_unet: bool = False
+    has_vae: bool = False
+    has_text_encoder: bool = False
+    has_text_encoder_2: bool = False
+
+    key_count: Optional[int] = None
+    metadata_json: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@dataclass
+class InspectionRecord:
+    id: int
+    asset_id: int
+    inspected_at: str
+    inspector_version: Optional[str] = None
+    key_count: Optional[int] = None
+    prefix_summary_json: Optional[str] = None
+    example_keys_json: Optional[str] = None
+    dtype_summary_json: Optional[str] = None
+    tensor_shape_summary_json: Optional[str] = None
+    result_json: Optional[str] = None
+
+
+@dataclass
+class LoadHistoryRecord:
+    id: int
+    asset_id: int
+    loaded_at: str
+    status: str
+    device: Optional[str] = None
+    precision: Optional[str] = None
+    load_time_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    context_json: Optional[str] = None
+
+
+@dataclass
+class ScanResult:
+    scanned_paths: int = 0
+    matched_files: int = 0
+    inserted_assets: int = 0
+    updated_assets: int = 0
+    skipped_files: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scanned_paths": self.scanned_paths,
+            "matched_files": self.matched_files,
+            "inserted_assets": self.inserted_assets,
+            "updated_assets": self.updated_assets,
+            "skipped_files": self.skipped_files,
+            "errors": list(self.errors),
+        }
+```
+
+---
+
+## `modules/registry/schema.py`
+
+```python
+from __future__ import annotations
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT NOT NULL UNIQUE,
+    filename TEXT NOT NULL,
+    extension TEXT,
+    file_size INTEGER,
+    modified_time REAL,
+    created_time REAL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    exists_on_disk INTEGER NOT NULL DEFAULT 1,
+
+    quick_fingerprint TEXT,
+    sha256 TEXT,
+    blake3 TEXT,
+
+    asset_type TEXT NOT NULL DEFAULT 'unknown',
+    format_type TEXT NOT NULL DEFAULT 'other',
+    architecture TEXT NOT NULL DEFAULT 'unknown',
+
+    checkpoint_kind TEXT NOT NULL DEFAULT 'unknown',
+    has_unet INTEGER NOT NULL DEFAULT 0,
+    has_vae INTEGER NOT NULL DEFAULT 0,
+    has_text_encoder INTEGER NOT NULL DEFAULT 0,
+    has_text_encoder_2 INTEGER NOT NULL DEFAULT 0,
+
+    key_count INTEGER,
+    metadata_json TEXT,
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_filename ON assets(filename);
+CREATE INDEX IF NOT EXISTS idx_assets_extension ON assets(extension);
+CREATE INDEX IF NOT EXISTS idx_assets_sha256 ON assets(sha256);
+CREATE INDEX IF NOT EXISTS idx_assets_blake3 ON assets(blake3);
+CREATE INDEX IF NOT EXISTS idx_assets_asset_type ON assets(asset_type);
+CREATE INDEX IF NOT EXISTS idx_assets_architecture ON assets(architecture);
+
+CREATE TABLE IF NOT EXISTS asset_inspections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL,
+    inspected_at TEXT NOT NULL,
+    inspector_version TEXT,
+    key_count INTEGER,
+    prefix_summary_json TEXT,
+    example_keys_json TEXT,
+    dtype_summary_json TEXT,
+    tensor_shape_summary_json TEXT,
+    result_json TEXT,
+    FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_inspections_asset_id ON asset_inspections(asset_id);
+CREATE INDEX IF NOT EXISTS idx_asset_inspections_inspected_at ON asset_inspections(inspected_at);
+
+CREATE TABLE IF NOT EXISTS load_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL,
+    loaded_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    device TEXT,
+    precision TEXT,
+    load_time_ms INTEGER,
+    error_message TEXT,
+    context_json TEXT,
+    FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_load_history_asset_id ON load_history(asset_id);
+CREATE INDEX IF NOT EXISTS idx_load_history_loaded_at ON load_history(loaded_at);
+
+CREATE TABLE IF NOT EXISTS asset_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_asset_id INTEGER NOT NULL,
+    target_asset_id INTEGER NOT NULL,
+    relationship_type TEXT NOT NULL,
+    confidence REAL,
+    metadata_json TEXT,
+    FOREIGN KEY(source_asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+    FOREIGN KEY(target_asset_id) REFERENCES assets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_relationships_source ON asset_relationships(source_asset_id);
+CREATE INDEX IF NOT EXISTS idx_asset_relationships_target ON asset_relationships(target_asset_id);
+CREATE INDEX IF NOT EXISTS idx_asset_relationships_type ON asset_relationships(relationship_type);
+"""
+```
+
+---
+
+## `modules/registry/fingerprint.py`
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+import hashlib
+import os
+
+
+@dataclass
+class FingerprintResult:
+    path: str
+    file_size: int
+    modified_time: float
+    created_time: float
+    quick_fingerprint: str
+    sha256: Optional[str] = None
+    blake3: Optional[str] = None
+
+
+class FileFingerprint:
+    """
+    Computes quick and strong file fingerprints.
+
+    Quick fingerprint:
+    - path-independent
+    - based on file size, mtime, and sample bytes
+
+    Strong fingerprint:
+    - full-file SHA256
+    - optional BLAKE3 if package is installed
+    """
+
+    def __init__(self, sample_size: int = 65536):
+        self.sample_size = sample_size
+
+    def fingerprint_file(
+        self,
+        path: str,
+        compute_sha256: bool = False,
+        compute_blake3: bool = False,
+    ) -> FingerprintResult:
+        file_path = Path(path).resolve()
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        stat = file_path.stat()
+        quick_fingerprint = self._compute_quick_fingerprint(file_path, stat.st_size, stat.st_mtime)
+
+        sha256 = self.compute_sha256(file_path) if compute_sha256 else None
+        blake3 = self.compute_blake3(file_path) if compute_blake3 else None
+
+        return FingerprintResult(
+            path=str(file_path),
+            file_size=stat.st_size,
+            modified_time=stat.st_mtime,
+            created_time=getattr(stat, "st_ctime", stat.st_mtime),
+            quick_fingerprint=quick_fingerprint,
+            sha256=sha256,
+            blake3=blake3,
+        )
+
+    def compute_sha256(self, path: str | Path, chunk_size: int = 1024 * 1024) -> str:
+        file_path = Path(path)
+        hasher = hashlib.sha256()
+
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+
+        return hasher.hexdigest()
+
+    def compute_blake3(self, path: str | Path, chunk_size: int = 1024 * 1024) -> Optional[str]:
+        try:
+            import blake3  # type: ignore
+        except ImportError:
+            return None
+
+        file_path = Path(path)
+        hasher = blake3.blake3()
+
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+
+        return hasher.hexdigest()
+
+    def _compute_quick_fingerprint(self, file_path: Path, file_size: int, modified_time: float) -> str:
+        sample_hash = hashlib.sha256()
+
+        with open(file_path, "rb") as f:
+            head = f.read(self.sample_size)
+
+            tail = b""
+            if file_size > self.sample_size:
+                try:
+                    f.seek(max(0, file_size - self.sample_size), os.SEEK_SET)
+                    tail = f.read(self.sample_size)
+                except OSError:
+                    tail = b""
+
+        sample_hash.update(str(file_size).encode("utf-8"))
+        sample_hash.update(str(modified_time).encode("utf-8"))
+        sample_hash.update(head)
+        sample_hash.update(tail)
+
+        return sample_hash.hexdigest()
+```
+
+---
+
+## `modules/registry/asset_registry.py`
+
+```python
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+import json
+import os
+import sqlite3
+
+from .fingerprint import FileFingerprint, FingerprintResult
+from .models import AssetRecord, InspectionRecord, LoadHistoryRecord
+from .schema import SCHEMA_SQL
+
+
+class AssetRegistry:
+    """
+    Local SQLite registry for model-like assets.
+
+    Responsibilities:
+    - register files
+    - update fingerprints
+    - store inspection metadata
+    - store load history
+    - basic lookup/search helpers
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        self.fingerprinter = FileFingerprint()
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(SCHEMA_SQL)
+
+    def register_file(
+        self,
+        path: str,
+        compute_sha256: bool = False,
+        compute_blake3: bool = False,
+    ) -> AssetRecord:
+        file_path = Path(path).resolve()
+        if not file_path.exists():
+            raise FileNotFoundError(f"Cannot register missing file: {file_path}")
+
+        fingerprint = self.fingerprinter.fingerprint_file(
+            str(file_path),
+            compute_sha256=compute_sha256,
+            compute_blake3=compute_blake3,
+        )
+        return self.upsert_asset_from_fingerprint(fingerprint)
+
+    def upsert_asset_from_fingerprint(self, fingerprint: FingerprintResult) -> AssetRecord:
+        now = datetime.utcnow().isoformat()
+        file_path = Path(fingerprint.path)
+        extension = file_path.suffix.lower()
+
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM assets WHERE path = ?",
+                (fingerprint.path,),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE assets
+                    SET filename = ?,
+                        extension = ?,
+                        file_size = ?,
+                        modified_time = ?,
+                        created_time = ?,
+                        last_seen_at = ?,
+                        exists_on_disk = 1,
+                        quick_fingerprint = ?,
+                        sha256 = COALESCE(?, sha256),
+                        blake3 = COALESCE(?, blake3)
+                    WHERE path = ?
+                    """,
+                    (
+                        file_path.name,
+                        extension,
+                        fingerprint.file_size,
+                        fingerprint.modified_time,
+                        fingerprint.created_time,
+                        now,
+                        fingerprint.quick_fingerprint,
+                        fingerprint.sha256,
+                        fingerprint.blake3,
+                        fingerprint.path,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO assets (
+                        path, filename, extension, file_size, modified_time, created_time,
+                        first_seen_at, last_seen_at, exists_on_disk,
+                        quick_fingerprint, sha256, blake3
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        fingerprint.path,
+                        file_path.name,
+                        extension,
+                        fingerprint.file_size,
+                        fingerprint.modified_time,
+                        fingerprint.created_time,
+                        now,
+                        now,
+                        fingerprint.quick_fingerprint,
+                        fingerprint.sha256,
+                        fingerprint.blake3,
+                    ),
+                )
+
+            row = conn.execute(
+                "SELECT * FROM assets WHERE path = ?",
+                (fingerprint.path,),
+            ).fetchone()
+
+        return self._row_to_asset_record(row)
+
+    def get_asset_by_path(self, path: str) -> Optional[AssetRecord]:
+        file_path = str(Path(path).resolve())
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM assets WHERE path = ?",
+                (file_path,),
+            ).fetchone()
+        return self._row_to_asset_record(row) if row else None
+
+    def get_asset_by_id(self, asset_id: int) -> Optional[AssetRecord]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM assets WHERE id = ?",
+                (asset_id,),
+            ).fetchone()
+        return self._row_to_asset_record(row) if row else None
+
+    def get_asset_by_sha256(self, sha256: str) -> Optional[AssetRecord]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM assets WHERE sha256 = ?",
+                (sha256,),
+            ).fetchone()
+        return self._row_to_asset_record(row) if row else None
+
+    def list_assets(
+        self,
+        asset_type: Optional[str] = None,
+        architecture: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[AssetRecord]:
+        clauses = []
+        params: list[Any] = []
+
+        if asset_type:
+            clauses.append("asset_type = ?")
+            params.append(asset_type)
+
+        if architecture:
+            clauses.append("architecture = ?")
+            params.append(architecture)
+
+        where_sql = ""
+        if clauses:
+            where_sql = "WHERE " + " AND ".join(clauses)
+
+        sql = f"""
+            SELECT * FROM assets
+            {where_sql}
+            ORDER BY last_seen_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        return [self._row_to_asset_record(row) for row in rows]
+
+    def mark_missing_assets(self) -> int:
+        updated = 0
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, path FROM assets").fetchall()
+
+            for row in rows:
+                exists = Path(row["path"]).exists()
+                conn.execute(
+                    "UPDATE assets SET exists_on_disk = ? WHERE id = ?",
+                    (1 if exists else 0, row["id"]),
+                )
+                updated += 1
+
+        return updated
+
+    def store_inspection(self, asset_id: int, report: dict[str, Any]) -> None:
+        now = datetime.utcnow().isoformat()
+
+        metadata = report.get("metadata", {})
+        prefix_summary = report.get("prefix_summary", {})
+        example_keys = report.get("example_keys", [])
+        dtype_summary = report.get("dtype_summary", {})
+        tensor_shape_summary = report.get("tensor_shape_summary", {})
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE assets
+                SET asset_type = ?,
+                    format_type = ?,
+                    architecture = ?,
+                    checkpoint_kind = ?,
+                    has_unet = ?,
+                    has_vae = ?,
+                    has_text_encoder = ?,
+                    has_text_encoder_2 = ?,
+                    key_count = ?,
+                    metadata_json = ?
+                WHERE id = ?
+                """,
+                (
+                    report.get("asset_type", "unknown"),
+                    report.get("format_type", "other"),
+                    report.get("architecture", "unknown"),
+                    report.get("checkpoint_kind", "unknown"),
+                    int(report.get("has_unet", False)),
+                    int(report.get("has_vae", False)),
+                    int(report.get("has_text_encoder", False)),
+                    int(report.get("has_text_encoder_2", False)),
+                    report.get("key_count"),
+                    json.dumps(metadata, ensure_ascii=False),
+                    asset_id,
+                ),
+            )
+
+            conn.execute(
+                """
+                INSERT INTO asset_inspections (
+                    asset_id,
+                    inspected_at,
+                    inspector_version,
+                    key_count,
+                    prefix_summary_json,
+                    example_keys_json,
+                    dtype_summary_json,
+                    tensor_shape_summary_json,
+                    result_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    asset_id,
+                    now,
+                    report.get("inspector_version", "1"),
+                    report.get("key_count"),
+                    json.dumps(prefix_summary, ensure_ascii=False),
+                    json.dumps(example_keys, ensure_ascii=False),
+                    json.dumps(dtype_summary, ensure_ascii=False),
+                    json.dumps(tensor_shape_summary, ensure_ascii=False),
+                    json.dumps(report, ensure_ascii=False),
+                ),
+            )
+
+    def get_latest_inspection(self, asset_id: int) -> Optional[InspectionRecord]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM asset_inspections
+                WHERE asset_id = ?
+                ORDER BY inspected_at DESC
+                LIMIT 1
+                """,
+                (asset_id,),
+            ).fetchone()
+
+        return self._row_to_inspection_record(row) if row else None
+
+    def log_load_attempt(
+        self,
+        asset_id: int,
+        status: str,
+        device: Optional[str] = None,
+        precision: Optional[str] = None,
+        load_time_ms: Optional[int] = None,
+        error_message: Optional[str] = None,
+        context: Optional[dict[str, Any]] = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO load_history (
+                    asset_id,
+                    loaded_at,
+                    status,
+                    device,
+                    precision,
+                    load_time_ms,
+                    error_message,
+                    context_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    asset_id,
+                    datetime.utcnow().isoformat(),
+                    status,
+                    device,
+                    precision,
+                    load_time_ms,
+                    error_message,
+                    json.dumps(context or {}, ensure_ascii=False),
+                ),
+            )
+
+    def get_load_history(self, asset_id: int, limit: int = 20) -> list[LoadHistoryRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM load_history
+                WHERE asset_id = ?
+                ORDER BY loaded_at DESC
+                LIMIT ?
+                """,
+                (asset_id, limit),
+            ).fetchall()
+
+        return [self._row_to_load_history_record(row) for row in rows]
+
+    def add_relationship(
+        self,
+        source_asset_id: int,
+        target_asset_id: int,
+        relationship_type: str,
+        confidence: Optional[float] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO asset_relationships (
+                    source_asset_id,
+                    target_asset_id,
+                    relationship_type,
+                    confidence,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    source_asset_id,
+                    target_asset_id,
+                    relationship_type,
+                    confidence,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+
+    def _row_to_asset_record(self, row: sqlite3.Row) -> AssetRecord:
+        return AssetRecord(
+            id=row["id"],
+            path=row["path"],
+            filename=row["filename"],
+            extension=row["extension"] or "",
+            file_size=row["file_size"] or 0,
+            modified_time=row["modified_time"] or 0.0,
+            created_time=row["created_time"] or 0.0,
+            first_seen_at=row["first_seen_at"],
+            last_seen_at=row["last_seen_at"],
+            exists_on_disk=bool(row["exists_on_disk"]),
+            quick_fingerprint=row["quick_fingerprint"],
+            sha256=row["sha256"],
+            blake3=row["blake3"],
+            asset_type=row["asset_type"],
+            format_type=row["format_type"],
+            architecture=row["architecture"],
+            checkpoint_kind=row["checkpoint_kind"],
+            has_unet=bool(row["has_unet"]),
+            has_vae=bool(row["has_vae"]),
+            has_text_encoder=bool(row["has_text_encoder"]),
+            has_text_encoder_2=bool(row["has_text_encoder_2"]),
+            key_count=row["key_count"],
+            metadata_json=row["metadata_json"],
+            notes=row["notes"],
+        )
+
+    def _row_to_inspection_record(self, row: sqlite3.Row) -> InspectionRecord:
+        return InspectionRecord(
+            id=row["id"],
+            asset_id=row["asset_id"],
+            inspected_at=row["inspected_at"],
+            inspector_version=row["inspector_version"],
+            key_count=row["key_count"],
+            prefix_summary_json=row["prefix_summary_json"],
+            example_keys_json=row["example_keys_json"],
+            dtype_summary_json=row["dtype_summary_json"],
+            tensor_shape_summary_json=row["tensor_shape_summary_json"],
+            result_json=row["result_json"],
+        )
+
+    def _row_to_load_history_record(self, row: sqlite3.Row) -> LoadHistoryRecord:
+        return LoadHistoryRecord(
+            id=row["id"],
+            asset_id=row["asset_id"],
+            loaded_at=row["loaded_at"],
+            status=row["status"],
+            device=row["device"],
+            precision=row["precision"],
+            load_time_ms=row["load_time_ms"],
+            error_message=row["error_message"],
+            context_json=row["context_json"],
+        )
+```
+
+---
+
+## `modules/registry/scanner.py`
+
+```python
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable, Optional
+import os
+
+from .asset_registry import AssetRegistry
+from .models import ScanResult
+
+
+DEFAULT_SUPPORTED_EXTENSIONS = {
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+}
+
+
+class AssetScanner:
+    """
+    Filesystem scanner for registering model-like assets.
+
+    This scanner only registers files and fingerprints them.
+    It does not deeply inspect checkpoint keys by itself.
+    """
+
+    def __init__(
+        self,
+        registry: AssetRegistry,
+        supported_extensions: Optional[set[str]] = None,
+    ):
+        self.registry = registry
+        self.supported_extensions = supported_extensions or set(DEFAULT_SUPPORTED_EXTENSIONS)
+
+    def scan_directory(
+        self,
+        root_dir: str,
+        recursive: bool = True,
+        compute_sha256: bool = False,
+        compute_blake3: bool = False,
+        skip_hidden: bool = True,
+        exclude_dir_names: Optional[set[str]] = None,
+    ) -> ScanResult:
+        result = ScanResult()
+        root = Path(root_dir)
+
+        if not root.exists():
+            result.errors.append(f"Directory does not exist: {root}")
+            return result
+
+        excluded = exclude_dir_names or {
+            "__pycache__",
+            ".git",
+            ".hg",
+            ".svn",
+            ".venv",
+            "venv",
+            "node_modules",
+        }
+
+        walker = root.rglob("*") if recursive else root.glob("*")
+
+        for path in walker:
+            result.scanned_paths += 1
+
+            try:
+                if path.is_dir():
+                    continue
+
+                if skip_hidden and self._is_hidden(path):
+                    result.skipped_files += 1
+                    continue
+
+                if any(part in excluded for part in path.parts):
+                    result.skipped_files += 1
+                    continue
+
+                if path.suffix.lower() not in self.supported_extensions:
+                    result.skipped_files += 1
+                    continue
+
+                result.matched_files += 1
+
+                existing = self.registry.get_asset_by_path(str(path.resolve()))
+                asset = self.registry.register_file(
+                    str(path.resolve()),
+                    compute_sha256=compute_sha256,
+                    compute_blake3=compute_blake3,
+                )
+
+                if existing is None:
+                    result.inserted_assets += 1
+                else:
+                    result.updated_assets += 1
+
+            except Exception as e:
+                result.errors.append(f"{path}: {e}")
+
+        return result
+
+    def scan_files(
+        self,
+        file_paths: Iterable[str],
+        compute_sha256: bool = False,
+        compute_blake3: bool = False,
+    ) -> ScanResult:
+        result = ScanResult()
+
+        for file_path in file_paths:
+            result.scanned_paths += 1
+            path = Path(file_path)
+
+            try:
+                if not path.exists() or not path.is_file():
+                    result.errors.append(f"Missing file: {path}")
+                    continue
+
+                if path.suffix.lower() not in self.supported_extensions:
+                    result.skipped_files += 1
+                    continue
+
+                result.matched_files += 1
+
+                existing = self.registry.get_asset_by_path(str(path.resolve()))
+                self.registry.register_file(
+                    str(path.resolve()),
+                    compute_sha256=compute_sha256,
+                    compute_blake3=compute_blake3,
+                )
+
+                if existing is None:
+                    result.inserted_assets += 1
+                else:
+                    result.updated_assets += 1
+
+            except Exception as e:
+                result.errors.append(f"{path}: {e}")
+
+        return result
+
+    def _is_hidden(self, path: Path) -> bool:
+        return any(part.startswith(".") for part in path.parts if part not in (os.sep, ""))
+```
+
+---
+
+## How I’d wire this into your project next
+
+Because your current loading flow still revolves around `BasicLoad` calling into `LoadModel`, the cleanest next step is:
+
+1. initialize the registry once in your config/base layer
+2. register the file before inspection
+3. store the checkpoint inspection report
+4. log load success/failure
+
+That fits your current orchestration pattern in `basic_load.py` and `load_safetensors_model.py`.  
+
+A good future config addition would be something like:
+
+```python
+self.data_dir = os.path.join(self.project_root, "data")
+self.registry_db_path = os.path.join(self.data_dir, "asset_registry.db")
+```
+
+Then:
+
+```python
+from modules.registry import AssetRegistry
+
+self.asset_registry = AssetRegistry(self.registry_db_path)
+```
+
+---
+
+## What this first draft already supports
+
+* registering assets by path
+* quick fingerprints
+* optional SHA256 / BLAKE3
+* inspection history storage
+* load history logging
+* relationships
+* bulk scanning
+
+## What I intentionally did not overcomplicate yet
+
+* migrations
+* WAL tuning
+* advanced duplicate reconciliation
+* background scanning
+* UI search models
+* asset-type-specific inspectors
+
+Those are good later, but this is enough to become real infrastructure now.
+
+## Small caution before you paste this in
+
+This is project-ready as a draft, but I’d still expect one quick pass after it’s dropped into your tree to align:
+
+* exact import paths
+* your preferred `ConfigOptions` directory layout
+* whether you want `data/asset_registry.db` or some other location
+
+Next best step is for me to give you the integration patch for:
+
+* `config_options.py`
+* `checkpoint_inspector.py`
+* `load_safetensors_model.py`
+
+so the registry actually gets used in the new rebuild flow.

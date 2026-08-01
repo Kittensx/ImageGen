@@ -1,0 +1,9 @@
+{
+  "architecture": "sd2",
+  "family": "stable-diffusion-2.x",
+  "pipeline_class": "StableDiffusionPipeline",
+  "notes": [
+    "Uses OpenCLIP text encoder",
+    "Cross attention dim is 1024 instead of 768"
+  ]
+}

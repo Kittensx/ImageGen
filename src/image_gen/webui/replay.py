@@ -1,0 +1,868 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import threading
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Mapping
+
+from image_gen.runtime_options import (
+    RUNTIME_REPLAY_JOB_FIELDS,
+    extract_runtime_execution_record,
+    runtime_execution_fingerprint,
+    runtime_replay_assessment,
+    runtime_replay_warnings,
+)
+from image_gen.webui.jobs import GenerationJobManager
+from image_gen.webui.model_selection import ActiveModelSelection, WebUIModelSelectionState
+from image_gen.webui.output_details import OutputMetadataDetails, load_output_details
+from image_gen.webui.schema_utils import normalize_config_schema
+from modules.project_context import ProjectContext
+from modules.txt2img.model_selector import MODEL_EXTENSIONS
+
+
+_EDITABLE_FIELDS = {
+    "positive_prompt",
+    "negative_prompt",
+    "model_path",
+    "vae_path",
+    "width",
+    "height",
+    "steps",
+    "cfg_scale",
+    "seed",
+    "batch_size",
+    "batch_count",
+    "sampler_name",
+    "scheduler_name",
+    "sampler_kwargs",
+    "scheduler_kwargs",
+    "prompt_parser_name",
+    "prompt_parser_kwargs",
+    "prompt_shortcut_profile_name",
+    "prompt_shortcut_profile_snapshot",
+    "prompt_parser_preset_name",
+    "base_prompt_parser_name",
+    "base_shortcut_profile_name",
+    "hires_prompt_parser_mode",
+    "hires_prompt_parser_name",
+    "hires_prompt_parser_kwargs",
+    "hires_shortcut_profile_mode",
+    "hires_shortcut_profile_name",
+    "hires_shortcut_profile_snapshot",
+    "hires_positive_prompt",
+    "hires_negative_prompt",
+    "hires_size_mode",
+    "hires_scale",
+    "hires_width",
+    "hires_height",
+    "hires_dimension_plan",
+    "hires_enabled",
+    "hires_steps",
+    "hires_denoising_strength",
+    "hires_step_policy",
+    "hires_sampler_name",
+    "hires_scheduler_name",
+    "hires_cfg_scale",
+    "hires_cfg_rescale",
+    "hires_upscaler",
+    "hires_save_lowres",
+    "prompt_preflight",
+    "prompt_shadow_compare",
+    "prompt_route_plan",
+    "hires_prompt_route_plan",
+}
+_BATCH_OVERRIDE_FIELDS = {
+    "model_path",
+    "vae_path",
+    "width",
+    "height",
+    "steps",
+    "cfg_scale",
+    "sampler_name",
+    "scheduler_name",
+    "seed",
+    "batch_size",
+    "batch_count",
+    "sampler_kwargs",
+    "scheduler_kwargs",
+}
+_OPERATIONAL_FIELDS = {
+    "output_dir",
+    "output_prefix",
+    "save_images",
+    "live_preview_enabled",
+    "live_preview_mode",
+    "live_preview_interval",
+    "live_preview_width",
+    "live_preview_format",
+    "live_preview_history",
+    "live_preview_batch_index",
+    "live_preview_adaptive_throttle",
+    "live_preview_adaptive_target",
+    "live_preview_adaptive_max_interval",
+}
+_PRESERVABLE_BACKEND_FIELDS = {
+    "cfg_rescale",
+    "compatibility_mode",
+    "clip_skip",
+    "tiling",
+    "prompt_parser_name",
+    "prompt_parser_kwargs",
+    "prompt_shortcut_profile_name",
+    "prompt_shortcut_profile_snapshot",
+    "prompt_parser_preset_name",
+    "base_prompt_parser_name",
+    "base_shortcut_profile_name",
+    "hires_prompt_parser_mode",
+    "hires_prompt_parser_name",
+    "hires_prompt_parser_kwargs",
+    "hires_shortcut_profile_mode",
+    "hires_shortcut_profile_name",
+    "hires_shortcut_profile_snapshot",
+    "hires_positive_prompt",
+    "hires_negative_prompt",
+    "hires_size_mode",
+    "hires_scale",
+    "hires_width",
+    "hires_height",
+    "hires_dimension_plan",
+    "hires_enabled",
+    "hires_steps",
+    "hires_denoising_strength",
+    "hires_step_policy",
+    "hires_sampler_name",
+    "hires_scheduler_name",
+    "hires_cfg_scale",
+    "hires_cfg_rescale",
+    "hires_upscaler",
+    "hires_save_lowres",
+    "prompt_preflight",
+    "prompt_shadow_compare",
+    "prompt_route_plan",
+    "hires_prompt_route_plan",
+    "parser_kwargs",
+    "canonical_prompt_contract",
+    "lora_paths",
+    "loras",
+    "vae_name",
+    "vae_hash",
+    *RUNTIME_REPLAY_JOB_FIELDS,
+}
+_CORE_REQUIRED_FIELDS = {
+    "positive_prompt",
+    "negative_prompt",
+    "seed",
+    "width",
+    "height",
+    "steps",
+    "cfg_scale",
+    "sampler_name",
+    "scheduler_name",
+    "model_path",
+}
+_MANIFEST_COMPLETENESS_FIELDS = (
+    "required_for_rerun.prompt",
+    "required_for_rerun.negative_prompt",
+    "required_for_rerun.seed",
+    "required_for_rerun.width",
+    "required_for_rerun.height",
+    "required_for_rerun.steps",
+    "required_for_rerun.cfg_scale",
+    "required_for_rerun.batch_size",
+    "required_for_rerun.batch_count",
+    "required_for_rerun.sampler_name",
+    "required_for_rerun.scheduler_name",
+    "required_for_rerun.model_path",
+    "optional_for_rerun.sampler_kwargs",
+    "optional_for_rerun.scheduler_kwargs",
+    "optional_for_rerun.guidance_rescale",
+    "optional_for_rerun.extra.vae_path",
+    "extra.model_provenance.loaded_path",
+    "extra.model_provenance.sha256",
+)
+_TOKEN_TTL_SECONDS = 15 * 60
+
+
+@dataclass
+class ReplayPreflight:
+    valid: bool
+    request: dict[str, Any]
+    field_results: list[dict[str, Any]]
+    warnings: list[str]
+    errors: list[str]
+    missing_assets: list[dict[str, Any]]
+    preserved_settings: dict[str, Any]
+    unsupported_settings: dict[str, Any]
+    completeness: dict[str, Any]
+    summary: dict[str, Any]
+    preflight_token: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class _StoredPreflight:
+    token: str
+    specification: dict[str, Any]
+    created_monotonic: float = field(default_factory=time.monotonic)
+
+
+class ReplayService:
+    """Server-authoritative single-output replay preflight and submission."""
+
+    def __init__(
+        self,
+        context: ProjectContext,
+        jobs: GenerationJobManager,
+        model_selection: WebUIModelSelectionState,
+    ) -> None:
+        self.context = context
+        self.jobs = jobs
+        self.model_selection = model_selection
+        self._tokens: dict[str, _StoredPreflight] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _mapping(value: Any) -> dict[str, Any]:
+        return dict(value) if isinstance(value, Mapping) else {}
+
+    @staticmethod
+    def _recorded_hires_schedule(
+        manifest: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        extra = manifest.get("extra") if isinstance(manifest, Mapping) else {}
+        pipeline_metadata = (extra or {}).get("pipeline_metadata") if isinstance(extra, Mapping) else {}
+        hires = (pipeline_metadata or {}).get("hires_fix") if isinstance(pipeline_metadata, Mapping) else {}
+        if not isinstance(hires, Mapping):
+            return {}, {}
+        replay = hires.get("schedule_replay")
+        fingerprint = hires.get("schedule_fingerprint")
+        return (
+            dict(replay) if isinstance(replay, Mapping) else {},
+            dict(fingerprint) if isinstance(fingerprint, Mapping) else {},
+        )
+
+    @staticmethod
+    def _has_path(source: Mapping[str, Any], dotted: str) -> bool:
+        value: Any = source
+        for part in dotted.split("."):
+            if not isinstance(value, Mapping) or part not in value:
+                return False
+            value = value[part]
+        return True
+
+    @staticmethod
+    def _value_at(source: Mapping[str, Any], dotted: str) -> Any:
+        value: Any = source
+        for part in dotted.split("."):
+            if not isinstance(value, Mapping):
+                return None
+            value = value.get(part)
+        return value
+
+    @staticmethod
+    def _set_path(target: dict[str, Any], dotted: str, value: Any) -> None:
+        parts = [part for part in dotted.split(".") if part]
+        if not parts:
+            return
+        cursor: dict[str, Any] = target
+        for part in parts[:-1]:
+            child = cursor.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                cursor[part] = child
+            cursor = child
+        cursor[parts[-1]] = copy.deepcopy(value)
+
+    @staticmethod
+    def _flatten(source: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+        output: dict[str, Any] = {}
+        for key, value in source.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(value, Mapping):
+                if not value:
+                    output[path] = {}
+                else:
+                    output.update(ReplayService._flatten(value, path))
+            else:
+                output[path] = value
+        return output
+
+    @staticmethod
+    def _same(left: Any, right: Any) -> bool:
+        return json.dumps(left, sort_keys=True, default=str) == json.dumps(
+            right, sort_keys=True, default=str
+        )
+
+    @staticmethod
+    def _safe_specification(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+        source = dict(payload or {})
+        mode = str(source.get("mode") or "exact").strip().lower()
+        if mode not in {"exact", "selected"}:
+            raise ValueError("Replay mode must be 'exact' or 'selected'.")
+        seed_mode = str(source.get("seed_mode") or "original").strip().lower()
+        if seed_mode not in {"original", "random"}:
+            raise ValueError("Seed mode must be 'original' or 'random'.")
+        model_mode = str(source.get("model_mode") or "original").strip().lower()
+        if model_mode not in {"original", "current"}:
+            raise ValueError("Model mode must be 'original' or 'current'.")
+        prompt_mode = str(source.get("prompt_mode") or "raw_original").strip().lower()
+        if prompt_mode not in {"raw_original", "canonical_recorded", "best_available"}:
+            raise ValueError("Prompt mode must be 'raw_original', 'canonical_recorded', or 'best_available'.")
+        output_id = str(source.get("output_id") or "").strip()
+        if not output_id:
+            raise ValueError("A replay output identifier is required.")
+        override_fields = [str(item) for item in source.get("override_fields") or []]
+        unknown_overrides = sorted(set(override_fields) - _BATCH_OVERRIDE_FIELDS)
+        if unknown_overrides:
+            raise ValueError("Unsupported replay override field(s): " + ", ".join(unknown_overrides))
+        request_overrides = copy.deepcopy(dict(source.get("request_overrides") or {}))
+        return {
+            "output_id": output_id,
+            "mode": mode,
+            "selected_fields": [str(item) for item in source.get("selected_fields") or []],
+            "current_values": copy.deepcopy(dict(source.get("current_values") or {})),
+            "seed_mode": seed_mode,
+            "model_mode": model_mode,
+            "prompt_mode": prompt_mode,
+            "remap": copy.deepcopy(dict(source.get("remap") or {})),
+            "request_overrides": request_overrides,
+            "override_fields": override_fields,
+        }
+
+    def _cleanup_tokens(self) -> None:
+        cutoff = time.monotonic() - _TOKEN_TTL_SECONDS
+        with self._lock:
+            stale = [token for token, item in self._tokens.items() if item.created_monotonic < cutoff]
+            for token in stale:
+                self._tokens.pop(token, None)
+
+    def _issue_token(self, specification: dict[str, Any]) -> str:
+        self._cleanup_tokens()
+        token = uuid.uuid4().hex
+        with self._lock:
+            self._tokens[token] = _StoredPreflight(
+                token=token,
+                specification=copy.deepcopy(specification),
+            )
+        return token
+
+    def _consume_specification(self, token: str) -> dict[str, Any]:
+        self._cleanup_tokens()
+        with self._lock:
+            stored = self._tokens.get(str(token or ""))
+        if stored is None:
+            raise ValueError("Replay preflight expired or was not found. Run preflight again.")
+        return copy.deepcopy(stored.specification)
+
+    def _completeness(self, details: OutputMetadataDetails) -> dict[str, Any]:
+        manifest = details.manifest
+        recorded = [path for path in _MANIFEST_COMPLETENESS_FIELDS if self._has_path(manifest, path)]
+        missing = [path for path in _MANIFEST_COMPLETENESS_FIELDS if path not in recorded]
+        required_missing = [field for field in _CORE_REQUIRED_FIELDS if field not in details.replay]
+        quality = "exact_request" if not missing and not required_missing else "best_available"
+        return {
+            "contract_version": 1,
+            "quality": quality,
+            "label": "Exact Request Replay" if quality == "exact_request" else "Best Available Replay",
+            "recorded_fields": recorded,
+            "missing_fields": missing,
+            "missing_core_fields": required_missing,
+        }
+
+    def _plugin_backend_only_settings(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        preserved: dict[str, Any] = {}
+        for kind, name_key, kwargs_key in (
+            ("sampler", "sampler_name", "sampler_kwargs"),
+            ("scheduler", "scheduler_name", "scheduler_kwargs"),
+        ):
+            descriptor = self.jobs.registry.resolve_descriptor(request.get(name_key), kind=kind)
+            values = self._mapping(request.get(kwargs_key))
+            if descriptor is None or not values:
+                continue
+            schema = normalize_config_schema(descriptor.config_schema, kind=kind)
+            properties = self._mapping(schema.get("properties"))
+            if not schema.get("additionalProperties", False):
+                continue
+            for key, value in values.items():
+                if key not in properties:
+                    preserved[f"{kwargs_key}.{key}"] = value
+        return preserved
+
+    @staticmethod
+    def _remove_unsupported_paths(request: dict[str, Any], unsupported: Mapping[str, Any]) -> None:
+        for path in unsupported:
+            parts = str(path).split(".")
+            if len(parts) != 2 or parts[0] not in {"sampler_kwargs", "scheduler_kwargs"}:
+                continue
+            container = request.get(parts[0])
+            if isinstance(container, dict):
+                container.pop(parts[1], None)
+
+    def _resolve_vae(self, value: Any) -> Path:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("A VAE replacement path is required.")
+        candidates = [self.context.resolve_project_path(text).expanduser().resolve()]
+        tail = Path(text.replace("\\", "/")).name
+        if tail:
+            candidates.append((self.context.vae_dir / tail).expanduser().resolve())
+        seen: set[str] = set()
+        for candidate in candidates:
+            token = str(candidate).casefold()
+            if token in seen:
+                continue
+            seen.add(token)
+            if candidate.is_file() and candidate.suffix.lower() in MODEL_EXTENSIONS:
+                return candidate
+        raise ValueError(f"VAE file could not be resolved: {text}")
+
+    def _build_raw_request(
+        self,
+        details: OutputMetadataDetails,
+        specification: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], set[str]]:
+        original = copy.deepcopy(details.replay)
+        current = copy.deepcopy(dict(specification.get("current_values") or {}))
+        mode = specification["mode"]
+        replaced: set[str] = set()
+
+        if mode == "selected":
+            request = current
+            for field_name in specification.get("selected_fields") or []:
+                if field_name in original:
+                    request[field_name] = copy.deepcopy(original[field_name])
+                    continue
+                if "." in field_name and self._has_path(original, field_name):
+                    self._set_path(request, field_name, self._value_at(original, field_name))
+        else:
+            request = original
+            for name in _OPERATIONAL_FIELDS:
+                if name in current:
+                    request[name] = copy.deepcopy(current[name])
+
+        # Phase 14K-11 runtime controls are not creative request fields. Restore
+        # them for both exact and selected replay modes whenever the source
+        # image recorded them, while still allowing explicit future replay UI
+        # controls to supply a value first.
+        for name in RUNTIME_REPLAY_JOB_FIELDS:
+            if name in original:
+                request.setdefault(name, copy.deepcopy(original[name]))
+
+        prompt_mode = str(specification.get("prompt_mode") or "raw_original")
+        prompt_contract = self._mapping(self._mapping(details.manifest.get("extra")).get("prompt_contract"))
+        prompt_mode_fallback = ""
+        if prompt_mode == "raw_original":
+            if "raw_positive" in prompt_contract or "raw_negative" in prompt_contract:
+                request["positive_prompt"] = str(prompt_contract.get("raw_positive") or "")
+                request["negative_prompt"] = str(prompt_contract.get("raw_negative") or "")
+            else:
+                prompt_mode_fallback = "Raw original prompts were unavailable; replay used the best available recorded prompt."
+        elif prompt_mode == "canonical_recorded":
+            positive_structure = self._mapping(prompt_contract.get("canonical_positive_structure"))
+            negative_structure = self._mapping(prompt_contract.get("canonical_negative_structure"))
+            positive = positive_structure.get("lossless_source") or prompt_contract.get("translated_positive") or prompt_contract.get("canonical_positive")
+            negative = negative_structure.get("lossless_source") or prompt_contract.get("translated_negative") or prompt_contract.get("canonical_negative")
+            if positive is not None or negative is not None:
+                request["positive_prompt"] = str(positive or "")
+                request["negative_prompt"] = str(negative or "")
+                request["prompt_shortcut_profile_name"] = "canonical"
+                request.pop("prompt_shortcut_profile_snapshot", None)
+                request["base_shortcut_profile_name"] = "canonical"
+            else:
+                prompt_mode_fallback = "Canonical recorded prompts were unavailable; replay used the best available recorded prompt."
+
+        request_overrides = dict(specification.get("request_overrides") or {})
+        for name in specification.get("override_fields") or []:
+            if name in request_overrides:
+                request[name] = copy.deepcopy(request_overrides[name])
+                replaced.add(name)
+
+        remap = dict(specification.get("remap") or {})
+        for name in ("model_path", "vae_path", "sampler_name", "scheduler_name"):
+            if remap.get(name) not in (None, ""):
+                request[name] = remap[name]
+                replaced.add(name)
+
+        if specification.get("seed_mode") == "random":
+            request["seed"] = -1
+            replaced.add("seed")
+
+        if specification.get("model_mode") == "current":
+            current_model = self.model_selection.current()
+            if current_model is None:
+                request.pop("model_path", None)
+            else:
+                request["model_path"] = current_model.resolved_path
+            replaced.add("model_path")
+
+        schedule_sensitive_fields = {
+            "sampler_name",
+            "scheduler_name",
+            "hires_sampler_name",
+            "hires_scheduler_name",
+            "hires_steps",
+            "hires_denoising_strength",
+            "hires_step_policy",
+        }
+        recorded_replay, recorded_fingerprint = self._recorded_hires_schedule(
+            details.manifest
+        )
+        use_recorded_schedule = bool(
+            mode == "exact"
+            and recorded_replay
+            and recorded_fingerprint
+            and not (replaced & schedule_sensitive_fields)
+        )
+        if recorded_replay and recorded_fingerprint:
+            request["hires_schedule_conformance_source_replay"] = recorded_replay
+            request["hires_schedule_conformance_source_fingerprint"] = recorded_fingerprint
+        if use_recorded_schedule:
+            request["hires_recorded_schedule_replay"] = recorded_replay
+            request["hires_recorded_schedule_fingerprint"] = recorded_fingerprint
+            request["hires_schedule_replay_mode"] = "recorded_exact"
+        else:
+            request.pop("hires_recorded_schedule_replay", None)
+            request.pop("hires_recorded_schedule_fingerprint", None)
+            request["hires_schedule_replay_mode"] = "reconstruct"
+
+        self._remove_unsupported_paths(request, details.unsupported)
+        request.setdefault("save_images", True)
+        request.setdefault("batch_size", 1)
+        request.setdefault("batch_count", 1)
+        recorded_execution = extract_runtime_execution_record(details.manifest)
+        if recorded_execution:
+            request["runtime_replay_conformance_source"] = runtime_execution_fingerprint(
+                recorded_execution
+            )
+
+        diagnostics = self._mapping(request.get("diagnostics"))
+        diagnostics["replay"] = {
+            "source_output_id": details.output_id,
+            "mode": mode,
+            "seed_mode": specification.get("seed_mode"),
+            "model_mode": specification.get("model_mode"),
+            "prompt_mode": prompt_mode,
+            "prompt_mode_fallback": prompt_mode_fallback,
+            "metadata_source": details.metadata_source,
+            "schedule_replay_mode": request.get("hires_schedule_replay_mode", "reconstruct"),
+            "recorded_schedule_available": bool(recorded_replay and recorded_fingerprint),
+        }
+        request["diagnostics"] = diagnostics
+        return request, replaced
+
+    def _validate_assets_and_plugins(
+        self,
+        raw_request: dict[str, Any],
+        specification: Mapping[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[str], ActiveModelSelection | None]:
+        missing: list[dict[str, Any]] = []
+        errors: list[str] = []
+        authorized_model: ActiveModelSelection | None = None
+
+        model_path = raw_request.get("model_path")
+        if not model_path:
+            message = (
+                "No current WebUI model is active." if specification.get("model_mode") == "current"
+                else "The original checkpoint path was not recorded."
+            )
+            missing.append({"kind": "model", "field": "model_path", "requested": model_path, "reason": message})
+            errors.append(message)
+        else:
+            try:
+                authorized_model = self.model_selection.authorize(model_path, source="replay_preflight")
+                raw_request["model_path"] = authorized_model.resolved_path
+            except (OSError, ValueError) as exc:
+                missing.append({"kind": "model", "field": "model_path", "requested": model_path, "reason": str(exc)})
+                errors.append(f"Checkpoint unavailable: {exc}")
+
+        vae_path = raw_request.get("vae_path")
+        if vae_path not in (None, ""):
+            try:
+                raw_request["vae_path"] = str(self._resolve_vae(vae_path))
+            except (OSError, ValueError) as exc:
+                missing.append({"kind": "vae", "field": "vae_path", "requested": vae_path, "reason": str(exc)})
+                errors.append(f"VAE unavailable: {exc}")
+
+        for kind, field_name in (("sampler", "sampler_name"), ("scheduler", "scheduler_name")):
+            requested = raw_request.get(field_name)
+            if not requested or self.jobs.registry.resolve_descriptor(requested, kind=kind) is None:
+                reason = f"Recorded {kind} plugin is not installed: {requested!r}."
+                missing.append({"kind": kind, "field": field_name, "requested": requested, "reason": reason})
+                errors.append(reason)
+
+        from modules.prompt_parsers import default_prompt_parser_registry
+
+        requested_parser = raw_request.get("prompt_parser_name") or "legacy"
+        if not default_prompt_parser_registry().has(requested_parser, require_available=True):
+            reason = f"Recorded prompt parser is not installed: {requested_parser!r}."
+            missing.append({
+                "kind": "prompt_parser",
+                "field": "prompt_parser_name",
+                "requested": requested_parser,
+                "reason": reason,
+            })
+            errors.append(reason)
+
+        from modules.prompt_shortcuts import PromptShortcutProfileDescriptor, default_prompt_shortcut_registry, validate_prompt_shortcut_profile
+
+        profile_name = raw_request.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else ("parser21_native" if requested_parser == "parser21" else "canonical"))
+        snapshot = raw_request.get("prompt_shortcut_profile_snapshot")
+        if isinstance(snapshot, Mapping) and snapshot:
+            profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
+            validation = validate_prompt_shortcut_profile(profile)
+            if not validation.valid:
+                reason = "Recorded prompt shortcut profile snapshot is invalid."
+                missing.append({"kind": "prompt_shortcut_profile", "field": "prompt_shortcut_profile_snapshot", "requested": profile_name, "reason": reason})
+                errors.append(reason)
+        elif not default_prompt_shortcut_registry().has(profile_name):
+            reason = f"Recorded prompt shortcut profile is not installed: {profile_name!r}."
+            missing.append({"kind": "prompt_shortcut_profile", "field": "prompt_shortcut_profile_name", "requested": profile_name, "reason": reason})
+            errors.append(reason)
+
+        return missing, errors, authorized_model
+
+    def _field_results(
+        self,
+        *,
+        original: Mapping[str, Any],
+        outgoing: Mapping[str, Any],
+        replaced: set[str],
+        preserved: Mapping[str, Any],
+        unsupported: Mapping[str, Any],
+        completeness: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        original_flat = self._flatten(original)
+        outgoing_flat = self._flatten(outgoing)
+        results: list[dict[str, Any]] = []
+        keys = sorted(set(original_flat) | set(outgoing_flat))
+        for path in keys:
+            top = path.split(".", 1)[0]
+            original_value = original_flat.get(path)
+            outgoing_value = outgoing_flat.get(path)
+            if path in preserved or top in _PRESERVABLE_BACKEND_FIELDS:
+                status = "preserved_backend_only"
+            elif top in replaced:
+                status = "replaced"
+            elif path not in original_flat:
+                status = "normalized"
+            elif self._same(original_value, outgoing_value):
+                status = "exact"
+            else:
+                status = "normalized"
+            results.append(
+                {
+                    "field": path,
+                    "original": original_value,
+                    "outgoing": outgoing_value,
+                    "status": status,
+                }
+            )
+
+        for path, entry in sorted(unsupported.items()):
+            results.append(
+                {
+                    "field": path,
+                    "original": entry.get("value") if isinstance(entry, Mapping) else None,
+                    "outgoing": None,
+                    "status": "unsupported",
+                    "reason": entry.get("reason") if isinstance(entry, Mapping) else str(entry),
+                }
+            )
+        for path in completeness.get("missing_fields") or []:
+            results.append(
+                {
+                    "field": path,
+                    "original": None,
+                    "outgoing": None,
+                    "status": "missing",
+                    "reason": "Not recorded under the Phase 10B manifest-completeness contract.",
+                }
+            )
+        return results
+
+    def _evaluate(self, specification: dict[str, Any], *, issue_token: bool) -> ReplayPreflight:
+        details = load_output_details(self.context, specification["output_id"])
+        completeness = self._completeness(details)
+        raw_request, replaced = self._build_raw_request(details, specification)
+        missing_assets, errors, _ = self._validate_assets_and_plugins(raw_request, specification)
+        warnings = list(details.warnings)
+        manifest = self._mapping(details.manifest)
+        recorded_execution = extract_runtime_execution_record(manifest)
+        if not recorded_execution:
+            recorded_runtime = self._mapping(
+                self._mapping(manifest.get("extra")).get("runtime_startup_options")
+            )
+            if not recorded_runtime:
+                recorded_runtime = self._mapping(
+                    self._mapping(
+                        self._mapping(manifest.get("optional_for_rerun")).get("extra")
+                    ).get("runtime_startup_options")
+                )
+            warnings.extend(
+                runtime_replay_warnings(
+                    recorded_runtime,
+                    self.jobs.runtime_startup_options,
+                )
+            )
+        prompt_replay_diagnostics = self._mapping(self._mapping(raw_request.get("diagnostics")).get("replay"))
+        if prompt_replay_diagnostics.get("prompt_mode_fallback"):
+            warnings.append(str(prompt_replay_diagnostics["prompt_mode_fallback"]))
+        if specification.get("prompt_mode") == "canonical_recorded":
+            warnings.append("Canonical Recorded Prompt mode replays the stored parser input through the canonical shortcut profile rather than the original user-facing aliases.")
+        elif specification.get("prompt_mode") == "best_available":
+            warnings.append("Best Available Prompt mode may not preserve the original user-facing shortcut text exactly.")
+
+        normalized: dict[str, Any] = {}
+        if not errors:
+            try:
+                strict_source = dict(raw_request)
+                strict_source["_webui_scheduler_user_selected"] = True
+                strict_source["_webui_selection_version"] = 2
+                strict = self.jobs.selections.normalize(
+                    strict_source,
+                    fallback_payload={},
+                    migrate_legacy_auto_fallback=False,
+                    reject_unknown=True,
+                )
+                normalized = self.jobs.normalize_generation_request(strict.payload)
+            except (KeyError, TypeError, ValueError) as exc:
+                errors.append(str(exc))
+
+        runtime_assessment = runtime_replay_assessment(
+            recorded_execution,
+            self.jobs.runtime_startup_options,
+            outgoing_request=normalized or raw_request,
+        )
+        warnings.extend(runtime_assessment.get("warnings") or [])
+        completeness["runtime_replay"] = runtime_assessment
+        if (
+            runtime_assessment.get("recorded_runtime_available", False)
+            and not runtime_assessment.get("exact_replay_supported", False)
+        ):
+            completeness["quality"] = "best_available"
+            completeness["label"] = "Best Available Replay"
+
+        for field_name in sorted(_CORE_REQUIRED_FIELDS):
+            if field_name not in raw_request:
+                errors.append(f"Required replay field is missing: {field_name}.")
+
+        if completeness["quality"] != "exact_request":
+            warnings.append(
+                "This output predates or does not satisfy the complete Phase 10B replay manifest. "
+                "It is labeled Best Available Replay rather than Exact Request Replay."
+            )
+        if details.image.get("model", {}).get("hash"):
+            warnings.append(
+                "The stored checkpoint SHA-256 is reported for comparison; preflight validates the file path, "
+                "extension, size, and modification snapshot without re-hashing a potentially multi-gigabyte file."
+            )
+
+        preserved = {
+            key: copy.deepcopy(value)
+            for key, value in normalized.items()
+            if key in _PRESERVABLE_BACKEND_FIELDS
+        }
+        preserved.update(self._plugin_backend_only_settings(normalized))
+        field_results = self._field_results(
+            original=details.replay,
+            outgoing=normalized,
+            replaced=replaced,
+            preserved=preserved,
+            unsupported=details.unsupported,
+            completeness=completeness,
+        )
+
+        summary = {
+            "output_id": details.output_id,
+            "metadata_source": details.metadata_source,
+            "replay_label": completeness["label"],
+            "prompt": normalized.get("positive_prompt", raw_request.get("positive_prompt", "")),
+            "negative_prompt": normalized.get("negative_prompt", raw_request.get("negative_prompt", "")),
+            "seed": normalized.get("seed", raw_request.get("seed")),
+            "model_path": normalized.get("model_path", raw_request.get("model_path")),
+            "vae_path": normalized.get("vae_path", raw_request.get("vae_path")),
+            "sampler_name": normalized.get("sampler_name", raw_request.get("sampler_name")),
+            "scheduler_name": normalized.get("scheduler_name", raw_request.get("scheduler_name")),
+            "width": normalized.get("width", raw_request.get("width")),
+            "height": normalized.get("height", raw_request.get("height")),
+            "steps": normalized.get("steps", raw_request.get("steps")),
+            "cfg_scale": normalized.get("cfg_scale", raw_request.get("cfg_scale")),
+            "batch_size": normalized.get("batch_size", raw_request.get("batch_size")),
+            "batch_count": normalized.get("batch_count", raw_request.get("batch_count")),
+            "advanced_setting_count": sum(
+                len(self._mapping(normalized.get(key)))
+                for key in ("sampler_kwargs", "scheduler_kwargs")
+            ),
+            "preserved_setting_count": len(preserved),
+            "unsupported_setting_count": len(details.unsupported),
+            "runtime_exact_replay_supported": bool(
+                runtime_assessment.get("exact_replay_supported", False)
+            ),
+            "runtime_substitution_count": len(
+                runtime_assessment.get("substitutions") or []
+            ),
+        }
+
+        result = ReplayPreflight(
+            valid=not errors,
+            request=normalized,
+            field_results=field_results,
+            warnings=list(dict.fromkeys(warnings)),
+            errors=list(dict.fromkeys(errors)),
+            missing_assets=missing_assets,
+            preserved_settings=preserved,
+            unsupported_settings=copy.deepcopy(details.unsupported),
+            completeness=completeness,
+            summary=summary,
+        )
+        if issue_token:
+            result.preflight_token = self._issue_token(specification)
+        return result
+
+    def evaluate_specification(
+        self,
+        payload: Mapping[str, Any] | None,
+        *,
+        issue_token: bool = False,
+    ) -> ReplayPreflight:
+        """Validate a replay specification through the canonical replay path.
+
+        Phase 10C uses this public entry point for independently validated batch
+        items while retaining the same normalization, asset authorization, and
+        plugin checks as single-output replay.
+        """
+        specification = self._safe_specification(payload)
+        return self._evaluate(specification, issue_token=issue_token)
+
+    def preflight(self, payload: Mapping[str, Any] | None) -> ReplayPreflight:
+        return self.evaluate_specification(payload, issue_token=True)
+
+    async def submit(self, preflight_token: str) -> tuple[ReplayPreflight, Any]:
+        specification = self._consume_specification(preflight_token)
+        result = self._evaluate(specification, issue_token=False)
+        if not result.valid:
+            raise ValueError("Replay preflight is no longer valid: " + "; ".join(result.errors))
+        selection = self.model_selection.authorize(
+            result.request.get("model_path"), source="replay_submission"
+        )
+        request = dict(result.request)
+        request["model_path"] = selection.resolved_path
+        job = await self.jobs.submit(request, model_selection=selection.to_dict())
+        with self._lock:
+            self._tokens.pop(preflight_token, None)
+        return result, job
+
+
+def request_fingerprint(request: Mapping[str, Any]) -> str:
+    payload = json.dumps(dict(request), sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+__all__ = ["ReplayPreflight", "ReplayService", "request_fingerprint", "_BATCH_OVERRIDE_FIELDS"]

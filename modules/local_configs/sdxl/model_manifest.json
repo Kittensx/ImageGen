@@ -1,0 +1,7 @@
+{
+  "architecture": "sdxl",
+  "notes": [
+    "Uses dual text encoders",
+    "Much larger UNet"
+  ]
+}
