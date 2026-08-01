@@ -601,6 +601,25 @@ class Txt2ImgRunner:
         )
         extras["progress_reporter"] = progress_reporter
         if hasattr(self.state, "extra"):
+            # Live-preview writers and sinks are job-scoped. A resident model worker
+            # survives across jobs, so retaining a closed writer here makes a UI
+            # setting change appear to require a full process restart.
+            previous_writer = self.state.extra.pop("live_preview_frame_writer", None)
+            if previous_writer is not None and callable(getattr(previous_writer, "close", None)):
+                try:
+                    previous_writer.close()
+                except Exception:
+                    pass
+            for preview_key in (
+                "live_preview_sink",
+                "live_preview_callback",
+                "live_preview_warning_callback",
+                "live_preview_event_callback",
+                "live_preview_memory_event_callback",
+                "live_preview_warnings",
+            ):
+                self.state.extra.pop(preview_key, None)
+
             self.state.extra["progress_reporter"] = progress_reporter
             if not callable(self.state.extra.get("memory_event_callback")):
                 self.state.extra["memory_event_callback"] = _build_memory_event_callback(
@@ -611,6 +630,7 @@ class Txt2ImgRunner:
                 "live_preview_warning_callback",
                 "live_preview_sink_factory",
                 "live_preview_enabled",
+                "live_preview_telemetry_enabled",
                 "live_preview_mode",
                 "live_preview_interval",
                 "live_preview_width",

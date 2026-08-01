@@ -188,7 +188,7 @@ class LivePreviewSettings:
     adaptive_recovery_ratio: float = 0.40
     adaptive_max_interval: int = 8
     adaptive_window: int = 6
-    adaptive_suspend_on_overhead: bool = True
+    adaptive_suspend_on_overhead: bool = False
     adaptive_suspend_ratio: float = 0.55
     adaptive_suspend_min_work_ms: float = 1000.0
     adaptive_suspend_min_samples: int = 2
@@ -238,7 +238,7 @@ class LivePreviewSettings:
                 raw.get("live_preview_adaptive_window", 6), 6
             ))),
             adaptive_suspend_on_overhead=_coerce_bool(
-                raw.get("live_preview_adaptive_suspend_on_overhead", True), True
+                raw.get("live_preview_adaptive_suspend_on_overhead", False), False
             ),
             adaptive_suspend_ratio=min(2.0, max(0.10, _coerce_float(
                 raw.get("live_preview_adaptive_suspend_ratio", 0.55), 0.55
@@ -887,6 +887,8 @@ class CoalescingLivePreviewWriter:
         self.frames_enqueued = 0
         self.frames_processed = 0
         self.frames_replaced = 0
+        self.frames_staged_to_cpu = 0
+        self.frames_skipped_by_interval = 0
         self.worker_failures = 0
         self._worker = threading.Thread(
             target=self._worker_loop,
@@ -914,14 +916,62 @@ class CoalescingLivePreviewWriter:
             except Exception:
                 pass
 
+    def _frame_is_due(self, frame: LivePreviewFrame) -> bool:
+        resolver = getattr(self.writer, "_decode_mode_for_step", None)
+        if not callable(resolver):
+            return True
+        step_number = int(frame.step_index) + 1
+        return resolver(step_number, int(frame.total_steps)) is not None
+
+    def _stage_frame_to_cpu(self, frame: LivePreviewFrame) -> LivePreviewFrame:
+        source = frame.predicted_x0 if frame.predicted_x0 is not None else frame.latent
+        if source is None:
+            raise ValueError("Live preview frame does not contain latent data.")
+
+        settings = getattr(self.writer, "settings", None)
+        batch_index = int(getattr(settings, "batch_index", frame.batch_index) or 0)
+        selected = select_batch_item(source.detach(), batch_index)
+        staged = selected.to(device="cpu", copy=True)
+        metadata = dict(frame.metadata or {})
+        metadata.setdefault("preview_source_device", str(source.device))
+        metadata.setdefault("preview_source_dtype", str(source.dtype))
+        metadata["preview_staged_monotonic"] = time.perf_counter()
+        metadata["preview_staged_unix"] = time.time()
+
+        return LivePreviewFrame(
+            step_index=int(frame.step_index),
+            total_steps=int(frame.total_steps),
+            latent=staged,
+            predicted_x0=staged if frame.predicted_x0 is not None else None,
+            sigma=frame.sigma,
+            model_timestep=frame.model_timestep,
+            batch_index=0,
+            progress_percent=float(frame.progress_percent),
+            metadata=metadata,
+        )
+
     def __call__(self, frame: LivePreviewFrame) -> None:
+        if not self._frame_is_due(frame):
+            self.frames_skipped_by_interval += 1
+            return
+        try:
+            staged_frame = self._stage_frame_to_cpu(frame)
+        except Exception as exc:
+            self._emit_warning(
+                "stage_preview_frame",
+                exc,
+                step_index=getattr(frame, "step_index", None),
+            )
+            return
+
         with self._condition:
             if self._stopped:
                 return
+            self.frames_staged_to_cpu += 1
             self.frames_enqueued += 1
             if self._pending is not None:
                 self.frames_replaced += 1
-            self._pending = frame
+            self._pending = staged_frame
             self._condition.notify_all()
 
     def _worker_loop(self) -> None:
@@ -1001,6 +1051,8 @@ class CoalescingLivePreviewWriter:
             'frames_processed': int(self.frames_processed),
             'frames_replaced': int(self.frames_replaced),
             'coalesced_frames': int(self.frames_replaced),
+            'frames_staged_to_cpu': int(self.frames_staged_to_cpu),
+            'frames_skipped_by_interval': int(self.frames_skipped_by_interval),
             'worker_failures': int(self.worker_failures),
         })
         return payload

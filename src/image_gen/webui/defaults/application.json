@@ -1,5 +1,5 @@
 {
-  "settings_defaults_version": 9,
+  "settings_defaults_version": 10,
   "restore_last_session": true,
   "ui_scale": 105,
   "density": "comfortable",
@@ -27,6 +27,7 @@
   "live_preview_adaptive_recovery_ratio": 0.4,
   "live_preview_adaptive_max_interval": 8,
   "live_preview_adaptive_window": 6,
+  "live_preview_adaptive_suspend_on_overhead": false,
   "live_preview_cfg_visual_enabled": false,
   "live_preview_cleanup_enabled": true,
   "live_preview_retention_days": 7,

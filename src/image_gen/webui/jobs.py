@@ -466,6 +466,10 @@ class GenerationJobManager:
             "live_preview_enabled": application_settings.get(
                 "live_preview_enabled", True
             ),
+            # Step/progress/CFG telemetry is independent of decoded image frames.
+            # This keeps the graph and sampler timing alive when the image-preview
+            # checkbox is disabled or image decoding is suspended.
+            "live_preview_telemetry_enabled": True,
             "live_preview_mode": FORCED_LIVE_PREVIEW_MODE,
             "live_preview_interval": application_settings.get(
                 "live_preview_interval", DEFAULT_FORCED_LIVE_PREVIEW_INTERVAL
@@ -499,6 +503,9 @@ class GenerationJobManager:
             ),
             "live_preview_adaptive_window": application_settings.get(
                 "live_preview_adaptive_window", 6
+            ),
+            "live_preview_adaptive_suspend_on_overhead": application_settings.get(
+                "live_preview_adaptive_suspend_on_overhead", False
             ),
             "cfg_lab_enabled": application_settings.get("cfg_lab_enabled", False),
             "live_preview_cfg_visual_enabled": bool(
@@ -1664,27 +1671,44 @@ class GenerationJobManager:
     def _apply_step_preview_payload(self, job: GenerationJob, payload: Mapping[str, Any]) -> bool:
         step_number = max(1, int(_coerce_top_level_number(payload.get("step"), integer=True, default=1) or 1))
         is_final = bool(payload.get("is_final", False))
+        incoming_filename = str(payload.get("filename") or "")
+        incoming_preview_path = str(payload.get("preview_path") or "")
+        incoming_preview_suspended = bool(payload.get("preview_image_suspended", False))
+        incoming_has_preview_image = bool(
+            not incoming_preview_suspended
+            and (incoming_filename or incoming_preview_path)
+        )
         if job.status in {"cancelling", "cancelled", "failed"}:
             job.stale_preview_events_ignored += 1
             return False
-        if step_number < int(job.current_step or 0) and not is_final:
+        # Per-step telemetry is emitted immediately, while asynchronous image
+        # encoding may finish several sampler steps later. Reject stale
+        # telemetry, but retain delayed image frames without rolling progress
+        # backward.
+        if (
+            step_number < int(job.current_step or 0)
+            and not is_final
+            and not incoming_has_preview_image
+        ):
             job.stale_preview_events_ignored += 1
             job.live_preview_metrics["stale_preview_events_ignored"] = job.stale_preview_events_ignored
             return False
         total_steps = max(step_number, int(_coerce_top_level_number(payload.get("total_steps"), integer=True, default=step_number) or step_number))
         progress_percent = float(payload.get("progress_percent") or (step_number / max(total_steps, 1)) * 100.0)
+        progress_percent = min(max(progress_percent, 0.0), 100.0)
         updated_at = str(payload.get("updated_at") or _utc_now())
         record = {
             "step": step_number,
             "total_steps": total_steps,
             "progress_percent": progress_percent,
             "decode_mode": str(payload.get("decode_mode") or "fast"),
-            "filename": str(payload.get("filename") or ""),
+            "filename": incoming_filename,
             "is_final": is_final,
+            "telemetry_only": bool(payload.get("telemetry_only", False)),
             "updated_at": updated_at,
             "sampler_name": payload.get("sampler_name"),
             "scheduler_name": payload.get("scheduler_name"),
-            "preview_path": str(payload.get("preview_path") or ""),
+            "preview_path": incoming_preview_path,
             "image_width": int(_coerce_top_level_number(payload.get("image_width"), integer=True, default=0) or 0),
             "image_height": int(_coerce_top_level_number(payload.get("image_height"), integer=True, default=0) or 0),
             "sigma": _coerce_top_level_number(payload.get("sigma"), integer=False, default=None),
@@ -1696,7 +1720,7 @@ class GenerationJobManager:
             "cfg_rescale_applied": bool(payload.get("cfg_rescale_applied", False)),
             "override_source": str(payload.get("override_source") or "base_request"),
             "transition_id": payload.get("transition_id"),
-            "preview_image_suspended": bool(payload.get("preview_image_suspended", False)),
+            "preview_image_suspended": incoming_preview_suspended,
             "preview_image_suspension_reason": str(payload.get("preview_image_suspension_reason") or ""),
             "preview_image_suspension_source": str(payload.get("preview_image_suspension_source") or ""),
             "preview_decoder_released": bool(payload.get("preview_decoder_released", False)),
@@ -1722,13 +1746,16 @@ class GenerationJobManager:
             else ""
         )
 
-        if is_final or step_number >= total_steps:
+        previous_step = int(job.current_step or 0)
+        previous_total = int(job.total_steps or 0)
+        previous_percent = float(job.progress_percent or 0.0)
+        if is_final or (step_number >= total_steps and step_number >= previous_step):
             self._transition_job(job, status="finalizing", worker_stage="finalizing")
-        else:
-            self._transition_job(job, status="running", worker_stage="running")
-        job.current_step = step_number
-        job.total_steps = total_steps
-        job.progress_percent = progress_percent
+        elif job.status != "finalizing":
+            self._transition_job(job, status="running", worker_stage="sampling")
+        job.current_step = max(previous_step, step_number)
+        job.total_steps = max(previous_total, total_steps, job.current_step)
+        job.progress_percent = max(previous_percent, progress_percent)
         job.updated_at = updated_at
         job.last_runtime_line_at = updated_at
         job.last_progress_at = updated_at

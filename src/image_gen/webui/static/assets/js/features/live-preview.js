@@ -376,11 +376,18 @@ function renderCurrent() {
     && state.livePreview.finalOutputUrl
     && currentPreviewSource() === state.livePreview.finalOutputUrl
   );
+  const suspensionSource = String(state.livePreview.imageDecodeSuspensionSource || "")
+    .trim()
+    .replaceAll("_", " ");
+  const suspensionSuffix = suspensionSource ? ` (${suspensionSource})` : "";
   $("#livePreviewDecodeMode").textContent = state.livePreview.imageDecodeSuspended
     ? finalOutputDisplayed
-      ? "Decode: Final · step image previews were suspended"
-      : `Decode: Suspended · CFG telemetry continues${state.livePreview.previewDecoderReleased ? " · decoder released" : ""}`
+      ? `Decode: Final · step image previews were suspended${suspensionSuffix}`
+      : `Decode: Suspended${suspensionSuffix} · CFG telemetry continues${state.livePreview.previewDecoderReleased ? " · decoder released" : ""}`
     : `Decode: ${state.livePreview.decodeMode || "—"}${state.livePreview.selectedStep ? ` · preview step ${state.livePreview.selectedStep}` : ""}`;
+  $("#livePreviewDecodeMode").title = state.livePreview.imageDecodeSuspended
+    ? String(state.livePreview.imageDecodeSuspensionReason || "Image-preview decoding was suspended for this job.")
+    : "";
   updateElapsed();
 
   track.classList.toggle("is-running", isActive(state.livePreview.status));

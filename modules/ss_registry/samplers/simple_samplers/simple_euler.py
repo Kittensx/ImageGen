@@ -81,6 +81,11 @@ class SimpleEulerSampler(SamplerTraceMixin):
 
         x = latents
         cfg_scale = float(getattr(request, "cfg_scale", 1.0))
+        progress = (
+            getattr(state, "extra", {}).get("progress_reporter")
+            if state is not None
+            else None
+        )
 
         stepwise_conditioning_used = False
 
@@ -149,6 +154,8 @@ class SimpleEulerSampler(SamplerTraceMixin):
                     "integration_mode": self.SAMPLER_NAME,
                 },
             )
+            if progress is not None:
+                progress.update(1)
         self._trace_sampler_summary(
             request,
             requested_steps=requested_steps,
@@ -195,15 +202,32 @@ class SimpleEulerSamplerAdapter:
         request,
         state=None,
     ):
-        return self.sampler.sample(
-            raw_model_fn=raw_model_fn,
-            guided_model_fn=guided_model_fn,
-            latents=latents,
-            schedule=schedule,
-            conditioning=conditioning,
-            request=request,
-            state=state,
+        progress = (
+            getattr(state, "extra", {}).get("progress_reporter")
+            if state is not None
+            else None
         )
+        if progress is not None:
+            effective_steps = getattr(schedule, "effective_steps", None)
+            total = (
+                int(effective_steps)
+                if effective_steps is not None
+                else int(schedule.sigmas.numel() - 1)
+            )
+            progress.start(total=total, desc="Simple Euler Sampling")
+        try:
+            return self.sampler.sample(
+                raw_model_fn=raw_model_fn,
+                guided_model_fn=guided_model_fn,
+                latents=latents,
+                schedule=schedule,
+                conditioning=conditioning,
+                request=request,
+                state=state,
+            )
+        finally:
+            if progress is not None:
+                progress.close()
 
 
 # Optional registry hook

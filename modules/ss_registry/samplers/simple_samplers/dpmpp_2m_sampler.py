@@ -392,6 +392,11 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
         trace_enabled = bool(
             trace_recorder is not None and getattr(trace_recorder, "enabled", False)
         )
+        progress = (
+            getattr(state, "extra", {}).get("progress_reporter")
+            if state is not None
+            else None
+        )
 
         requested_steps, effective_steps = self._resolve_effective_steps(
             request=request,
@@ -640,6 +645,8 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 model_timestep=timestep,
                 metadata=trace_extra,
             )
+            if progress is not None:
+                progress.update(1)
 
             previous_predicted_x0 = denoised
             if not history_enabled:
@@ -787,15 +794,32 @@ class DPMPlusPlus2MSamplerAdapter:
         request,
         state=None,
     ):
-        return self.sampler.sample(
-            raw_model_fn=raw_model_fn,
-            guided_model_fn=guided_model_fn,
-            latents=latents,
-            schedule=schedule,
-            conditioning=conditioning,
-            request=request,
-            state=state,
+        progress = (
+            getattr(state, "extra", {}).get("progress_reporter")
+            if state is not None
+            else None
         )
+        if progress is not None:
+            effective_steps = getattr(schedule, "effective_steps", None)
+            total = (
+                int(effective_steps)
+                if effective_steps is not None
+                else int(schedule.sigmas.numel() - 1)
+            )
+            progress.start(total=total, desc="DPM++ 2M Sampling")
+        try:
+            return self.sampler.sample(
+                raw_model_fn=raw_model_fn,
+                guided_model_fn=guided_model_fn,
+                latents=latents,
+                schedule=schedule,
+                conditioning=conditioning,
+                request=request,
+                state=state,
+            )
+        finally:
+            if progress is not None:
+                progress.close()
 
 
 SAMPLER_NAME = "DPM++ 2M"

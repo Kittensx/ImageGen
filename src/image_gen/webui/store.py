@@ -43,6 +43,7 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
     "live_preview_adaptive_recovery_ratio": 0.40,
     "live_preview_adaptive_max_interval": 8,
     "live_preview_adaptive_window": 6,
+    "live_preview_adaptive_suspend_on_overhead": False,
     "cfg_lab_enabled": False,
     "live_preview_cfg_visual_enabled": False,
     "diagnostics_mode": "failures_only",
