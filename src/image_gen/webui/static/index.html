@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>IMAGE_GEN WebUI</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Crect width=%2264%22 height=%2264%22 rx=%2212%22 fill=%22%231b9ddd%22/%3E%3Cpath d=%22M17 16h30v32H17zM23 22h18v20H23z%22 fill=%22white%22/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath fill=%27%23179ee7%27 d=%27M0 0h32v32H0z%27/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/assets/css/tokens.css?v=0.1.40">
   <link rel="stylesheet" href="/assets/css/base.css?v=0.1.40">
-  <link rel="stylesheet" href="/assets/css/layout.css?v=0.1.40">
-  <link rel="stylesheet" href="/assets/css/components.css?v=0.1.68">
-  <link rel="stylesheet" href="/assets/css/responsive.css?v=0.1.40">
+  <link rel="stylesheet" href="/assets/css/layout.css?v=0.1.74">
+  <link rel="stylesheet" href="/assets/css/components.css?v=0.1.74">
+  <link rel="stylesheet" href="/assets/css/responsive.css?v=0.1.74">
 </head>
 <body>
   <div class="app-shell">
@@ -27,38 +27,34 @@
         <strong>Worker</strong>
         <span id="workerText">Connecting…</span>
       </div>
-      <nav class="top-actions" aria-label="Primary navigation">
-        <button class="nav-button is-active" id="topGenerateButton" type="button">Generate</button>
-        <button class="nav-button" id="topInfinityButton" type="button">∞ Generate</button>
-        <button class="nav-button" id="topCancelButton" type="button">Cancel</button>
-        <button class="nav-button" id="openOutputsButton" type="button">Outputs</button>
-        <button class="nav-button" id="reloadWorkspaceButton" type="button">Reload UI</button>
-        <button class="nav-button" id="openSettingsButton" type="button">Settings</button>
-      </nav>
+      <div data-fragment="/assets/views/workspace-tabs.html?v=0.1.74"></div>
+      <nav class="top-actions" aria-label="Generation actions"><button class="nav-button is-active" id="topGenerateButton" type="button">Generate</button><button class="nav-button" id="topInfinityButton" type="button">∞ Generate</button><button class="nav-button nav-button-compactable" id="topCancelButton" type="button">Cancel</button><button class="nav-button nav-button-compactable" id="openOutputsButton" type="button">Outputs</button><button class="nav-button nav-button-compactable" id="reloadWorkspaceButton" type="button">Reload UI</button><button class="nav-button nav-button-compactable" id="openSettingsButton" type="button">Settings</button></nav>
     </header>
-
-    <main class="workspace" id="workspace">
-      <div data-fragment="/assets/views/controls.html?v=0.1.68"></div>
+    <main class="workspace" id="workspace" data-active-workspace="generation">
+      <section class="workspace-column left-column" id="workspaceLeftColumn" data-workspace-zone="left" aria-label="Left workspace column">
+        <div data-fragment="/assets/views/controls.html?v=0.1.74"></div>
+      </section>
       <div class="workspace-splitter" id="leftColumnSplitter" role="separator" aria-label="Resize generation controls" aria-orientation="vertical" tabindex="0"></div>
-      <div data-fragment="/assets/views/preview.html?v=0.1.40"></div>
+      <div data-fragment="/assets/views/startup-defaults.html?v=0.1.74"></div>
+      <div data-fragment="/assets/views/preview.html?v=0.1.74"></div>
       <div class="workspace-splitter" id="rightColumnSplitter" role="separator" aria-label="Resize live preview and utilities" aria-orientation="vertical" tabindex="0"></div>
-      <div data-fragment="/assets/views/utilities.html?v=0.1.62"></div>
+      <div data-fragment="/assets/views/utilities.html?v=0.1.74"></div>
     </main>
-
+    <div data-fragment="/assets/views/checkpoints.html?v=0.1.74"></div>
+    <div data-fragment="/assets/views/loras.html?v=0.1.74"></div>
     <footer class="statusbar">
       <span>IMAGE_GEN WebUI</span>
       <span id="projectPath">Project: —</span>
       <span id="footerWorkerStatus">Worker: connecting</span>
       <span class="status-spacer"></span>
       <span class="theme-footer-controls" aria-label="Theme colors">
-        <button type="button" class="theme-footer-button" id="accentThemeButton" title="Customize accent color">Sky Blue</button>
+        <button type="button" class="theme-footer-button" id="accentThemeButton">Sky Blue</button>
         <span aria-hidden="true">/</span>
-        <button type="button" class="theme-footer-button" id="surfaceThemeButton" title="Customize surface color">Charcoal</button>
+        <button type="button" class="theme-footer-button" id="surfaceThemeButton">Charcoal</button>
       </span>
     </footer>
   </div>
-
-  <div data-fragment="/assets/views/overlays.html?v=0.1.68"></div>
+  <div data-fragment="/assets/views/overlays.html?v=0.1.74"></div>
   <script>
     (() => {
       const showBootFailure = (message) => {
@@ -72,39 +68,36 @@
           document.body.append(notice);
         }
         notice.textContent = `WebUI startup failed before the interface could mount.
-${message || "Open the browser developer console and check the latest WebUI diagnostic bundle."}
-
-Try Reload UI after applying the latest stability patch.`;
+${message || "Check the browser console and latest diagnostic bundle."}
+Reload UI after applying the latest patch.`;
       };
-
       const reloadButton = document.getElementById("reloadWorkspaceButton");
       reloadButton?.addEventListener("click", () => {
         if (!window.__IMAGE_GEN_BOOT_READY__) window.location.reload();
       });
-
       window.addEventListener("image-gen-boot-failed", (event) => {
         showBootFailure(event.detail?.message || "The startup module reported an error.");
       });
       window.addEventListener("error", (event) => {
         const source = String(event.filename || "");
         if (source.includes("/assets/js/") || !window.__IMAGE_GEN_BOOT_MODULE_LOADED__) {
-          showBootFailure(event.message || `A required JavaScript module failed to load: ${source || "unknown module"}`);
+          showBootFailure(event.message || `JavaScript module failed: ${source || "unknown module"}`);
         }
       });
       window.addEventListener("unhandledrejection", (event) => {
-        showBootFailure(event.reason?.message || String(event.reason || "Unhandled startup promise rejection"));
+        showBootFailure(event.reason?.message || String(event.reason || "Unhandled startup error"));
       });
       window.setTimeout(() => {
         if (!window.__IMAGE_GEN_BOOT_READY__ && document.querySelector("[data-fragment]")) {
           const detail = window.__IMAGE_GEN_BOOT_ERROR__
             || (window.__IMAGE_GEN_BOOT_MODULE_LOADED__
-              ? "The startup module loaded but did not finish mounting the interface."
+              ? "The startup module did not finish mounting the interface."
               : "The main JavaScript module did not load. A syntax error or missing module is likely.");
           showBootFailure(detail);
         }
       }, 15000);
     })();
   </script>
-  <script type="module" src="/assets/js/main.js?v=0.1.69"></script>
+  <script type="module" src="/assets/js/main.js?v=0.1.74"></script>
 </body>
 </html>

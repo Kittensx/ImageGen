@@ -10,6 +10,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from image_gen.contracts import (
+    PROMPT_ASSET_CONTRACT_VERSION,
+    normalize_prompt_asset_list,
+)
 from image_gen.runtime_options import (
     RUNTIME_REPLAY_JOB_FIELDS,
     extract_runtime_execution_record,
@@ -162,7 +166,9 @@ _PRESERVABLE_BACKEND_FIELDS = {
     "parser_kwargs",
     "canonical_prompt_contract",
     "lora_paths",
+    "prompt_asset_contract_version",
     "loras",
+    "textual_inversions",
     "vae_name",
     "vae_hash",
     *RUNTIME_REPLAY_JOB_FIELDS,
@@ -200,6 +206,88 @@ _MANIFEST_COMPLETENESS_FIELDS = (
     "extra.model_provenance.sha256",
 )
 _TOKEN_TTL_SECONDS = 15 * 60
+
+
+def _canonical_model_family(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    compact = text.replace("_", "").replace("-", "").replace(" ", "")
+    if "sdxl" in compact or "stablediffusionxl" in compact:
+        return "sdxl"
+    if "sd3" in compact or "stablediffusion3" in compact:
+        return "sd3"
+    if "sd2" in compact or "stablediffusion2" in compact:
+        return "sd2"
+    if "sd1" in compact or compact in {"15", "14", "sd15", "sd14"}:
+        return "sd1"
+    if "flux" in compact:
+        return "flux"
+    if "pony" in compact:
+        return "pony"
+    return compact
+
+
+def _manifest_prompt_assets(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(manifest or {})
+    optional = dict(payload.get("optional_for_rerun") or {})
+    extra = dict(optional.get("extra") or {})
+    contract = dict(extra.get("prompt_assets") or {})
+
+    def _from_references(values: Any, asset_type: str) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        if not isinstance(values, list):
+            return output
+        for index, item in enumerate(values):
+            if not isinstance(item, Mapping):
+                continue
+            source = dict(item)
+            metadata = dict(source.get("extra") or {})
+            output.append({
+                "asset_type": asset_type,
+                "asset_id": metadata.get("asset_id") or source.get("requested_identifier") or source.get("resolved_identifier") or "",
+                "catalog_asset_id": metadata.get("catalog_asset_id") or source.get("requested_identifier") or source.get("resolved_identifier") or "",
+                "name": source.get("requested_display_name") or source.get("resolved_display_name") or "",
+                "path": source.get("resolved_path") or source.get("requested_path") or "",
+                "requested_path": source.get("requested_path") or source.get("resolved_path") or "",
+                "resolved_path": source.get("resolved_path") or "",
+                "requested_hash": source.get("requested_hash") or "",
+                "resolved_hash": source.get("resolved_hash") or "",
+                "weight": metadata.get("weight", 1.0),
+                "enabled": metadata.get("enabled", True),
+                "polarity": metadata.get("polarity", "positive"),
+                "activation_text": metadata.get("activation_text") or "",
+                "model_family": metadata.get("model_family") or "",
+                "source_url": source.get("source_url") or "",
+                "source": "replay",
+                "original_source": metadata.get("source") or metadata.get("original_source") or "",
+                "order": metadata.get("order", index),
+                "metadata": metadata.get("metadata") or {},
+            })
+        return output
+
+    raw_loras = contract.get("loras") if isinstance(contract.get("loras"), list) else extra.get("loras")
+    raw_textual = contract.get("textual_inversions") if isinstance(contract.get("textual_inversions"), list) else extra.get("textual_inversions")
+    if not isinstance(raw_loras, list) or not raw_loras:
+        raw_loras = _from_references(payload.get("loras"), "lora")
+    if not isinstance(raw_textual, list) or not raw_textual:
+        raw_textual = _from_references(payload.get("embeddings"), "textual_inversion")
+
+    def _replay(values: Any, asset_type: str) -> list[dict[str, Any]]:
+        assets = normalize_prompt_asset_list(values or [], asset_type=asset_type, default_source="replay")
+        output: list[dict[str, Any]] = []
+        for asset in assets:
+            original_source = asset.original_source or asset.source
+            asset.source = "replay"
+            asset.original_source = "" if original_source == "replay" else original_source
+            output.append(asset.to_serializable_dict())
+        return output
+
+    return {
+        "contract_version": str(contract.get("contract_version") or extra.get("prompt_asset_contract_version") or PROMPT_ASSET_CONTRACT_VERSION),
+        "loras": _replay(raw_loras, "lora"),
+        "textual_inversions": _replay(raw_textual, "textual_inversion"),
+    }
 
 
 @dataclass
@@ -674,6 +762,15 @@ class ReplayService:
             request.pop("region_recorded", None)
             request["region_replay_mode"] = "reconstruct"
 
+        prompt_assets = _manifest_prompt_assets(details.manifest)
+        request["prompt_asset_contract_version"] = prompt_assets["contract_version"]
+        request["loras"] = [dict(item) for item in prompt_assets["loras"]]
+        request["textual_inversions"] = [dict(item) for item in prompt_assets["textual_inversions"]]
+        request["lora_paths"] = [
+            str(item.get("resolved_path") or item.get("path") or item.get("requested_path") or "")
+            for item in prompt_assets["loras"]
+            if item.get("resolved_path") or item.get("path") or item.get("requested_path")
+        ]
         self._remove_unsupported_paths(request, details.unsupported)
         request.setdefault("save_images", True)
         request.setdefault("batch_size", 1)
@@ -737,6 +834,74 @@ class ReplayService:
             except (OSError, ValueError) as exc:
                 missing.append({"kind": "vae", "field": "vae_path", "requested": vae_path, "reason": str(exc)})
                 errors.append(f"VAE unavailable: {exc}")
+
+        checkpoint_family = _canonical_model_family(
+            (authorized_model.architecture if authorized_model is not None else "")
+            or (authorized_model.architecture_summary if authorized_model is not None else "")
+            or (authorized_model.checkpoint_kind if authorized_model is not None else "")
+        )
+        for asset_type, field_name in (("lora", "loras"), ("textual_inversion", "textual_inversions")):
+            structured_assets = raw_request.get(field_name)
+            if not isinstance(structured_assets, list):
+                continue
+            validated_assets: list[dict[str, Any]] = []
+            for index, item in enumerate(structured_assets):
+                if not isinstance(item, Mapping):
+                    continue
+                candidate = dict(item)
+                if candidate.get("enabled") is False:
+                    validated_assets.append(candidate)
+                    continue
+                resolved_path = str(
+                    candidate.get("resolved_path")
+                    or candidate.get("path")
+                    or candidate.get("requested_path")
+                    or ""
+                ).strip()
+                display = str(
+                    candidate.get("name")
+                    or candidate.get("requested_name")
+                    or Path(resolved_path).stem
+                    or f"{asset_type.replace('_', ' ').title()} {index + 1}"
+                )
+                if not resolved_path:
+                    reason = f"Recorded {asset_type.replace('_', ' ')} path is missing for {display!r}."
+                    missing.append({"kind": asset_type, "field": f"{field_name}[{index}]", "requested": display, "reason": reason})
+                    errors.append(reason)
+                    continue
+                try:
+                    resolved_file = self.context.resolve_project_path(resolved_path).expanduser().resolve()
+                except Exception:
+                    resolved_file = Path(resolved_path).expanduser()
+                if not resolved_file.is_file():
+                    reason = f"Recorded {asset_type.replace('_', ' ')} is not installed: {display!r} ({resolved_path})."
+                    missing.append({"kind": asset_type, "field": f"{field_name}[{index}]", "requested": resolved_path, "reason": reason})
+                    errors.append(reason)
+                    continue
+                asset_family = _canonical_model_family(candidate.get("model_family"))
+                if asset_family and checkpoint_family and asset_family != checkpoint_family:
+                    reason = (
+                        f"Recorded {asset_type.replace('_', ' ')} {display!r} targets model family "
+                        f"'{asset_family}', but the replay checkpoint family is '{checkpoint_family}'."
+                    )
+                    missing.append({"kind": asset_type, "field": f"{field_name}[{index}]", "requested": display, "reason": reason})
+                    errors.append(reason)
+                    continue
+                candidate["resolved_path"] = str(resolved_file)
+                candidate["path"] = str(resolved_file)
+                candidate["original_source"] = candidate.get("original_source") or (
+                    candidate.get("source") if candidate.get("source") != "replay" else ""
+                )
+                candidate["source"] = "replay"
+                candidate.setdefault("order", index)
+                validated_assets.append(candidate)
+            raw_request[field_name] = validated_assets
+            if asset_type == "lora":
+                raw_request["lora_paths"] = [
+                    str(item.get("resolved_path") or item.get("path") or "")
+                    for item in validated_assets
+                    if item.get("enabled") is not False
+                ]
 
         for kind, field_name in (("sampler", "sampler_name"), ("scheduler", "scheduler_name")):
             requested = raw_request.get(field_name)
@@ -841,6 +1006,15 @@ class ReplayService:
         raw_request, replaced = self._build_raw_request(details, specification)
         missing_assets, errors, _ = self._validate_assets_and_plugins(raw_request, specification)
         warnings = list(details.warnings)
+        enabled_textual_inversions = [
+            item for item in raw_request.get("textual_inversions") or []
+            if isinstance(item, Mapping) and item.get("enabled") is not False
+        ]
+        if enabled_textual_inversions:
+            warnings.append(
+                "Textual-inversion selections are preserved by the Phase UI-6 replay contract, "
+                "but textual-inversion runtime application is still planned."
+            )
         manifest = self._mapping(details.manifest)
         recorded_execution = extract_runtime_execution_record(manifest)
         if not recorded_execution:

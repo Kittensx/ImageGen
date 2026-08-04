@@ -725,3 +725,122 @@
     </footer>
   </section>
 </dialog>
+<dialog class="default-assets-dialog" id="defaultAssetsDialog" aria-labelledby="defaultAssetsDialogTitle">
+  <div class="default-assets-dialog-shell">
+    <header class="dialog-heading">
+      <div>
+        <h2 id="defaultAssetsDialogTitle">Edit Saved Defaults</h2>
+        <p>Global defaults apply to compatible checkpoints. Model defaults override matching global assets.</p>
+      </div>
+      <button class="icon-button" id="closeDefaultAssetsDialogButton" type="button" aria-label="Close default asset editor">×</button>
+    </header>
+
+    <section class="default-assets-editor-toolbar">
+      <label class="field-block">
+        <span>Profile scope</span>
+        <select id="defaultAssetScope">
+          <option value="global">Global defaults</option>
+          <option value="model">Current model defaults</option>
+        </select>
+      </label>
+      <div class="default-assets-model-summary" id="defaultAssetsModelSummary">No current checkpoint selected.</div>
+    </section>
+
+    <div class="default-assets-editor-body">
+      <section class="default-assets-saved-section">
+        <div class="section-heading-row">
+          <div>
+            <h3 id="defaultAssetListTitle">Global defaults</h3>
+            <small>Model-specific entries with the same identity override global entries.</small>
+          </div>
+          <span class="status-badge" id="defaultAssetEditorCount">0</span>
+        </div>
+        <div class="default-assets-editor-list" id="defaultAssetEditorList"></div>
+      </section>
+
+      <section class="default-assets-form-section">
+        <h3>Add or update an asset</h3>
+        <input id="defaultAssetEditingId" type="hidden">
+        <input id="defaultAssetCatalogId" type="hidden">
+        <section class="default-assets-installed-picker" aria-labelledby="defaultAssetPickerTitle">
+          <div class="section-heading-row">
+            <div>
+              <strong id="defaultAssetPickerTitle">Choose an installed asset</strong>
+              <small>Installed LoRAs and textual inversions are discovered from the configured model folders.</small>
+            </div>
+            <button class="secondary-button compact-button" id="refreshDefaultAssetCatalogButton" type="button">Refresh</button>
+          </div>
+          <div class="default-asset-picker-toolbar">
+            <input id="defaultAssetCatalogSearch" type="search" placeholder="Search installed assets…" autocomplete="off">
+            <span class="status-badge" id="defaultAssetCatalogCount">0</span>
+          </div>
+          <div class="default-asset-picker-grid" id="defaultAssetPickerGrid"></div>
+          <small class="field-status subtle" id="defaultAssetPickerStatus">Select an installed asset card to populate the default entry.</small>
+        </section>
+        <div class="default-assets-form-grid">
+          <label class="field-block">
+            <span>Asset type</span>
+            <select id="defaultAssetType">
+              <option value="lora">LoRA</option>
+              <option value="textual_inversion">Textual inversion</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Prompt side</span>
+            <select id="defaultAssetPolarity">
+              <option value="positive">Positive</option>
+              <option value="negative">Negative</option>
+            </select>
+          </label>
+          <label class="field-block default-assets-name-field">
+            <span>Name</span>
+            <input id="defaultAssetName" type="text" maxlength="160" placeholder="Teresa">
+          </label>
+          <label class="field-block">
+            <span>Weight</span>
+            <input id="defaultAssetWeight" type="number" min="-4" max="4" step="0.05" value="1.00">
+          </label>
+          <label class="field-block default-assets-wide-field">
+            <span>Installed asset path</span>
+            <input id="defaultAssetPath" type="text" placeholder="Choose an installed asset above" readonly>
+          </label>
+          <label class="field-block default-assets-wide-field">
+            <span>Activation text</span>
+            <input id="defaultAssetActivationText" type="text" placeholder="thg-teresa">
+          </label>
+          <label class="field-block">
+            <span>Model family</span>
+            <select id="defaultAssetModelFamily">
+              <option value="">Any / unspecified</option>
+              <option value="sd1.x">SD 1.x</option>
+              <option value="sd2.x">SD 2.x</option>
+              <option value="sdxl">SDXL</option>
+            </select>
+          </label>
+          <label class="checkbox-row default-assets-enabled-field">
+            <input id="defaultAssetEnabled" type="checkbox" checked>
+            <span>Enabled</span>
+          </label>
+          <label class="field-block default-assets-wide-field">
+            <span>Source URL</span>
+            <input id="defaultAssetSourceUrl" type="url" placeholder="https://civitai.com/models/…">
+          </label>
+          <label class="field-block default-assets-wide-field">
+            <span>Notes</span>
+            <textarea id="defaultAssetNotes" rows="2" placeholder="Best results between 0.6 and 1.0."></textarea>
+          </label>
+        </div>
+        <div class="button-pair">
+          <button class="primary-button" id="saveDefaultAssetEntryButton" type="button">Add Asset</button>
+          <button class="secondary-button" id="clearDefaultAssetEntryButton" type="button">Clear Form</button>
+        </div>
+        <small class="field-status subtle" id="defaultAssetEditorStatus">LoRA and textual-inversion runtime application is intentionally separate from profile management.</small>
+      </section>
+    </div>
+
+    <footer class="dialog-actions">
+      <button class="secondary-button" id="cancelDefaultAssetsDialogButton" type="button">Cancel</button>
+      <button class="primary-button" id="saveDefaultAssetsDialogButton" type="button">Save Defaults</button>
+    </footer>
+  </div>
+</dialog>

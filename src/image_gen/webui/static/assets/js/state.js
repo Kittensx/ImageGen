@@ -2,6 +2,11 @@ export const state = {
   bootstrap: null,
   models: [],
   vaes: [],
+  loras: [],
+  textualInversions: [],
+  checkpointCatalog: [],
+  selectedCheckpointAssetId: "",
+  selectedLoraAssetId: "",
   samplers: [],
   schedulers: [],
   promptParsers: [],
@@ -17,6 +22,8 @@ export const state = {
   recentOutputCatalog: [],
   jobs: [],
   settings: {},
+  defaultAssets: null,
+  activePromptAssets: [],
   queueFilters: ["queued", "running", "cancelling", "completed", "cancelled", "failed"],
   hiddenQueueJobIds: new Set(),
   activeModel: null,
@@ -186,6 +193,9 @@ export function schedulerDescriptor(name) {
 export function setCatalogs(payload) {
   state.models = payload.models?.models || payload.models || state.models;
   state.vaes = payload.models?.vaes || payload.vaes || state.vaes;
+  state.loras = payload.models?.loras || payload.loras || state.loras;
+  state.textualInversions = payload.models?.textual_inversions || payload.textual_inversions || state.textualInversions;
+  state.checkpointCatalog = payload.models?.models || payload.models || state.checkpointCatalog;
   state.samplers = payload.plugins?.samplers || state.samplers;
   state.schedulers = payload.plugins?.schedulers || state.schedulers;
   state.promptParsers = payload.prompt_parsers || payload.promptParsers || state.promptParsers;

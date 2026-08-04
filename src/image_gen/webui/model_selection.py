@@ -206,6 +206,10 @@ class WebUIModelSelectionState:
         current = self.current()
         return current.to_dict() if current is not None else None
 
+    def deactivate(self) -> None:
+        with self._lock:
+            self._active = None
+
     def enforce(self, payload: Mapping[str, Any] | None) -> tuple[dict[str, Any], ActiveModelSelection]:
         incoming = dict(payload or {})
         requested_path = str(incoming.get("model_path") or "").strip()

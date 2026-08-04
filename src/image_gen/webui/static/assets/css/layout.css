@@ -14,20 +14,23 @@
 .topbar {
   min-width: 0;
   min-height: 64px;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 22px;
-  padding: 8px 18px;
+  gap: 10px;
+  padding: 8px 12px;
   border-radius: var(--radius-large);
   background: linear-gradient(90deg, var(--sky-600), var(--sky-400));
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .brand-group {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 245px;
+  min-width: 190px;
+  flex: 0 0 auto;
 }
 
 .brand-icon {
@@ -45,20 +48,78 @@
   font-size: 0.7rem;
 }
 
+.workspace-tabs,
 .top-actions {
   min-width: 0;
-  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.workspace-tabs {
+  width: 100%;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.top-actions {
+  margin-left: 0;
+  justify-self: end;
+  flex: 0 0 auto;
+}
+
+.workspace-tab {
+  min-width: 0;
+  min-height: 38px;
+  flex: 0 1 auto;
+  padding: 0 clamp(7px, 0.72vw, 13px);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--sky-50);
+  background: rgba(7, 34, 55, 0.22);
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.workspace-tab:hover:not(:disabled),
+.workspace-tab:focus-visible:not(:disabled),
+.workspace-tab.is-active {
+  border-color: color-mix(in srgb, white 28%, transparent);
+  background: rgba(3, 41, 72, 0.58);
+}
+
+.workspace-tab.is-active {
+  box-shadow: inset 0 -3px 0 var(--sky-100);
+}
+
+.workspace-tab:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.workspace-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 17px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: var(--sky-100);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .workspace {
   --left-column-width: 330px;
   --right-column-width: 360px;
-  --center-column-min-width: 180px;
+  --center-column-min-width: 640px;
+  --startup-defaults-width: 300px;
   --gallery-panel-height: 148px;
   --live-preview-panel-height: 360px;
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -68,25 +129,51 @@
     minmax(var(--center-column-min-width), 1fr)
     8px
     var(--right-column-width);
+  grid-template-areas: "left split-left center split-right right";
   gap: 8px;
   overflow: hidden;
 }
 
-.center-column,
-.right-column {
+.workspace.has-pinned-startup-defaults {
+  grid-template-columns:
+    var(--left-column-width)
+    8px
+    var(--startup-defaults-width)
+    minmax(var(--center-column-min-width), 1fr)
+    8px
+    var(--right-column-width);
+  grid-template-areas: "left split-left defaults center split-right right";
+}
+
+#workspaceLeftColumn { grid-area: left; }
+#leftColumnSplitter { grid-area: split-left; }
+#startupDefaultsDrawer { grid-area: defaults; }
+#outputBrowser { grid-area: center; }
+#rightColumnSplitter { grid-area: split-right; }
+#rightPanel { grid-area: right; }
+
+.workspace-column {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0;
-  overflow: hidden;
-}
-
-.right-column {
   gap: var(--panel-gap);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+  transition: outline-color 120ms ease, background-color 120ms ease;
+}
+
+.center-column {
+  gap: 0;
+  overflow: hidden;
+}
+
+.workspace-column.is-drop-target {
+  outline: 2px dashed var(--sky-300);
+  outline-offset: -3px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--sky-500) 8%, transparent);
 }
 
 .panel {
@@ -95,6 +182,10 @@
   border-radius: var(--radius);
   background: linear-gradient(145deg, var(--charcoal-900), var(--charcoal-850));
   box-shadow: var(--shadow);
+}
+
+.panel.is-dragging {
+  opacity: 0.56;
 }
 
 .controls-panel {
@@ -120,7 +211,8 @@
   min-height: 10px;
 }
 
-.center-splitter.is-hidden {
+.center-splitter.is-hidden,
+.panel-splitter.is-hidden {
   display: none;
 }
 
@@ -135,6 +227,12 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 8px;
   overflow: hidden;
+}
+
+.workspace-column:not(.center-column) > .gallery-panel,
+.center-column > .gallery-panel:not(:last-child) {
+  flex: 0 0 auto;
+  max-height: none;
 }
 
 .gallery-panel.is-collapsed {
@@ -154,7 +252,6 @@
   flex-direction: column;
   overflow: hidden;
 }
-
 
 .live-preview-panel.is-idle:not(.is-collapsed) {
   min-height: 78px;
@@ -207,6 +304,47 @@
   white-space: nowrap;
 }
 
+.startup-defaults-drawer {
+  min-width: 0;
+  min-height: 0;
+  width: var(--startup-defaults-width);
+  padding: 10px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  z-index: 35;
+}
+
+.startup-defaults-drawer[hidden] {
+  display: none;
+}
+
+.startup-defaults-drawer.is-temporary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--left-column-width) + 16px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.52);
+}
+
+.startup-defaults-drawer.is-pinned {
+  position: relative;
+  width: auto;
+  height: 100%;
+}
+
+.startup-defaults-source {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.startup-defaults-body {
+  display: grid;
+  gap: 12px;
+  padding-top: 6px;
+}
+
 .statusbar {
   min-width: 0;
   min-height: 40px;
@@ -226,12 +364,107 @@
   flex: 1;
 }
 
+.panel.is-collapsed {
+  align-self: stretch;
+  min-height: 48px;
+  max-height: 52px;
+  flex: 0 0 48px;
+  overflow: hidden;
+}
+
 .panel.is-collapsed > :not(.panel-heading) {
   display: none;
 }
 
 .controls-panel.is-collapsed {
-  align-self: start;
+  align-self: stretch;
   max-height: 56px;
   overflow: hidden;
+}
+
+/* Phase UI-3 checkpoint-library workspace. */
+.checkpoint-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(560px, 1fr) minmax(280px, 340px);
+  gap: 8px;
+  overflow: hidden;
+}
+
+.checkpoint-sidebar,
+.checkpoint-library-panel,
+.checkpoint-details-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.checkpoint-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.checkpoint-library-panel,
+.checkpoint-details-panel {
+  overflow: hidden;
+}
+
+.checkpoint-library-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.checkpoint-details-panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* Phase UI-4 LoRA-library workspace. */
+.lora-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(600px, 1fr) minmax(330px, 390px);
+  gap: 8px;
+  overflow: hidden;
+}
+
+.lora-sidebar,
+.lora-library-panel,
+.lora-right-column,
+.lora-details-panel,
+.lora-active-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.lora-sidebar,
+.lora-right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.lora-library-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lora-active-panel,
+.lora-details-panel {
+  flex: 0 0 auto;
+}
+
+.lora-details-panel {
+  overflow: visible;
 }

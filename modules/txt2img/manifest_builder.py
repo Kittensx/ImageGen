@@ -1,3 +1,4 @@
+from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION, normalize_prompt_asset_list
 from image_gen.systems.diagnostics.serialization import json_safe
 from modules.txt2img.generation_manifest import (
     GenerationManifest,
@@ -157,6 +158,28 @@ def build_generation_manifest(
         manifest.optional_for_rerun.extra["parser_kwargs"] = dict(
             json_safe(getattr(request, "parser_kwargs", {}) or {})
         )
+        loras = normalize_prompt_asset_list(
+            getattr(request, "loras", []) or [],
+            asset_type="lora",
+            default_source="api_request",
+        )
+        textual_inversions = normalize_prompt_asset_list(
+            getattr(request, "textual_inversions", []) or [],
+            asset_type="textual_inversion",
+            default_source="api_request",
+        )
+        prompt_assets = {
+            "contract_version": str(
+                getattr(request, "prompt_asset_contract_version", "")
+                or PROMPT_ASSET_CONTRACT_VERSION
+            ),
+            "loras": [asset.to_serializable_dict() for asset in loras],
+            "textual_inversions": [asset.to_serializable_dict() for asset in textual_inversions],
+        }
+        manifest.optional_for_rerun.extra["prompt_asset_contract_version"] = prompt_assets["contract_version"]
+        manifest.optional_for_rerun.extra["loras"] = prompt_assets["loras"]
+        manifest.optional_for_rerun.extra["textual_inversions"] = prompt_assets["textual_inversions"]
+        manifest.optional_for_rerun.extra["prompt_assets"] = prompt_assets
         for optional_name in ("clip_skip", "tiling"):
             if hasattr(request, optional_name):
                 setattr(

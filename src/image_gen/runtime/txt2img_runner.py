@@ -15,6 +15,7 @@ from modules.component_placement import place_component
 
 from image_gen.contracts import GenerationRequest, GenerationResult
 from image_gen.runtime.composition import PipelineCompositionRoot
+from image_gen.runtime.lora_runtime import LoRARuntimeManager
 from image_gen.systems.diagnostics import (
     DiagnosticSession,
     DiagnosticsSystem,
@@ -287,6 +288,7 @@ class Txt2ImgRunner:
         self.tokenizer = tokenizer
         self._loaded_model_cache: dict[tuple[str, str, str, int, int], Any] = {}
         self.last_loaded_model: Any | None = None
+        self.lora_runtime_manager = LoRARuntimeManager(self.project_context)
 
 
     def clear_model_cache(self) -> dict[str, Any]:
@@ -328,6 +330,7 @@ class Txt2ImgRunner:
 
         self._loaded_model_cache.clear()
         self.last_loaded_model = None
+        self.lora_runtime_manager.reset()
         gc.collect()
         cuda_cleanup_errors: list[str] = []
         if torch.cuda.is_available():
@@ -1017,6 +1020,27 @@ class Txt2ImgRunner:
             **model_provenance,
         )
         self.last_loaded_model = loaded
+        checkpoint_family_hint = str(
+            model_provenance.get("architecture")
+            or model_provenance.get("architecture_summary")
+            or model_provenance.get("checkpoint_kind")
+            or ""
+        )
+        checkpoint_family = checkpoint_family_hint.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+        try:
+            resolved_lora_stack = self.lora_runtime_manager.prepare_request(
+                request,
+                extras,
+                checkpoint_family=checkpoint_family,
+            )
+            self.lora_runtime_manager.apply(
+                components=loaded.components,
+                stack=resolved_lora_stack,
+                extras=extras,
+            )
+        except Exception as exc:
+            raise ValueError(f"LoRA request validation failed: {exc}") from exc
+        session.request_extras["resolved_lora_stack"] = list(extras.get("resolved_lora_stack") or [])
         self.diagnostics_system.update_components(session, loaded.components)
         model_load_memory = dict(getattr(loaded, "memory_telemetry", {}) or {})
         if model_load_memory:

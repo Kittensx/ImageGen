@@ -134,7 +134,9 @@ _BACKEND_REPLAY_EXTRA_FIELDS = {
     "parser_kwargs",
     "canonical_prompt_contract",
     "lora_paths",
+    "prompt_asset_contract_version",
     "loras",
+    "textual_inversions",
     "vae_name",
     "vae_hash",
 }
@@ -671,6 +673,7 @@ def manifest_to_replay_payload(
                 "runtime_startup_options",
                 "memory_management",
                 "pipeline_metadata",
+                "prompt_assets",
             }:
                 continue
             if key in _FORM_REPLAY_FIELDS and key not in replay:

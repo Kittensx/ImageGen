@@ -1,16 +1,23 @@
-<aside class="panel controls-panel" id="controlsPanel" data-panel-scale-key="controls">
+<aside class="panel controls-panel" id="controlsPanel" data-panel-scale-key="controls" data-workspace-panel="generation_controls" data-default-zone="left">
   <div class="panel-heading">
     <h2>Generation Controls</h2>
     <button class="icon-button panel-toggle" data-target="controlsPanel" type="button" aria-label="Collapse generation controls">⌃</button>
   </div>
 
   <form id="generationForm" autocomplete="off">
-    <label class="field-block">
+    <div class="field-block model-selector-block">
       <span>Checkpoint Model</span>
-      <select id="modelPath" name="model_path"></select>
+      <div class="model-selector-row">
+        <select id="modelPath" name="model_path" aria-label="Checkpoint model"></select>
+        <button class="startup-defaults-trigger" id="startupDefaultsTrigger" type="button" aria-controls="startupDefaultsDrawer" aria-expanded="false" title="Open startup defaults">
+          <span>Defaults</span>
+          <span class="startup-defaults-count" id="startupDefaultsCount">0</span>
+          <span aria-hidden="true">›</span>
+        </button>
+      </div>
       <small id="modelLoadStatus" class="field-status">Waiting for backend model activation…</small>
       <small id="modelArchitectureStatus" class="field-status subtle">Architecture: waiting for activation.</small>
-    </label>
+    </div>
 
     <label class="field-block">
       <span>VAE</span>

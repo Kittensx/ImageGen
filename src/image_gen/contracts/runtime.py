@@ -9,6 +9,211 @@ import torch
 from modules.component_placement import component_placement_report
 
 
+
+PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1"
+
+_PROMPT_ASSET_SOURCE_ALIASES = {
+    "visual": "visual_selection",
+    "visual_selection": "visual_selection",
+    "active": "visual_selection",
+    "inline": "inline_syntax",
+    "inline_syntax": "inline_syntax",
+    "model": "model_default",
+    "model_specific": "model_default",
+    "model_default": "model_default",
+    "global": "global_default",
+    "global_default": "global_default",
+    "default": "global_default",
+    "replay": "replay",
+    "import": "imported",
+    "imported": "imported",
+    "api": "api_request",
+    "api_request": "api_request",
+}
+
+
+def canonical_prompt_asset_source(value: Any, default: str = "visual_selection") -> str:
+    token = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not token:
+        return default
+    return _PROMPT_ASSET_SOURCE_ALIASES.get(token, token)
+
+
+def canonical_prompt_asset_type(value: Any, default: str = "lora") -> str:
+    token = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if token in {"lora", "loras"}:
+        return "lora"
+    if token in {"textual_inversion", "textual_inversions", "embedding", "embeddings", "ti"}:
+        return "textual_inversion"
+    return token or default
+
+
+def _coerce_prompt_asset_bool(value: Any, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    token = str(value).strip().lower()
+    if token in {"0", "false", "no", "off", "disabled"}:
+        return False
+    if token in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    return bool(value)
+
+
+@dataclass
+class PromptAssetSelection:
+    """Structured prompt-asset request shared by the UI, runtime, and replay."""
+
+    asset_type: str = "lora"
+    asset_id: str = ""
+    catalog_asset_id: str = ""
+    name: str = ""
+    path: str = ""
+    requested_path: str = ""
+    resolved_path: str = ""
+    requested_hash: str = ""
+    resolved_hash: str = ""
+    weight: float = 1.0
+    enabled: bool = True
+    polarity: str = "positive"
+    activation_text: str = ""
+    model_family: str = ""
+    source_url: str = ""
+    source: str = "visual_selection"
+    original_source: str = ""
+    order: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.asset_type = canonical_prompt_asset_type(self.asset_type)
+        self.asset_id = str(self.asset_id or "").strip()
+        self.catalog_asset_id = str(self.catalog_asset_id or self.asset_id or "").strip()
+        self.name = str(self.name or "").strip()
+        self.path = str(self.path or self.resolved_path or self.requested_path or "").strip()
+        self.requested_path = str(self.requested_path or self.path or "").strip()
+        self.resolved_path = str(self.resolved_path or "").strip()
+        self.requested_hash = str(self.requested_hash or "").strip()
+        self.resolved_hash = str(self.resolved_hash or "").strip()
+        try:
+            self.weight = float(self.weight)
+        except (TypeError, ValueError):
+            self.weight = 1.0
+        self.enabled = _coerce_prompt_asset_bool(self.enabled, True)
+        polarity = str(self.polarity or "positive").strip().lower()
+        self.polarity = polarity if polarity in {"positive", "negative"} else "positive"
+        self.activation_text = str(self.activation_text or "").strip()
+        self.model_family = str(self.model_family or "").strip()
+        self.source_url = str(self.source_url or "").strip()
+        self.source = canonical_prompt_asset_source(self.source)
+        self.original_source = canonical_prompt_asset_source(self.original_source, default="") if self.original_source else ""
+        try:
+            self.order = int(self.order)
+        except (TypeError, ValueError):
+            self.order = 0
+        self.metadata = dict(self.metadata or {})
+
+    @classmethod
+    def from_value(
+        cls,
+        value: Any,
+        *,
+        asset_type: str = "lora",
+        order: int = 0,
+        default_source: str = "visual_selection",
+    ) -> "PromptAssetSelection":
+        if isinstance(value, cls):
+            payload = value.to_serializable_dict()
+        elif isinstance(value, Mapping):
+            payload = dict(value)
+        elif isinstance(value, (str, Path)):
+            raw_path = str(value)
+            payload = {"name": Path(raw_path).stem, "path": raw_path}
+        else:
+            raise TypeError(f"Unsupported prompt asset value: {type(value).__name__}")
+        payload.setdefault("asset_type", asset_type)
+        payload.setdefault("order", order)
+        payload["name"] = payload.get("name") or payload.get("requested_name") or payload.get("display_name") or ""
+        payload["asset_id"] = payload.get("asset_id") or payload.get("catalog_asset_id") or ""
+        payload["catalog_asset_id"] = payload.get("catalog_asset_id") or payload.get("asset_id") or ""
+        payload["source"] = payload.get("source") or payload.get("selection_source") or payload.get("selection_origin") or payload.get("source_scope") or payload.get("origin") or default_source
+        payload["original_source"] = payload.get("original_source") or payload.get("replay_source") or ""
+        payload["requested_path"] = payload.get("requested_path") or payload.get("path") or ""
+        payload["resolved_path"] = payload.get("resolved_path") or ""
+        payload["requested_hash"] = payload.get("requested_hash") or payload.get("file_hash") or ""
+        payload["resolved_hash"] = payload.get("resolved_hash") or payload.get("file_hash") or ""
+        known = {field_name for field_name in cls.__dataclass_fields__}
+        metadata = dict(payload.get("metadata") or {})
+        for key, item in payload.items():
+            if key not in known and key not in {"selection_source", "selection_origin", "source_scope", "replay_source", "file_hash"}:
+                metadata.setdefault(key, item)
+        payload["metadata"] = metadata
+        return cls(**{key: value for key, value in payload.items() if key in known})
+
+    def identity_key(self) -> str:
+        return str(
+            self.resolved_hash
+            or self.requested_hash
+            or self.resolved_path
+            or self.path
+            or self.catalog_asset_id
+            or self.asset_id
+            or self.name
+        ).strip().casefold()
+
+    def to_serializable_dict(self) -> dict[str, Any]:
+        return {
+            "asset_type": self.asset_type,
+            "asset_id": self.asset_id,
+            "catalog_asset_id": self.catalog_asset_id,
+            "name": self.name,
+            "path": self.path,
+            "requested_path": self.requested_path,
+            "resolved_path": self.resolved_path,
+            "requested_hash": self.requested_hash,
+            "resolved_hash": self.resolved_hash,
+            "weight": float(self.weight),
+            "enabled": bool(self.enabled),
+            "polarity": self.polarity,
+            "activation_text": self.activation_text,
+            "model_family": self.model_family,
+            "source_url": self.source_url,
+            "source": self.source,
+            "original_source": self.original_source,
+            "order": int(self.order),
+            "metadata": _json_safe(self.metadata),
+        }
+
+
+def normalize_prompt_asset_list(
+    values: Any,
+    *,
+    asset_type: str,
+    default_source: str = "visual_selection",
+) -> list[PromptAssetSelection]:
+    if values in (None, ""):
+        return []
+    source_values = values if isinstance(values, (list, tuple)) else [values]
+    output: list[PromptAssetSelection] = []
+    index_by_identity: dict[str, int] = {}
+    for order, value in enumerate(source_values):
+        asset = PromptAssetSelection.from_value(
+            value,
+            asset_type=asset_type,
+            order=order,
+            default_source=default_source,
+        )
+        identity = asset.identity_key()
+        if identity and identity in index_by_identity:
+            output[index_by_identity[identity]] = asset
+            continue
+        if identity:
+            index_by_identity[identity] = len(output)
+        output.append(asset)
+    for order, asset in enumerate(output):
+        asset.order = order
+    return output
+
 _CANONICAL_SCHEDULE_KEYS = {
     "requested_steps",
     "effective_steps",
@@ -74,6 +279,9 @@ class GenerationRequest:
     batch_size: int = 1
     seed: Optional[int] = None
     resolved_seeds: list[int] = field(default_factory=list)
+    prompt_asset_contract_version: str = PROMPT_ASSET_CONTRACT_VERSION
+    loras: list[PromptAssetSelection] = field(default_factory=list)
+    textual_inversions: list[PromptAssetSelection] = field(default_factory=list)
 
     device: Optional[torch.device | str] = None
     dtype: Optional[torch.dtype] = None
@@ -133,6 +341,19 @@ class GenerationRequest:
     output_dir: Optional[str] = None
     output_prefix: str = "img"
 
+    def __post_init__(self) -> None:
+        self.prompt_asset_contract_version = str(
+            self.prompt_asset_contract_version or PROMPT_ASSET_CONTRACT_VERSION
+        )
+        self.loras = normalize_prompt_asset_list(
+            self.loras,
+            asset_type="lora",
+        )
+        self.textual_inversions = normalize_prompt_asset_list(
+            self.textual_inversions,
+            asset_type="textual_inversion",
+        )
+
     def to_serializable_dict(self) -> dict[str, Any]:
         payload = {
             "positive_prompt": self.positive_prompt,
@@ -159,6 +380,9 @@ class GenerationRequest:
             "batch_size": int(self.batch_size),
             "seed": self.seed,
             "resolved_seeds": [int(seed) for seed in self.resolved_seeds],
+            "prompt_asset_contract_version": str(self.prompt_asset_contract_version or PROMPT_ASSET_CONTRACT_VERSION),
+            "loras": [asset.to_serializable_dict() for asset in self.loras],
+            "textual_inversions": [asset.to_serializable_dict() for asset in self.textual_inversions],
             "device": str(self.device) if self.device is not None else None,
             "dtype": str(self.dtype) if self.dtype is not None else None,
             "scheduler_name": self.scheduler_name,

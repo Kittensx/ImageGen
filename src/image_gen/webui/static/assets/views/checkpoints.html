@@ -1,0 +1,148 @@
+<main class="checkpoint-workspace is-hidden" id="checkpointWorkspace" data-active-workspace="checkpoints" aria-label="Checkpoint library workspace">
+  <aside class="checkpoint-sidebar" aria-label="Checkpoint controls">
+    <section class="panel checkpoint-control-panel">
+      <div class="panel-heading"><h2>Checkpoint Browser</h2><span class="status-badge" id="checkpointResultCount">0</span></div>
+      <label class="checkpoint-search-field">
+        <span class="visually-hidden">Search models</span>
+        <input id="checkpointSidebarSearch" type="search" placeholder="Search models…" autocomplete="off">
+      </label>
+      <div class="checkpoint-filter-heading"><span>Filter by</span><button class="text-button" id="checkpointClearFiltersButton" type="button">Clear</button></div>
+      <div class="checkpoint-filter-chips" id="checkpointFilterChips" role="group" aria-label="Checkpoint filters">
+        <button class="filter-chip is-active" type="button" data-checkpoint-filter="all">All</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="sd1.x">SD 1.x</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="sd2.x">SD 2.x</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="favorite">Favorites</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="recent">Recent</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="character">Character</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="general">General</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="realistic">Realistic</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="anime">Anime</button>
+      </div>
+      <label class="field-block checkpoint-sort-field">
+        <span>Sort by</span>
+        <select id="checkpointSortSelect">
+          <option value="recent">Recently modified</option>
+          <option value="name">Name</option>
+          <option value="size_desc">Largest first</option>
+          <option value="size_asc">Smallest first</option>
+          <option value="favorites">Favorites first</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="panel checkpoint-control-panel checkpoint-startup-panel">
+      <div class="panel-heading">
+        <h2>Startup Behavior</h2>
+        <small class="field-status subtle">User config</small>
+      </div>
+      <fieldset class="checkpoint-radio-group">
+        <legend>Load model at startup</legend>
+        <label><input type="radio" name="checkpointStartupMode" value="last_used"> Load last used</label>
+        <label><input type="radio" name="checkpointStartupMode" value="pinned_default"> Load pinned default</label>
+        <label><input type="radio" name="checkpointStartupMode" value="none"> Start with no model</label>
+      </fieldset>
+      <label class="checkpoint-switch-row"><span>Preload model on startup</span><input id="checkpointPreloadOnStartup" type="checkbox"></label>
+      <label class="checkpoint-switch-row"><span>Keep model resident between jobs</span><input id="checkpointKeepResident" type="checkbox"></label>
+      <label class="checkpoint-switch-row"><span>Auto-load saved LoRA / TI defaults</span><input id="checkpointAutoApplyDefaults" type="checkbox"></label>
+      <small class="field-status subtle" id="checkpointStartupStatus">Startup settings are stored in application settings.</small>
+    </section>
+
+    <section class="panel checkpoint-control-panel current-checkpoint-panel">
+      <div class="panel-heading"><h2>Current Model</h2><span class="status-badge" id="currentCheckpointBadge">None</span></div>
+      <div class="current-checkpoint-summary">
+        <div class="checkpoint-preview-fallback is-small" id="currentCheckpointPreviewFallback">CKPT</div>
+        <img class="current-checkpoint-preview" id="currentCheckpointPreview" alt="Current checkpoint preview">
+        <div class="current-checkpoint-copy">
+          <strong id="currentCheckpointName">No model loaded</strong>
+          <div class="checkpoint-tag-row" id="currentCheckpointTags"></div>
+          <dl class="checkpoint-mini-metadata">
+            <div><dt>Architecture</dt><dd id="currentCheckpointArchitecture">—</dd></div>
+            <div><dt>Size</dt><dd id="currentCheckpointSize">—</dd></div>
+            <div><dt>Device</dt><dd id="currentCheckpointDevice">—</dd></div>
+          </dl>
+        </div>
+      </div>
+      <div class="checkpoint-current-actions">
+        <button class="primary-button compact-button" id="checkpointUseCurrentButton" type="button">Use Current</button>
+        <button class="secondary-button compact-button" id="checkpointUnloadButton" type="button">Unload</button>
+        <button class="secondary-button compact-button" id="checkpointSetStartupButton" type="button">★ Set Startup Default</button>
+      </div>
+      <small class="field-status subtle">Compatible default prompt assets can auto-apply after this model loads.</small>
+    </section>
+  </aside>
+
+  <section class="panel checkpoint-library-panel" aria-label="Checkpoint library">
+    <div class="checkpoint-library-toolbar">
+      <div>
+        <h2>Checkpoint Library</h2>
+        <small id="checkpointLibrarySummary">Installed checkpoint files</small>
+      </div>
+      <label class="checkpoint-library-search">
+        <span class="visually-hidden">Search checkpoints</span>
+        <input id="checkpointLibrarySearch" type="search" placeholder="Search checkpoints…" autocomplete="off">
+      </label>
+      <button class="secondary-button compact-button" id="checkpointRefreshButton" type="button">↻ Refresh</button>
+    </div>
+    <div class="checkpoint-card-grid" id="checkpointCardGrid" aria-live="polite"></div>
+    <div class="checkpoint-empty-state is-hidden" id="checkpointEmptyState">No checkpoints match the current search and filters.</div>
+  </section>
+
+  <aside class="panel checkpoint-details-panel" aria-label="Checkpoint details">
+    <div class="panel-heading">
+      <h2>Checkpoint Details</h2>
+      <button class="icon-button" id="closeCheckpointDetailsButton" type="button" aria-label="Clear checkpoint selection">×</button>
+    </div>
+    <div class="checkpoint-detail-empty" id="checkpointDetailEmpty">
+      <strong>Select a checkpoint</strong>
+      <span>Preview, metadata, startup settings, and model actions will appear here.</span>
+    </div>
+    <div class="checkpoint-detail-content is-hidden" id="checkpointDetailContent">
+      <div class="checkpoint-detail-preview-wrap">
+        <div class="checkpoint-preview-fallback" id="checkpointDetailPreviewFallback">CKPT</div>
+        <img id="checkpointDetailPreview" alt="Selected checkpoint preview">
+      </div>
+      <div class="checkpoint-detail-title-row">
+        <div>
+          <h3 id="checkpointDetailName">—</h3>
+          <div class="checkpoint-tag-row" id="checkpointDetailTags"></div>
+        </div>
+        <button class="favorite-button" id="checkpointFavoriteButton" type="button" aria-pressed="false" title="Favorite checkpoint">☆</button>
+      </div>
+      <dl class="checkpoint-detail-list">
+        <div><dt>Filename</dt><dd id="checkpointDetailFilename">—</dd></div>
+        <div><dt>Size</dt><dd id="checkpointDetailSize">—</dd></div>
+        <div><dt>SHA256</dt><dd class="checkpoint-hash" id="checkpointDetailHash">Not inspected</dd></div>
+        <div><dt>Architecture</dt><dd id="checkpointDetailArchitecture">Unknown</dd></div>
+        <div><dt>Prediction type</dt><dd id="checkpointDetailPrediction">Unknown</dd></div>
+        <div><dt>Conditioning</dt><dd id="checkpointDetailConditioning">Unknown</dd></div>
+        <div><dt>Modified</dt><dd id="checkpointDetailModified">—</dd></div>
+      </dl>
+      <label class="field-block">
+        <span>Display name</span>
+        <input id="checkpointMetadataDisplayName" type="text" maxlength="160">
+      </label>
+      <label class="field-block">
+        <span>Source URL</span>
+        <input id="checkpointMetadataSourceUrl" type="url" placeholder="https://civitai.com/models/…">
+      </label>
+      <label class="field-block">
+        <span>Tags</span>
+        <input id="checkpointMetadataTags" type="text" placeholder="anime, character, general">
+      </label>
+      <label class="field-block">
+        <span>Notes</span>
+        <textarea id="checkpointMetadataNotes" rows="3"></textarea>
+      </label>
+      <label class="checkpoint-switch-row checkpoint-detail-startup"><span>Use as pinned startup default</span><input id="checkpointDetailStartupToggle" type="checkbox"></label>
+      <div class="checkpoint-detail-actions">
+        <button class="primary-button" id="checkpointLoadNowButton" type="button">Load Now</button>
+        <button class="secondary-button" id="checkpointOpenFolderButton" type="button">Open Folder</button>
+        <button class="secondary-button" id="checkpointReplacePreviewButton" type="button">Replace Preview</button>
+        <button class="secondary-button" id="checkpointChooseRecentPreviewButton" type="button">Choose from Recent Outputs</button>
+        <input id="checkpointPreviewFileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+        <button class="primary-button" id="checkpointSaveMetadataButton" type="button">Save Metadata</button>
+      </div>
+      <small class="field-status subtle" id="checkpointDetailStatus">Editable metadata is stored beside the checkpoint in an .imagegen.json sidecar.</small>
+    </div>
+  </aside>
+</main>

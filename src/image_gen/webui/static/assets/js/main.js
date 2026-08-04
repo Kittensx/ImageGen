@@ -5,14 +5,18 @@ import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./st
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.69";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.68";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
 import { bindSettings } from "./features/settings.js?v=0.1.62";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
-import { bindWorkspaceLayout } from "./features/layout.js?v=0.1.40";
-import { bindLightbox } from "./features/lightbox.js";
+import { bindWorkspaceLayout } from "./features/layout.js?v=0.1.74";
+import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.74";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=0.1.74";
+import { bindLoraWorkspace } from "./features/loras.js?v=0.1.74";
+import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
+import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
 import { bindOutputDetails } from "./features/output-details.js?v=0.1.64";
 import { bindQueueComposer } from "./features/queue-composer.js";
@@ -21,6 +25,14 @@ import { bindVariationMatrix, openVariationMatrix } from "./features/variation-m
 import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.45";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
 import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.68";
+
+const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
+
+function promptAssetSource(value, fallback = "visual_selection") {
+  const token = String(value || "").trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  const aliases = { visual: "visual_selection", inline: "inline_syntax", model: "model_default", global: "global_default" };
+  return aliases[token] || token || fallback;
+}
 
 window.__IMAGE_GEN_BOOT_MODULE_LOADED__ = true;
 
@@ -97,6 +109,35 @@ function valuesEqual(left, right) {
 }
 
 function collectCurrentValues() {
+  const activeAssets = Array.isArray(state.activePromptAssets) ? state.activePromptAssets : [];
+  const activeLoras = activeAssets.filter((item) => item.asset_type === "lora" && item.enabled !== false).map((item) => ({
+    asset_id: item.asset_id || item.catalog_asset_id || "",
+    catalog_asset_id: item.catalog_asset_id || item.asset_id || "",
+    name: item.name || "",
+    path: item.path || "",
+    weight: Number(item.weight ?? 1),
+    enabled: item.enabled !== false,
+    polarity: item.polarity || "positive",
+    activation_text: item.activation_text || "",
+    model_family: item.model_family || "",
+    source_url: item.source_url || "",
+    source: promptAssetSource(item.source || item.source_scope || "visual_selection"),
+    original_source: item.original_source || "",
+    source_scope: item.source_scope || "visual",
+  }));
+  const activeTextualInversions = activeAssets.filter((item) => item.asset_type === "textual_inversion" && item.enabled !== false).map((item) => ({
+    asset_id: item.asset_id || item.catalog_asset_id || "",
+    catalog_asset_id: item.catalog_asset_id || item.asset_id || "",
+    name: item.name || "",
+    path: item.path || "",
+    polarity: item.polarity || "positive",
+    activation_text: item.activation_text || "",
+    model_family: item.model_family || "",
+    source: promptAssetSource(item.source || item.source_scope || "visual_selection"),
+    original_source: item.original_source || "",
+    source_scope: item.source_scope || "visual",
+    enabled: item.enabled !== false,
+  }));
   return collectGenerationValues({
     _webui_selection_version: 2,
     _webui_scheduler_user_selected: schedulerUserSelected,
@@ -107,6 +148,11 @@ function collectCurrentValues() {
     _webui_scheduler_preset_name: schedulerPresetName,
     _webui_scheduler_preset_plugin_id: schedulerPresetPluginId,
     _webui_scheduler_preset_source: schedulerPresetSource,
+    _webui_active_prompt_assets: activeAssets,
+    prompt_asset_contract_version: PROMPT_ASSET_CONTRACT_VERSION,
+    loras: activeLoras,
+    lora_paths: activeLoras.map((item) => item.path).filter(Boolean),
+    textual_inversions: activeTextualInversions,
   });
 }
 
@@ -177,7 +223,11 @@ async function activateSelectedModel({ quiet = false } = {}) {
       throw new Error("The checkpoint selection completed, but the model is not resident on the execution device.");
     }
     state.activeModel = active;
+    if (state.bootstrap) state.bootstrap.model_runtime = payload.model_runtime || state.bootstrap.model_runtime;
     renderModelArchitectureStatus(active);
+    window.dispatchEvent(new CustomEvent("image-gen-model-activated", {
+      detail: { activeModel: active, defaultAssets: payload.default_assets || null },
+    }));
     const summary = active.architecture_summary ? ` · ${active.architecture_summary}` : "";
     setModelReadyState(
       true,
@@ -221,25 +271,32 @@ async function ensureSelectedModelReady() {
 }
 
 async function applyStartupModelBehavior(bootstrap, current = {}) {
-  const policy = state.settings.model_preload_policy || "keep_current_warm_until_idle_timeout";
-  const currentSelection = $("#modelPath").value || current.model_path || "";
-  const defaultModel = bootstrap.defaults?.model_path || bootstrap.effective_generation?.model_path || "";
+  const mode = String(state.settings.checkpoint_startup_mode || "last_used").trim().toLowerCase();
+  const preload = state.settings.checkpoint_preload_on_startup !== false;
+  const lastUsed = current.model_path || "";
+  const pinned = state.settings.checkpoint_startup_path || "";
+  const configuredDefault = bootstrap.defaults?.model_path || bootstrap.effective_generation?.model_path || "";
   const active = bootstrap.active_model || null;
 
-  if (policy === "warm_default_after_ui_load" && defaultModel && $("#modelPath").value !== defaultModel) {
-    $("#modelPath").value = defaultModel;
-    saveSessionSoon();
+  let selectedPath = "";
+  if (mode === "pinned_default") selectedPath = pinned || configuredDefault;
+  else if (mode === "last_used") selectedPath = lastUsed || pinned || configuredDefault;
+
+  if (selectedPath && $("#modelPath").value !== selectedPath) {
+    const exists = state.models.some((item) => normalizedModelPath(item.path) === normalizedModelPath(selectedPath));
+    if (exists) $("#modelPath").value = selectedPath;
   }
 
-  const selectedPath = $("#modelPath").value || currentSelection || defaultModel;
-  if (!selectedPath) {
-    state.activeModel = null;
-    renderModelArchitectureStatus(null);
-    setModelReadyState(false, "Choose a checkpoint model.", "error");
+  if (mode === "none" || !selectedPath) {
+    state.activeModel = active || null;
+    modelRuntimeReadyPath = "";
+    renderModelArchitectureStatus(state.activeModel);
+    setModelReadyState(false, "Startup behavior is set to start with no model. Choose a checkpoint before generating.", "subtle");
     return;
   }
 
-  if (active?.resolved_path === selectedPath && rememberModelRuntime(bootstrap.model_runtime, selectedPath)) {
+  if (active?.resolved_path && normalizedModelPath(active.resolved_path) === normalizedModelPath(selectedPath)
+      && rememberModelRuntime(bootstrap.model_runtime, selectedPath)) {
     state.activeModel = active;
     renderModelArchitectureStatus(active);
     setModelReadyState(true, `Selected: ${active.model_name} · model resident and ready.`, "ready");
@@ -248,18 +305,12 @@ async function applyStartupModelBehavior(bootstrap, current = {}) {
 
   state.activeModel = active?.resolved_path === selectedPath ? active : null;
   modelRuntimeReadyPath = "";
-  renderModelArchitectureStatus(null);
-  const persistentMode = state.settings.generation_worker_mode === "persistent_experimental" && state.settings.warm_worker_enabled === true;
-  const shouldActivateNow = persistentMode || [
-    "warm_last_used_after_ui_load",
-    "warm_default_after_ui_load",
-    "keep_current_warm_until_idle_timeout",
-  ].includes(policy);
-  if (shouldActivateNow) {
+  renderModelArchitectureStatus(state.activeModel);
+  if (preload) {
     await activateSelectedModel({ quiet: true });
     return;
   }
-  setModelReadyState(true, "Selected model will load on demand after Generate or Generate Forever is pressed.", "subtle");
+  setModelReadyState(true, "Selected model will load on demand when generation starts.", "subtle");
 }
 
 function applyVaeSelectionPolicy() {
@@ -744,6 +795,7 @@ function bindPanels() {
   };
 
   $$(".panel-toggle").forEach((button) => {
+    if (button.dataset.layoutBound === "true") return;
     const target = document.getElementById(button.dataset.target);
     syncPanelToggle(button, target);
     button.addEventListener("click", () => {
@@ -807,9 +859,12 @@ async function refreshModels() {
     const models = await api.refreshModels();
     state.models = models.models || [];
     state.vaes = models.vaes || [];
+    state.loras = models.loras || [];
+    state.textualInversions = models.textual_inversions || [];
+    state.checkpointCatalog = [...state.models];
     populateModels(current);
-    await activateSelectedModel({ quiet: true });
-    notify("Model list refreshed. Files still being copied were skipped.");
+    window.dispatchEvent(new CustomEvent("image-gen-asset-catalog-refreshed", { detail: models }));
+    notify("Model and prompt-asset catalogs refreshed. The resident checkpoint was not reloaded.");
   } catch (error) {
     notify(error.message, "error");
   }
@@ -853,10 +908,12 @@ async function reloadWorkspace() {
   if (!accepted) return;
 
   const button = $("#reloadWorkspaceButton");
-  const previousLabel = button?.textContent || "Reload UI";
+  const label = button?.querySelector(".nav-button-label");
+  const previousLabel = label?.textContent || button?.textContent || "Reload UI";
   if (button) {
     button.disabled = true;
-    button.textContent = "Restarting…";
+    if (label) label.textContent = "Restarting…";
+    else button.textContent = "Restarting…";
   }
   try {
     const response = await api.restartBackend();
@@ -867,7 +924,9 @@ async function reloadWorkspace() {
     notify(`Unable to restart the WebUI backend: ${error.message}`, "error");
     if (button) {
       button.disabled = false;
-      button.textContent = previousLabel;
+      const currentLabel = button.querySelector(".nav-button-label");
+      if (currentLabel) currentLabel.textContent = previousLabel;
+      else button.textContent = previousLabel;
     }
   }
 }
@@ -893,6 +952,23 @@ async function start() {
     schedulerPresetName = current._webui_scheduler_preset_name || "";
     schedulerPresetPluginId = current._webui_scheduler_preset_plugin_id || "";
     schedulerPresetSource = current._webui_scheduler_preset_source || "";
+    const restoredPromptAssets = Array.isArray(current._webui_active_prompt_assets)
+      ? current._webui_active_prompt_assets
+      : [
+          ...(Array.isArray(current.loras) ? current.loras.map((item) => ({
+            ...item,
+            asset_type: "lora",
+            source: promptAssetSource(item.source || "replay", "replay"),
+            source_scope: item.source_scope || "replay",
+          })) : []),
+          ...(Array.isArray(current.textual_inversions) ? current.textual_inversions.map((item) => ({
+            ...item,
+            asset_type: "textual_inversion",
+            source: promptAssetSource(item.source || "replay", "replay"),
+            source_scope: item.source_scope || "replay",
+          })) : []),
+        ];
+    state.activePromptAssets = restoredPromptAssets;
 
     $("#appVersion").textContent = `v${bootstrap.version}`;
     $("#projectPath").textContent = `Project: ${bootstrap.project_root}`;
@@ -904,6 +980,38 @@ async function start() {
     await refreshAdvancedEditors({ preservePresetSelection: true });
     renderModelArchitectureStatus(state.activeModel);
     const workspaceLayout = bindWorkspaceLayout(bootstrap.settings || {});
+    const defaultAssetsController = bindDefaultAssets(bootstrap.default_assets || {});
+    let workspaceTabs = null;
+    const checkpointWorkspace = bindCheckpointWorkspace({
+      activateModelPath: async (modelPath) => {
+        if (!state.models.some((item) => normalizedModelPath(item.path) === normalizedModelPath(modelPath))) {
+          state.models.push({ name: modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || modelPath, path: modelPath, size_mb: 0 });
+          populateModels(collectCurrentValues());
+        }
+        $("#modelPath").value = modelPath;
+        const active = await activateSelectedModel();
+        saveSessionSoon();
+        return active;
+      },
+      unloadModel: async () => {
+        const result = await api.unloadModel();
+        state.activeModel = null;
+        if (state.bootstrap) state.bootstrap.model_runtime = result.model_runtime || {};
+        modelRuntimeReadyPath = "";
+        renderModelArchitectureStatus(null);
+        setModelReadyState(false, "No checkpoint is resident. Choose or load a model before generating.", "subtle");
+        window.dispatchEvent(new CustomEvent("image-gen-model-unloaded", { detail: result }));
+        return result;
+      },
+      showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
+      refreshGenerationModelSelect: () => populateModels(collectCurrentValues()),
+    });
+    const loraWorkspace = bindLoraWorkspace({
+      defaultAssetsController,
+      showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
+    });
+    workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace });
+    window.addEventListener("image-gen-active-prompt-assets-updated", saveSessionSoon);
     bindLightbox();
     bindOutputDetails({ collect: collectCurrentValues, apply: applyReplayValues, onJobQueued: acceptQueuedJob });
     initializeRecentOutputBrowser(state.settings);

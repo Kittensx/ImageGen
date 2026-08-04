@@ -46,7 +46,7 @@ _REQUEST_FIELDS = {
     "hires_prompt_parser_name", "hires_prompt_parser_kwargs", "hires_shortcut_profile_mode",
     "hires_shortcut_profile_name", "hires_shortcut_profile_snapshot", "hires_positive_prompt",
     "hires_negative_prompt", "hires_size_mode", "hires_scale", "hires_width", "hires_height", "hires_dimension_plan", "hires_enabled", "hires_steps", "hires_denoising_strength", "hires_step_policy", "hires_sampler_name", "hires_scheduler_name", "hires_cfg_scale", "hires_cfg_rescale", "hires_upscaler", "hires_save_lowres", "prompt_preflight", "prompt_shadow_compare", "prompt_route_plan", "hires_prompt_route_plan", "parser_kwargs", "lora_paths",
-    "loras", "vae_name", "vae_hash", "output_dir", "output_prefix", "save_images",
+    "prompt_asset_contract_version", "loras", "textual_inversions", "vae_name", "vae_hash", "output_dir", "output_prefix", "save_images",
     "extras", "variation_matrix",
 }
 _SECRET_KEYS = {

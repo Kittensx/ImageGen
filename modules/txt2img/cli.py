@@ -638,6 +638,23 @@ def _run_generation(args: argparse.Namespace) -> int:
         context=context,
         cli_overrides=cli_overrides,
     )
+    if args.interactive or args.interactive_hires:
+        existing_loras = payload.get("loras")
+        if not isinstance(existing_loras, list) or not existing_loras:
+            from modules.txt2img.lora_selector import choose_cli_loras_for_model
+
+            selected_loras = choose_cli_loras_for_model(
+                str(payload.get("model_path") or ""),
+                project_context=context,
+            )
+            payload["loras"] = [dict(item) for item in selected_loras]
+            payload["lora_paths"] = [
+                str(item.get("path") or "")
+                for item in selected_loras
+                if str(item.get("path") or "").strip()
+            ]
+        else:
+            print(f"Using {len(existing_loras)} LoRA selection(s) from the merged request.")
     from image_gen.runtime.scheduler_settings import normalize_scheduler_payload
 
     # Normalize the selected scheduler before emitting the effective request so

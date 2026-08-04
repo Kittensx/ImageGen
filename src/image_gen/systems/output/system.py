@@ -1,19 +1,87 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-from image_gen.contracts import GenerationRequest, GenerationResult
+from image_gen.contracts import (
+    PROMPT_ASSET_CONTRACT_VERSION,
+    GenerationRequest,
+    GenerationResult,
+    normalize_prompt_asset_list,
+)
 from image_gen.systems.diagnostics.serialization import json_safe
-from modules.txt2img.generation_manifest import GenerationManifest
+from modules.txt2img.generation_manifest import AssetReference, GenerationManifest
 from modules.txt2img.manifest_builder import build_generation_manifest
 from modules.txt2img.output_saver import (
     GenerationOutputSaver,
     SavedImageRecord,
     save_generation_batch,
 )
+
+
+def _build_prompt_asset_manifest_entries(
+    entries: Any,
+    *,
+    asset_type: str,
+) -> list[AssetReference]:
+    normalized = normalize_prompt_asset_list(
+        entries or [],
+        asset_type=asset_type,
+        default_source="api_request",
+    )
+    output: list[AssetReference] = []
+    for index, selection in enumerate(normalized):
+        payload = selection.to_serializable_dict()
+        requested_path = str(selection.requested_path or selection.path or "")
+        resolved_path = str(selection.resolved_path or selection.path or "")
+        requested_name = str(selection.name or Path(resolved_path or requested_path).stem or "")
+        resolved_exists = bool(resolved_path and Path(resolved_path).expanduser().is_file())
+        asset = AssetReference.create_asset(asset_type)
+        asset.provider = "local"
+        asset.requested_display_name = requested_name
+        asset.requested_filename = Path(requested_path or resolved_path).name if (requested_path or resolved_path) else ""
+        asset.requested_path = requested_path
+        asset.requested_identifier = selection.catalog_asset_id or selection.asset_id or requested_name
+        asset.requested_hash = selection.requested_hash
+        asset.requested_hash_type = "sha256" if selection.requested_hash else ""
+        asset.resolved_display_name = requested_name
+        asset.resolved_filename = Path(resolved_path).name if resolved_path else ""
+        asset.resolved_path = resolved_path
+        asset.resolved_identifier = selection.catalog_asset_id or selection.asset_id or requested_name
+        asset.resolved_hash = selection.resolved_hash
+        asset.resolved_hash_type = "sha256" if selection.resolved_hash else ""
+        asset.resolution_status = "resolved" if resolved_path else "unresolved"
+        asset.resolution_method = "runtime_catalog" if resolved_path else "request_only"
+        asset.action_taken = "applied" if selection.enabled and asset_type == "lora" and resolved_path else ("staged" if selection.enabled else "disabled")
+        asset.was_found = bool(resolved_path)
+        asset.was_used_for_generation = bool(
+            selection.enabled
+            and resolved_path
+            and (asset_type == "lora" or selection.metadata.get("runtime_applied") is True)
+        )
+        asset.is_required_for_rerun = bool(selection.enabled)
+        asset.should_autoload = bool(selection.enabled)
+        asset.source_url = selection.source_url
+        asset.warning_messages = [] if resolved_exists or not resolved_path else ["Resolved prompt asset path was not present when the manifest was written."]
+        asset.extra = {
+            "contract_version": PROMPT_ASSET_CONTRACT_VERSION,
+            "asset_id": selection.asset_id,
+            "catalog_asset_id": selection.catalog_asset_id,
+            "weight": float(selection.weight),
+            "enabled": bool(selection.enabled),
+            "polarity": selection.polarity,
+            "activation_text": selection.activation_text,
+            "model_family": selection.model_family,
+            "source": selection.source,
+            "original_source": selection.original_source,
+            "order": int(selection.order if selection.order is not None else index),
+            "metadata": dict(selection.metadata or {}),
+        }
+        output.append(asset)
+    return output
 
 
 @dataclass
@@ -262,6 +330,41 @@ class OutputSystem:
         )
         manifest.extra["schedule"] = json_safe(schedule_extra)
         manifest.extra["sampler"] = json_safe(sampler_extra)
+        lora_stack = getattr(request, "loras", None) or extras.get("resolved_lora_stack") or extras.get("loras") or []
+        textual_inversion_stack = getattr(request, "textual_inversions", None) or extras.get("textual_inversions") or []
+        normalized_loras = normalize_prompt_asset_list(lora_stack, asset_type="lora", default_source="api_request")
+        normalized_textual_inversions = normalize_prompt_asset_list(
+            textual_inversion_stack,
+            asset_type="textual_inversion",
+            default_source="api_request",
+        )
+        manifest.loras = _build_prompt_asset_manifest_entries(normalized_loras, asset_type="lora")
+        manifest.embeddings = _build_prompt_asset_manifest_entries(
+            normalized_textual_inversions,
+            asset_type="textual_inversion",
+        )
+        prompt_asset_contract = {
+            "contract_version": PROMPT_ASSET_CONTRACT_VERSION,
+            "loras": [asset.to_serializable_dict() for asset in normalized_loras],
+            "textual_inversions": [asset.to_serializable_dict() for asset in normalized_textual_inversions],
+            "exact_order": [
+                {"asset_type": asset.asset_type, "identity": asset.identity_key(), "order": asset.order}
+                for asset in [*normalized_loras, *normalized_textual_inversions]
+            ],
+        }
+        manifest.optional_for_rerun.extra["prompt_asset_contract_version"] = PROMPT_ASSET_CONTRACT_VERSION
+        manifest.optional_for_rerun.extra["loras"] = prompt_asset_contract["loras"]
+        manifest.optional_for_rerun.extra["lora_paths"] = [
+            asset.resolved_path or asset.path or asset.requested_path
+            for asset in normalized_loras
+            if asset.resolved_path or asset.path or asset.requested_path
+        ]
+        manifest.optional_for_rerun.extra["textual_inversions"] = prompt_asset_contract["textual_inversions"]
+        manifest.optional_for_rerun.extra["prompt_assets"] = prompt_asset_contract
+        manifest.extra["prompt_assets"] = prompt_asset_contract
+        active_assets = extras.get("_webui_active_prompt_assets")
+        if isinstance(active_assets, list):
+            manifest.optional_for_rerun.extra["_webui_active_prompt_assets"] = json_safe(active_assets)
         return manifest
 
     @staticmethod

@@ -1,0 +1,56 @@
+<aside class="panel startup-defaults-drawer" id="startupDefaultsDrawer" data-panel-scale-key="startup_defaults" aria-label="Startup defaults" tabindex="-1" hidden>
+  <div class="panel-heading">
+    <div>
+      <h2>Startup Defaults</h2>
+      <small class="startup-defaults-source" id="startupDefaultsSource">Global profile / user config</small>
+    </div>
+    <div class="panel-heading-actions">
+      <button class="icon-button" id="pinStartupDefaultsButton" type="button" aria-pressed="false" title="Pin startup defaults as a workspace column">◇</button>
+      <button class="icon-button" id="closeStartupDefaultsButton" type="button" aria-label="Collapse startup defaults">‹</button>
+    </div>
+  </div>
+  <div class="startup-defaults-body">
+    <label class="checkbox-row">
+      <input id="applySavedDefaults" type="checkbox">
+      <span>Apply saved defaults</span>
+    </label>
+    <label class="checkbox-row compact-checkbox-row">
+      <input id="autoApplyDefaultsOnModelLoad" type="checkbox">
+      <span>Refresh defaults after model load</span>
+    </label>
+    <div class="button-pair">
+      <button class="primary-button" id="loadStartupDefaultsButton" type="button">Load Defaults Now</button>
+      <button class="secondary-button" id="editStartupDefaultsButton" type="button">Edit Defaults</button>
+    </div>
+    <small class="field-status subtle" id="startupDefaultsStatus">Saved global defaults and model-specific overrides are ready.</small>
+
+    <section class="startup-defaults-group" aria-labelledby="startupDefaultPositiveLorasTitle">
+      <div class="startup-defaults-group-heading">
+        <strong id="startupDefaultPositiveLorasTitle">Default LoRAs — Positive</strong>
+        <span class="status-badge" id="startupDefaultPositiveLorasCount">0</span>
+      </div>
+      <div class="startup-defaults-list" id="startupDefaultPositiveLoras"></div>
+    </section>
+    <section class="startup-defaults-group" aria-labelledby="startupDefaultNegativeLorasTitle">
+      <div class="startup-defaults-group-heading">
+        <strong id="startupDefaultNegativeLorasTitle">Default LoRAs — Negative</strong>
+        <span class="status-badge" id="startupDefaultNegativeLorasCount">0</span>
+      </div>
+      <div class="startup-defaults-list" id="startupDefaultNegativeLoras"></div>
+    </section>
+    <section class="startup-defaults-group" aria-labelledby="startupDefaultTiTitle">
+      <div class="startup-defaults-group-heading">
+        <strong id="startupDefaultTiTitle">Default Textual Inversions</strong>
+        <span class="status-badge" id="startupDefaultTiCount">0</span>
+      </div>
+      <div class="startup-defaults-list" id="startupDefaultTextualInversions"></div>
+    </section>
+    <section class="startup-defaults-group" aria-labelledby="startupCompatibilityTitle">
+      <div class="startup-defaults-group-heading">
+        <strong id="startupCompatibilityTitle">Compatibility</strong>
+        <span class="status-badge" id="startupDefaultCompatibilityCount">0</span>
+      </div>
+      <small class="field-status subtle" id="startupDefaultsCompatibility">No compatibility conflicts detected.</small>
+    </section>
+  </div>
+</aside>

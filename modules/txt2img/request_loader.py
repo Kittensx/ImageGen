@@ -5,7 +5,11 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from modules.contracts import GenerationRequest
+from modules.contracts import (
+    PROMPT_ASSET_CONTRACT_VERSION,
+    GenerationRequest,
+    normalize_prompt_asset_list,
+)
 from modules.txt2img.infotext_parser import parse_infotext
 from modules.txt2img.manifest_adapters import manifest_to_request_kwargs
 from modules.txt2img.manifest_io import load_manifest_json
@@ -29,6 +33,9 @@ GENERATION_REQUEST_KEYS = {
     "cfg_rescale",
     "batch_size",
     "seed",
+    "prompt_asset_contract_version",
+    "loras",
+    "textual_inversions",
     "scheduler_name",
     "sampler_name",
     "scheduler_kwargs",
@@ -140,7 +147,6 @@ EXTRA_REQUEST_KEYS = {
     "guidance_rescale",
     "tiling",
     "lora_paths",
-    "loras",
     
 }
 
@@ -290,6 +296,54 @@ def merge_cli_overrides(base: dict[str, Any], overrides: dict[str, Any] | None) 
 
 
 
+def _normalize_prompt_asset_request_fields(
+    request_kwargs: dict[str, Any],
+    extras: dict[str, Any],
+) -> None:
+    active_assets = extras.get("_webui_active_prompt_assets")
+    if not isinstance(active_assets, list):
+        active_assets = []
+
+    lora_values = request_kwargs.get("loras")
+    if not lora_values:
+        lora_values = [
+            item for item in active_assets
+            if isinstance(item, dict) and str(item.get("asset_type") or "").strip().lower() in {"lora", "loras"}
+        ]
+    if not lora_values and isinstance(extras.get("lora_paths"), list):
+        lora_values = list(extras.get("lora_paths") or [])
+
+    textual_values = request_kwargs.get("textual_inversions")
+    if not textual_values:
+        textual_values = [
+            item for item in active_assets
+            if isinstance(item, dict) and str(item.get("asset_type") or "").strip().lower() in {
+                "textual_inversion", "textual-inversion", "embedding", "ti"
+            }
+        ]
+
+    request_kwargs["prompt_asset_contract_version"] = str(
+        request_kwargs.get("prompt_asset_contract_version")
+        or PROMPT_ASSET_CONTRACT_VERSION
+    )
+    request_kwargs["loras"] = normalize_prompt_asset_list(
+        lora_values or [],
+        asset_type="lora",
+    )
+    request_kwargs["textual_inversions"] = normalize_prompt_asset_list(
+        textual_values or [],
+        asset_type="textual_inversion",
+    )
+
+    # Keep the legacy path list available for older plugins while the canonical
+    # request uses structured assets.
+    extras["lora_paths"] = [
+        asset.resolved_path or asset.path or asset.requested_path
+        for asset in request_kwargs["loras"]
+        if asset.resolved_path or asset.path or asset.requested_path
+    ]
+
+
 def split_request_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = _normalize_payload_keys(payload)
     request_kwargs = {
@@ -307,6 +361,7 @@ def split_request_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], dict
 
 def payload_to_generation_request(payload: dict[str, Any]) -> tuple[GenerationRequest, dict[str, Any]]:
     request_kwargs, extras = split_request_payload(payload)
+    _normalize_prompt_asset_request_fields(request_kwargs, extras)
     request_kwargs.setdefault("positive_prompt", "")
     legacy_parser_kwargs = dict(request_kwargs.get("parser_kwargs") or {})
     if not request_kwargs.get("prompt_parser_name"):

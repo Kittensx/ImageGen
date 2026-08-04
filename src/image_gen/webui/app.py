@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION
 from image_gen.runtime_options import (
     RuntimeStartupOptions,
     build_runtime_startup_status,
@@ -26,7 +27,8 @@ from image_gen.runtime_options import (
 from image_gen.webui.batch_io import BatchIOService
 from image_gen.webui.batch_replay import BatchReplayService
 from image_gen.webui.diagnostics import write_webui_failure_bundle
-from image_gen.webui.catalog import WebUICatalog
+from image_gen.webui.default_assets import resolve_default_assets
+from image_gen.webui.catalog import ASSET_CATALOG_CONTRACT_VERSION, WebUICatalog
 from image_gen.webui.image_refs import decode_external_image_ref, is_within_root
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import WebUIModelSelectionState
@@ -45,7 +47,7 @@ from modules.prompt_parsers import (
 )
 
 
-WEBUI_VERSION = "0.1.69"
+WEBUI_VERSION = "0.1.74"
 
 
 class NamedPayload(BaseModel):
@@ -69,6 +71,16 @@ class ModelActivationPayload(BaseModel):
 
 class OutputFolderPayload(BaseModel):
     path: str = ""
+
+
+def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    output = dict(base)
+    for key, value in dict(override or {}).items():
+        if isinstance(value, dict) and isinstance(output.get(key), dict):
+            output[key] = _deep_merge_dict(dict(output[key]), value)
+        else:
+            output[key] = value
+    return output
 
 
 def encode_sse_event(event: str, payload: dict[str, Any]) -> str:
@@ -116,14 +128,40 @@ def create_app(
     prompt_configuration = PromptConfigurationService(store, parser_registry=prompt_parsers)
     static_root = Path(__file__).resolve().parent / "static"
 
+    def _configured_startup_model_path() -> str:
+        settings = store.load_application_settings()
+        if not bool(settings.get("checkpoint_preload_on_startup", True)):
+            return ""
+        mode = str(settings.get("checkpoint_startup_mode") or "last_used").strip().lower()
+        if mode == "none":
+            return ""
+        if mode == "pinned_default":
+            return str(
+                settings.get("checkpoint_startup_path")
+                or (context.generation_defaults() or {}).get("model_path")
+                or ""
+            ).strip()
+        return str(
+            (store.load_session() or {}).get("model_path")
+            or settings.get("checkpoint_startup_path")
+            or (context.generation_defaults() or {}).get("model_path")
+            or ""
+        ).strip()
+
+    def _lora_auto_scan_enabled() -> bool:
+        settings = store.load_application_settings()
+        return bool(settings.get("lora_auto_scan_unknown_on_startup", True))
+
+    async def _scan_unknown_loras_in_background() -> None:
+        try:
+            await asyncio.to_thread(catalog.scan_loras, mode="missing")
+        except Exception:
+            pass
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await jobs.start()
-        startup_model_path = str(
-            (store.load_session() or {}).get("model_path")
-            or (context.generation_defaults() or {}).get("model_path")
-            or ""
-        )
+        startup_model_path = _configured_startup_model_path()
         if startup_model_path:
             try:
                 selected = model_selection.activate(startup_model_path, source="startup_model_activation")
@@ -133,8 +171,15 @@ def create_app(
                 )
             except Exception:
                 pass
-        yield
-        await jobs.stop()
+        lora_scan_task = None
+        if _lora_auto_scan_enabled():
+            lora_scan_task = asyncio.create_task(_scan_unknown_loras_in_background())
+        try:
+            yield
+        finally:
+            if lora_scan_task is not None and not lora_scan_task.done():
+                lora_scan_task.cancel()
+            await jobs.stop()
 
     app = FastAPI(title="IMAGE_GEN WebUI", version=WEBUI_VERSION, lifespan=lifespan)
     app.state.context = context
@@ -152,6 +197,11 @@ def create_app(
     app.state.server_instance_id = server_instance_id
     app.state.server_started_at_unix = server_started_at_unix
     app.state.restart_callback = restart_callback
+
+    def _default_asset_payload(model: dict[str, Any] | None = None, document: dict[str, Any] | None = None) -> dict[str, Any]:
+        profiles = document if isinstance(document, dict) else store.load_default_asset_profiles()
+        active = model if isinstance(model, dict) else model_selection.current_payload()
+        return resolve_default_assets(profiles, active)
 
     def _runtime_startup_status() -> dict[str, Any]:
         worker_status = jobs.model_runtime.status()
@@ -459,6 +509,8 @@ def create_app(
                 "output_dir": str(context.txt2img_output_root),
             },
             "api_contract": {
+                "asset_catalog_contract_version": ASSET_CATALOG_CONTRACT_VERSION,
+                "prompt_asset_contract_version": PROMPT_ASSET_CONTRACT_VERSION,
                 "model_activation_routes": [
                     "/api/models/activate",
                     "/api/model/activate",
@@ -488,6 +540,27 @@ def create_app(
                     "/api/prompts/translate",
                     "/api/prompts/preflight",
                 ],
+                "default_asset_routes": [
+                    "/api/default-assets",
+                ],
+                "asset_catalog_routes": [
+                    "/api/assets/catalog",
+                    "/api/assets/refresh",
+                    "/api/assets/checkpoints",
+                    "/api/assets/loras",
+                    "/api/assets/textual-inversions",
+                ],
+                "workspace_layout_routes": [
+                    "/api/workspace/layout",
+                    "/api/workspace/layout/reset",
+                ],
+                "lora_asset_routes": [
+                    "/api/assets/loras",
+                    "/api/assets/loras/refresh",
+                    "/api/assets/loras/{asset_id}",
+                    "/api/assets/loras/{asset_id}/preview",
+                    "/api/assets/loras/scan",
+                ],
             },
             "defaults": defaults,
             "session": session,
@@ -497,6 +570,7 @@ def create_app(
                 *effective_selection.notes,
             ],
             "settings": settings,
+            "default_assets": _default_asset_payload(),
             "runtime_startup_status": _runtime_startup_status(),
             "plugins": catalog.plugins(),
             **prompt_configuration.bootstrap_payload(),
@@ -513,6 +587,280 @@ def create_app(
     async def refresh_models() -> dict[str, Any]:
         return catalog.refresh_models()
 
+    @app.get("/api/assets/catalog")
+    async def asset_catalog_status() -> dict[str, Any]:
+        return catalog.catalog_payload()
+
+    @app.post("/api/assets/refresh")
+    async def refresh_asset_catalog(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        requested = str((payload or {}).get("asset_type") or "").strip().lower()
+        aliases = {
+            "checkpoints": "checkpoint",
+            "loras": "lora",
+            "textual-inversions": "textual_inversion",
+            "textual_inversions": "textual_inversion",
+        }
+        requested = aliases.get(requested, requested)
+        try:
+            if requested:
+                return await asyncio.to_thread(catalog.refresh_asset_type, requested)
+            await asyncio.to_thread(catalog.refresh_models)
+            return catalog.catalog_payload()
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=f"Unsupported asset type: {requested}") from exc
+
+    @app.get("/api/assets/checkpoints")
+    async def checkpoint_assets() -> dict[str, Any]:
+        return catalog.asset_payload("checkpoint")
+
+    @app.post("/api/assets/checkpoints/refresh")
+    async def refresh_checkpoint_assets() -> dict[str, Any]:
+        return await asyncio.to_thread(catalog.refresh_asset_type, "checkpoint")
+
+    @app.get("/api/assets/checkpoints/{asset_id}")
+    async def checkpoint_asset_details(asset_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(catalog.checkpoint_details, asset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.patch("/api/assets/checkpoints/{asset_id}")
+    async def update_checkpoint_asset(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return catalog.update_asset_metadata("checkpoint", asset_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/checkpoints/{asset_id}/preview")
+    async def checkpoint_asset_preview(asset_id: str) -> FileResponse:
+        try:
+            path = catalog.asset_preview_path("checkpoint", asset_id)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path, media_type=_preview_media_type(path))
+
+    @app.post("/api/assets/checkpoints/{asset_id}/preview")
+    async def replace_checkpoint_asset_preview(asset_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+        try:
+            return catalog.replace_asset_preview(
+                "checkpoint",
+                asset_id,
+                filename=file.filename or "preview.png",
+                content=await file.read(),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+    @app.get("/api/assets/checkpoints/{asset_id}/preview/recent-outputs")
+    async def checkpoint_asset_preview_candidates(asset_id: str, limit: int = 48) -> list[dict[str, Any]]:
+        try:
+            return catalog.asset_preview_candidates("checkpoint", asset_id, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/assets/checkpoints/{asset_id}/preview/from-output")
+    async def checkpoint_asset_preview_from_output(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return catalog.replace_asset_preview_from_output("checkpoint", asset_id, str(payload.get("output_id") or ""))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/assets/checkpoints/{asset_id}/open-folder")
+    async def open_checkpoint_asset_folder(asset_id: str) -> dict[str, Any]:
+        try:
+            record = catalog.asset_record("checkpoint", asset_id)
+            target = Path(str(record.get("path") or "")).resolve().parent
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)], start_new_session=True)
+            else:
+                subprocess.Popen(["xdg-open", str(target)], start_new_session=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to open the checkpoint folder: {exc}") from exc
+        return {"opened": True, "path": str(target)}
+
+    @app.get("/api/assets/loras")
+    async def lora_assets() -> dict[str, Any]:
+        return catalog.asset_payload("lora")
+
+    @app.post("/api/assets/loras/refresh")
+    async def refresh_lora_assets() -> dict[str, Any]:
+        payload = await asyncio.to_thread(catalog.refresh_asset_type, "lora")
+        if _lora_auto_scan_enabled():
+            return await asyncio.to_thread(catalog.scan_loras, mode="missing")
+        return payload
+
+    @app.post("/api/assets/loras/scan")
+    async def scan_lora_assets(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        mode = str((payload or {}).get("mode") or "missing").strip().lower()
+        try:
+            return await asyncio.to_thread(catalog.scan_loras, mode=mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/loras/{asset_id}")
+    async def lora_asset_details(asset_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(catalog.lora_details, asset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.patch("/api/assets/loras/{asset_id}")
+    async def update_lora_asset(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return catalog.update_asset_metadata("lora", asset_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/loras/{asset_id}/preview")
+    async def lora_asset_preview(asset_id: str) -> FileResponse:
+        try:
+            path = catalog.asset_preview_path("lora", asset_id)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path, media_type=_preview_media_type(path))
+
+    @app.post("/api/assets/loras/{asset_id}/preview")
+    async def replace_lora_asset_preview(asset_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+        try:
+            return catalog.replace_asset_preview(
+                "lora",
+                asset_id,
+                filename=file.filename or "preview.png",
+                content=await file.read(),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+    @app.get("/api/assets/loras/{asset_id}/preview/recent-outputs")
+    async def lora_asset_preview_candidates(asset_id: str, limit: int = 48) -> list[dict[str, Any]]:
+        try:
+            return catalog.asset_preview_candidates("lora", asset_id, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/assets/loras/{asset_id}/preview/from-output")
+    async def lora_asset_preview_from_output(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return catalog.replace_asset_preview_from_output("lora", asset_id, str(payload.get("output_id") or ""))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/assets/loras/{asset_id}/open-folder")
+    async def open_lora_asset_folder(asset_id: str) -> dict[str, Any]:
+        try:
+            record = catalog.asset_record("lora", asset_id)
+            target = Path(str(record.get("path") or "")).resolve().parent
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)], start_new_session=True)
+            else:
+                subprocess.Popen(["xdg-open", str(target)], start_new_session=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to open the LoRA folder: {exc}") from exc
+        return {"opened": True, "path": str(target)}
+
+    @app.delete("/api/assets/loras/{asset_id}")
+    async def delete_lora_asset(asset_id: str) -> dict[str, Any]:
+        try:
+            return catalog.delete_asset("lora", asset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/textual-inversions")
+    async def textual_inversion_assets() -> dict[str, Any]:
+        return catalog.asset_payload("textual_inversion")
+
+    @app.post("/api/assets/textual-inversions/refresh")
+    async def refresh_textual_inversion_assets() -> dict[str, Any]:
+        return await asyncio.to_thread(catalog.refresh_asset_type, "textual_inversion")
+
+    @app.get("/api/assets/textual-inversions/{asset_id}")
+    async def textual_inversion_asset_details(asset_id: str) -> dict[str, Any]:
+        try:
+            return catalog.asset_record("textual_inversion", asset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.patch("/api/assets/textual-inversions/{asset_id}")
+    async def update_textual_inversion_asset(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return catalog.update_asset_metadata("textual_inversion", asset_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/textual-inversions/{asset_id}/preview")
+    async def textual_inversion_asset_preview(asset_id: str) -> FileResponse:
+        try:
+            path = catalog.asset_preview_path("textual_inversion", asset_id)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path, media_type=_preview_media_type(path))
+
+    @app.post("/api/assets/textual-inversions/{asset_id}/preview")
+    async def replace_textual_inversion_asset_preview(asset_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+        try:
+            return catalog.replace_asset_preview(
+                "textual_inversion",
+                asset_id,
+                filename=file.filename or "preview.png",
+                content=await file.read(),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/assets/textual-inversions/{asset_id}/open-folder")
+    async def open_textual_inversion_asset_folder(asset_id: str) -> dict[str, Any]:
+        try:
+            record = catalog.asset_record("textual_inversion", asset_id)
+            target = Path(str(record.get("path") or "")).resolve().parent
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)], start_new_session=True)
+            else:
+                subprocess.Popen(["xdg-open", str(target)], start_new_session=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to open the textual-inversion folder: {exc}") from exc
+        return {"opened": True, "path": str(target)}
+
     @app.get("/api/models/active")
     async def active_model() -> dict[str, Any]:
         return {
@@ -524,7 +872,43 @@ def create_app(
     async def model_runtime_status() -> dict[str, Any]:
         return jobs.model_runtime_status()
 
+    @app.post("/api/models/unload")
+    async def unload_model() -> dict[str, Any]:
+        status = jobs.model_runtime_status()
+        if status.get("current_job_id"):
+            raise HTTPException(status_code=409, detail="Cancel or finish the active generation before unloading the checkpoint.")
+        result = await jobs.unload_model()
+        model_selection.deactivate()
+        return {
+            "unloaded": True,
+            "result": result,
+            "active_model": None,
+            "model_runtime": jobs.model_runtime_status(),
+            "default_assets": _default_asset_payload(None),
+        }
+
     async def _activate_model_impl(payload: ModelActivationPayload) -> dict[str, Any]:
+        runtime_before = jobs.model_runtime_status()
+        current_job_id = str(runtime_before.get("current_job_id") or "").strip()
+        current_model_path = str(runtime_before.get("current_model_path") or "").strip()
+        requested_model_path = str(payload.model_path or "").strip()
+
+        def _model_path_identity(value: str) -> str:
+            if not value:
+                return ""
+            try:
+                return os.path.normcase(str(Path(value).expanduser().resolve(strict=False)))
+            except OSError:
+                return os.path.normcase(value)
+
+        if current_job_id and _model_path_identity(current_model_path) != _model_path_identity(requested_model_path):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A generation is currently using the resident checkpoint. "
+                    "Wait for the active job to finish or cancel it before changing models."
+                ),
+            )
         try:
             selected = model_selection.activate(payload.model_path)
         except (OSError, ValueError) as exc:
@@ -551,6 +935,7 @@ def create_app(
         return {
             "active_model": selected.to_dict(),
             "model_runtime": jobs.model_runtime_status(),
+            "default_assets": _default_asset_payload(selected.to_dict()),
             "activation": activation,
         }
 
@@ -956,6 +1341,57 @@ def create_app(
     @app.put("/api/session")
     async def put_session(payload: dict[str, Any]) -> dict[str, Any]:
         return store.save_session(payload)
+
+    @app.get("/api/default-assets")
+    async def get_default_assets() -> dict[str, Any]:
+        return _default_asset_payload()
+
+    @app.put("/api/default-assets")
+    async def put_default_assets(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            saved = store.save_default_asset_profiles(payload)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _default_asset_payload(document=saved)
+
+    @app.patch("/api/default-assets")
+    async def patch_default_assets(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            current = store.load_default_asset_profiles()
+            merged = _deep_merge_dict(current, payload)
+            saved = store.save_default_asset_profiles(merged)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _default_asset_payload(document=saved)
+
+    def _workspace_layout_payload(settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        resolved = settings or store.load_application_settings()
+        layout = dict(resolved.get("ui_layout") or {})
+        return {
+            "workspace_layout_version": int(layout.get("workspace_layout_version") or 1),
+            "layout": layout,
+            "settings": resolved,
+        }
+
+    @app.get("/api/workspace/layout")
+    async def get_workspace_layout() -> dict[str, Any]:
+        return _workspace_layout_payload()
+
+    @app.patch("/api/workspace/layout")
+    async def patch_workspace_layout(payload: dict[str, Any]) -> dict[str, Any]:
+        requested = payload.get("layout") if isinstance(payload.get("layout"), dict) else payload
+        try:
+            saved = store.save_application_settings({"ui_layout": requested})
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _workspace_layout_payload(saved)
+
+    @app.post("/api/workspace/layout/reset")
+    async def reset_workspace_layout() -> dict[str, Any]:
+        packaged = store.load_packaged_application_defaults()
+        default_layout = dict(packaged.get("ui_layout") or {})
+        saved = store.save_application_settings({"ui_layout": default_layout})
+        return _workspace_layout_payload(saved)
 
     @app.get("/api/settings")
     async def get_settings() -> dict[str, Any]:

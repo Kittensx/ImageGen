@@ -1,5 +1,5 @@
 {
-  "settings_defaults_version": 10,
+  "settings_defaults_version": 11,
   "restore_last_session": true,
   "ui_scale": 105,
   "density": "comfortable",
@@ -50,8 +50,36 @@
       "prompt_presets": 100,
       "model_refresh": 100,
       "maintenance": 100,
-      "memory_status": 100
-    }
+      "memory_status": 100,
+      "active_prompt_assets": 100,
+      "runtime_status": 100,
+      "startup_defaults": 100
+    },
+    "workspace_layout_version": 1,
+    "startup_defaults_open": false,
+    "startup_defaults_pinned": false,
+    "startup_defaults_width": 300,
+    "panel_zones": {
+      "left": [
+        "generation_controls"
+      ],
+      "center": [
+        "output_viewer",
+        "recent_outputs"
+      ],
+      "right": [
+        "live_preview",
+        "active_prompt_assets",
+        "memory_status",
+        "runtime_status",
+        "queue",
+        "recent_runs",
+        "prompt_presets",
+        "model_refresh",
+        "maintenance"
+      ]
+    },
+    "collapsed_panels": []
   },
   "ui_scale_layout_defaults": {
     "105": {
@@ -71,8 +99,36 @@
         "prompt_presets": 190,
         "model_refresh": 190,
         "maintenance": 200,
-        "memory_status": 100
-      }
+        "memory_status": 100,
+        "active_prompt_assets": 100,
+        "runtime_status": 100,
+        "startup_defaults": 100
+      },
+      "workspace_layout_version": 1,
+      "startup_defaults_open": false,
+      "startup_defaults_pinned": false,
+      "startup_defaults_width": 300,
+      "panel_zones": {
+        "left": [
+          "generation_controls"
+        ],
+        "center": [
+          "output_viewer",
+          "recent_outputs"
+        ],
+        "right": [
+          "live_preview",
+          "active_prompt_assets",
+          "memory_status",
+          "runtime_status",
+          "queue",
+          "recent_runs",
+          "prompt_presets",
+          "model_refresh",
+          "maintenance"
+        ]
+      },
+      "collapsed_panels": []
     }
   },
   "recent_outputs_browser": {

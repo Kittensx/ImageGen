@@ -41,9 +41,6 @@ _ASYNC_OUTPUT_SAVE_STATUS_PREFIX = "ASYNC_OUTPUT_SAVE_STATUS_JSON: "
 _ASYNC_OUTPUT_SAVE_ERROR_PREFIX = "ASYNC_OUTPUT_SAVE_ERROR_JSON: "
 _READY_PREFIX = "MODEL_RUNTIME_READY_JSON: "
 _COMPLETE_PREFIX = "MODEL_RUNTIME_COMMAND_COMPLETE_JSON: "
-_REGION_PROMPT_MARKER = "REGION{"
-_MAX_PENDING_SAVE_TICKETS = 2
-_DEFAULT_GENERATE_FOREVER_BATCH_COOLDOWN_SECONDS = 1.0
 
 
 def _emit(prefix: str, payload: dict[str, Any]) -> None:
@@ -62,40 +59,6 @@ def _normalized_resolved_path(value: str | None) -> str:
         return os.path.normcase(str(Path(token).expanduser().resolve()))
     except OSError:
         return os.path.normcase(token)
-
-
-def _request_contains_region_request(request: Any) -> bool:
-    for value in (
-        getattr(request, 'positive_prompt', ''),
-        getattr(request, 'hires_positive_prompt', ''),
-    ):
-        if _REGION_PROMPT_MARKER in str(value or ''):
-            return True
-    for attr in ('region_recorded', 'region_pass_records'):
-        value = getattr(request, attr, None)
-        if isinstance(value, dict) and value:
-            return True
-    return False
-
-
-def _drain_completed_save_tickets(
-    tickets: list[OutputSaveTicket],
-    *,
-    wait_for_oldest: bool = False,
-) -> tuple[int, list[OutputSaveTicket]]:
-    saved_count = 0
-    remaining: list[OutputSaveTicket] = []
-    waited = False
-    for ticket in tickets:
-        if ticket.wait(timeout=0.0):
-            saved_count += len(ticket.result())
-            continue
-        if wait_for_oldest and not waited:
-            saved_count += len(ticket.result())
-            waited = True
-            continue
-        remaining.append(ticket)
-    return saved_count, remaining
 
 
 class ResidentTxt2ImgModelRuntime:
@@ -415,19 +378,6 @@ class ResidentTxt2ImgModelRuntime:
         if request.batch_size < 1:
             raise ValueError("batch_size must be at least 1")
 
-        region_request = _request_contains_region_request(request)
-        if region_request:
-            extras["live_preview_enabled"] = False
-            extras["live_preview_telemetry_enabled"] = True
-        try:
-            batch_cooldown_seconds = max(0.0, float(extras.get('generate_forever_batch_cooldown_seconds', _DEFAULT_GENERATE_FOREVER_BATCH_COOLDOWN_SECONDS) or 0.0))
-        except (TypeError, ValueError):
-            batch_cooldown_seconds = _DEFAULT_GENERATE_FOREVER_BATCH_COOLDOWN_SECONDS
-        try:
-            max_pending_save_tickets = max(1, int(extras.get('max_pending_async_output_save_batches', _MAX_PENDING_SAVE_TICKETS) or _MAX_PENDING_SAVE_TICKETS))
-        except (TypeError, ValueError):
-            max_pending_save_tickets = _MAX_PENDING_SAVE_TICKETS
-
         requested_seed = request.seed
         base_seed_iterator = iter_batch_base_seeds(
             requested_seed,
@@ -577,14 +527,6 @@ class ResidentTxt2ImgModelRuntime:
                     batch_number=batch_number,
                 )
                 save_tickets.append(save_ticket)
-                drained_saved, save_tickets = _drain_completed_save_tickets(save_tickets)
-                total_saved += drained_saved
-                if len(save_tickets) >= max_pending_save_tickets:
-                    drained_saved, save_tickets = _drain_completed_save_tickets(
-                        save_tickets,
-                        wait_for_oldest=True,
-                    )
-                    total_saved += drained_saved
                 saved_paths: list[str] = []
             else:
                 saved_paths = [record.image_path for record in result.saved_records]
@@ -617,20 +559,6 @@ class ResidentTxt2ImgModelRuntime:
                         print(f"  TXT:   {record.txt_path}", flush=True)
                     if record.json_path:
                         print(f"  JSON:  {record.json_path}", flush=True)
-
-            should_pause_between_batches = (
-                batch_cooldown_seconds > 0.0
-                and (unlimited or region_request)
-                and (unlimited or completed_batches < batch_count)
-            )
-            if should_pause_between_batches:
-                self.emit_status(
-                    "cooldown_between_batches",
-                    cooldown_seconds=batch_cooldown_seconds,
-                    batch_number=batch_number,
-                    reason="region_or_generate_forever_stability",
-                )
-                time.sleep(batch_cooldown_seconds)
 
         # The save queue owns CPU images and metadata only. Restore the selected
         # checkpoint residency now so GPU transfers overlap disk persistence and
@@ -674,12 +602,26 @@ class ResidentTxt2ImgModelRuntime:
             "status": status,
         }
 
+    def unload(self) -> dict[str, Any]:
+        if self.current_job_id:
+            raise RuntimeError("Cannot unload the checkpoint while a generation is active.")
+        released = self.runner.clear_model_cache() if self.runner is not None else {
+            "cached_entries_released": 0,
+            "previous_model_path": None,
+            "unload_time_ms": 0.0,
+        }
+        self.selected_model_path = None
+        self.last_error = None
+        return self.emit_status("idle", action="unload", released=released)
+
     def handle(self, command: dict[str, Any]) -> dict[str, Any]:
         name = str(command.get("command") or "status").strip().lower()
         if name == "status":
             return self.emit_status()
         if name == "activate":
             return self.activate(command)
+        if name == "unload":
+            return self.unload()
         if name == "run":
             return self.run_job(command)
         if name == "shutdown":

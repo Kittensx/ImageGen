@@ -66,6 +66,90 @@ export const api = {
     body: JSON.stringify({ model_path: modelPath }),
   }),
   activeModel: () => request("/api/models/active"),
+  unloadModel: () => request("/api/models/unload", { method: "POST" }),
+  assetCatalog: () => request("/api/assets/catalog"),
+  refreshAssetCatalog: (assetType = "") => request("/api/assets/refresh", {
+    method: "POST",
+    body: JSON.stringify(assetType ? { asset_type: assetType } : {}),
+  }),
+  checkpointAssets: () => request("/api/assets/checkpoints"),
+  refreshCheckpointAssets: () => request("/api/assets/checkpoints/refresh", { method: "POST" }),
+  checkpointDetails: (assetId) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}`),
+  saveCheckpointMetadata: (assetId, values) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(values),
+  }),
+  replaceCheckpointPreview: (assetId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}/preview`, {
+      method: "POST",
+      body: form,
+    });
+  },
+  loadCheckpointPreviewCandidates: (assetId, limit = 48) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}/preview/recent-outputs?limit=${encodeURIComponent(limit)}`),
+  replaceCheckpointPreviewFromOutput: (assetId, outputId) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}/preview/from-output`, {
+    method: "POST",
+    body: JSON.stringify({ output_id: outputId }),
+  }),
+  openCheckpointFolder: (assetId) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}/open-folder`, { method: "POST" }),
+  loraAssets: () => request("/api/assets/loras"),
+  refreshLoraAssets: () => request("/api/assets/loras/refresh", { method: "POST" }),
+  scanLoras: (mode = "missing") => request("/api/assets/loras/scan", {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  }),
+  loraDetails: (assetId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`),
+  saveLoraMetadata: (assetId, values) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(values),
+  }),
+  replaceLoraPreview: (assetId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request(`/api/assets/loras/${encodeURIComponent(assetId)}/preview`, {
+      method: "POST",
+      body: form,
+    });
+  },
+  loadLoraPreviewCandidates: (assetId, limit = 48) => request(`/api/assets/loras/${encodeURIComponent(assetId)}/preview/recent-outputs?limit=${encodeURIComponent(limit)}`),
+  replaceLoraPreviewFromOutput: (assetId, outputId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}/preview/from-output`, {
+    method: "POST",
+    body: JSON.stringify({ output_id: outputId }),
+  }),
+  openLoraFolder: (assetId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}/open-folder`, { method: "POST" }),
+  deleteLora: (assetId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`, { method: "DELETE" }),
+  textualInversionAssets: () => request("/api/assets/textual-inversions"),
+  refreshTextualInversionAssets: () => request("/api/assets/textual-inversions/refresh", { method: "POST" }),
+  textualInversionDetails: (assetId) => request(`/api/assets/textual-inversions/${encodeURIComponent(assetId)}`),
+  saveTextualInversionMetadata: (assetId, values) => request(`/api/assets/textual-inversions/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(values),
+  }),
+  replaceTextualInversionPreview: (assetId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request(`/api/assets/textual-inversions/${encodeURIComponent(assetId)}/preview`, {
+      method: "POST",
+      body: form,
+    });
+  },
+  openTextualInversionFolder: (assetId) => request(`/api/assets/textual-inversions/${encodeURIComponent(assetId)}/open-folder`, { method: "POST" }),
+  defaultAssets: () => request("/api/default-assets"),
+  saveDefaultAssets: (values) => request("/api/default-assets", {
+    method: "PUT",
+    body: JSON.stringify(values),
+  }),
+  patchDefaultAssets: (values) => request("/api/default-assets", {
+    method: "PATCH",
+    body: JSON.stringify(values),
+  }),
+  workspaceLayout: () => request("/api/workspace/layout"),
+  saveWorkspaceLayout: (layout) => request("/api/workspace/layout", {
+    method: "PATCH",
+    body: JSON.stringify({ layout }),
+  }),
+  resetWorkspaceLayout: () => request("/api/workspace/layout/reset", { method: "POST" }),
   reloadWorkspace: () => request("/api/workspace/reload", { method: "POST" }),
   restartBackend: () => request("/api/system/restart", { method: "POST" }),
   recentOutputs: (filters = {}) => {

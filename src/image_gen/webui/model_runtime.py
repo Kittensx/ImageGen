@@ -280,6 +280,9 @@ class ResidentModelRuntimeClient:
             on_line=on_line,
         )
 
+    async def unload(self) -> dict[str, Any]:
+        return await self.execute({"command": "unload"})
+
     async def run_job(
         self,
         *,

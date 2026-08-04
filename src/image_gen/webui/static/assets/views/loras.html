@@ -1,0 +1,163 @@
+<main class="lora-workspace is-hidden" id="loraWorkspace" data-active-workspace="loras" aria-label="LoRA library workspace">
+  <aside class="lora-sidebar" aria-label="LoRA controls">
+    <section class="panel lora-control-panel">
+      <div class="panel-heading"><h2>LoRA Controls</h2><span class="status-badge" id="loraResultCount">0</span></div>
+      <label class="lora-search-field">
+        <span class="visually-hidden">Search LoRAs</span>
+        <input id="loraSidebarSearch" type="search" placeholder="Search LoRAs…" autocomplete="off">
+      </label>
+      <div class="lora-filter-heading"><span>Filter by</span><button class="text-button" id="loraClearFiltersButton" type="button">Clear</button></div>
+      <div class="lora-filter-chips" id="loraFilterChips" role="group" aria-label="LoRA filters">
+        <button class="filter-chip is-active" type="button" data-lora-filter="all">All</button>
+        <button class="filter-chip" type="button" data-lora-filter="character">Characters</button>
+        <button class="filter-chip" type="button" data-lora-filter="style">Style</button>
+        <button class="filter-chip" type="button" data-lora-filter="clothing">Clothing</button>
+        <button class="filter-chip" type="button" data-lora-filter="background">Backgrounds</button>
+        <button class="filter-chip" type="button" data-lora-filter="pose">Poses</button>
+        <button class="filter-chip" type="button" data-lora-filter="favorite">Favorites</button>
+        <button class="filter-chip" type="button" data-lora-filter="recent">Recent</button>
+        <button class="filter-chip" type="button" data-lora-filter="compatible">Compatible</button>
+      </div>
+      <label class="field-block lora-sort-field">
+        <span>Sort by</span>
+        <select id="loraSortSelect">
+          <option value="recent">Recently modified</option>
+          <option value="name">Name</option>
+          <option value="favorites">Favorites first</option>
+          <option value="weight_desc">Highest preferred weight</option>
+          <option value="size_desc">Largest first</option>
+        </select>
+      </label>
+      <div class="field-block lora-scan-panel">
+        <div class="lora-scan-heading"><span>Compatibility Scan</span><span class="status-badge" id="loraScanStatusBadge">0</span></div>
+        <label class="lora-default-toggle"><span>Auto-scan unidentified on startup</span><input id="loraAutoScanUnknown" type="checkbox"></label>
+        <small class="field-status subtle" id="loraScanSummary">Scan results are cached in each LoRA .imagegen.json sidecar.</small>
+        <small class="field-status subtle" id="loraCompatibilityContext">No checkpoint selected yet. Choose a checkpoint to focus the library on compatible and unclassified LoRAs.</small>
+      </div>
+    </section>
+
+    <section class="panel lora-control-panel">
+      <div class="panel-heading"><h2>Prompt Integration</h2><span class="info-dot" title="Inline syntax remains supported for imported and shared prompts.">i</span></div>
+      <p class="field-status subtle">Choose what happens when Add is clicked on a LoRA card.</p>
+      <fieldset class="lora-radio-group">
+        <label><input type="radio" name="loraPromptIntegrationMode" value="visual"> Visual tags <span class="recommended-badge">Recommended</span></label>
+        <label><input type="radio" name="loraPromptIntegrationMode" value="inline"> Inline syntax</label>
+      </fieldset>
+      <small class="field-status subtle" id="loraPromptIntegrationStatus">Visual tags stage structured LoRA selections without placing system syntax in the CLIP-visible prompt.</small>
+    </section>
+
+    <section class="panel lora-control-panel lora-default-assets-panel">
+      <div class="panel-heading"><h2>Default Assets</h2><span class="status-badge" id="loraDefaultAssetCount">0</span></div>
+      <p class="field-status subtle">Configure compatible assets that can auto-stage at startup or after a model loads.</p>
+      <label class="lora-default-toggle"><span>Apply saved defaults</span><input id="loraApplySavedDefaults" type="checkbox"></label>
+      <label class="lora-default-toggle"><span>Auto-apply after model load</span><input id="loraAutoApplyDefaults" type="checkbox"></label>
+      <h3>Positive Defaults</h3>
+      <div class="lora-default-list" id="loraPositiveDefaults"></div>
+      <h3 class="is-negative-heading">Negative Defaults</h3>
+      <div class="lora-default-list" id="loraNegativeDefaults"></div>
+      <div class="lora-default-actions">
+        <button class="primary-button compact-button" id="loraLoadDefaultsButton" type="button">Load Defaults</button>
+        <button class="secondary-button compact-button" id="loraEditDefaultsButton" type="button">Edit Saved Defaults</button>
+      </div>
+    </section>
+  </aside>
+
+  <section class="panel lora-library-panel" aria-label="LoRA library">
+    <div class="lora-library-toolbar">
+      <div>
+        <h2>LoRA Library</h2>
+        <small id="loraLibrarySummary">Installed LoRA files</small>
+      </div>
+      <label class="lora-library-search">
+        <span class="visually-hidden">Search LoRAs</span>
+        <input id="loraLibrarySearch" type="search" placeholder="Search LoRAs…" autocomplete="off">
+      </label>
+      <div class="lora-library-toolbar-actions">
+        <button class="secondary-button compact-button" id="loraScanUnknownButton" type="button">Scan Unknown</button>
+        <button class="secondary-button compact-button" id="loraRefreshButton" type="button">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="lora-card-grid" id="loraCardGrid" aria-live="polite"></div>
+    <div class="lora-empty-state is-hidden" id="loraEmptyState">No LoRAs match the current search and filters.</div>
+    <div class="lora-pagination" id="loraPagination">
+      <button class="secondary-button compact-button" id="loraPreviousPageButton" type="button">‹ Previous</button>
+      <span id="loraPageStatus">Page 1 of 1</span>
+      <button class="secondary-button compact-button" id="loraNextPageButton" type="button">Next ›</button>
+      <label><span class="visually-hidden">LoRAs per page</span><select id="loraPageSizeSelect"><option value="8">8 / page</option><option value="12">12 / page</option><option value="16" selected>16 / page</option><option value="24">24 / page</option></select></label>
+    </div>
+  </section>
+
+  <aside class="lora-right-column" aria-label="Active LoRAs and LoRA details">
+    <section class="panel lora-active-panel">
+      <div class="panel-heading"><h2>Active LoRAs for Current Prompt</h2><span class="status-badge" id="loraWorkspaceActiveCount">0</span></div>
+      <div class="lora-active-list" id="loraWorkspaceActiveList"></div>
+      <div class="lora-active-ti-heading"><h3>Active Textual Inversions</h3><span class="status-badge" id="loraWorkspaceTiCount">0</span></div>
+      <div class="lora-active-ti-list" id="loraWorkspaceTiList"></div>
+      <div class="lora-active-actions">
+        <button class="primary-button" id="loraApplyToPromptButton" type="button">Apply to Prompt</button>
+        <button class="secondary-button" id="loraClearActiveButton" type="button">Clear All</button>
+        <label class="lora-save-default-scope"><span class="visually-hidden">Default profile scope</span><select id="loraSaveDefaultScope"><option value="model">Current model defaults</option><option value="global">Global defaults</option></select></label>
+        <button class="secondary-button" id="loraSaveActiveDefaultsButton" type="button">Save Current as Defaults</button>
+        <button class="secondary-button" id="loraManageDefaultsButton" type="button">⚙ Manage Saved Defaults</button>
+      </div>
+      <small class="field-status subtle" id="loraActiveStatus">Visual selections are shared with the Generation tab. Runtime tensor application is added in the LoRA runtime phase.</small>
+    </section>
+
+    <section class="panel lora-details-panel" aria-label="LoRA details">
+      <div class="panel-heading">
+        <h2>LoRA Details</h2>
+        <button class="icon-button" id="closeLoraDetailsButton" type="button" aria-label="Clear LoRA selection">×</button>
+      </div>
+      <div class="lora-detail-empty" id="loraDetailEmpty">
+        <strong>Select a LoRA</strong>
+        <span>Preview, activation text, technical metadata, and editing controls will appear here.</span>
+      </div>
+      <div class="lora-detail-content is-hidden" id="loraDetailContent">
+        <div class="lora-detail-preview-wrap">
+          <div class="lora-preview-fallback" id="loraDetailPreviewFallback">LORA</div>
+          <img id="loraDetailPreview" alt="Selected LoRA preview">
+        </div>
+        <div class="lora-detail-title-row">
+          <div>
+            <h3 id="loraDetailName">—</h3>
+            <div class="lora-tag-row" id="loraDetailTags"></div>
+          </div>
+          <button class="favorite-button" id="loraFavoriteButton" type="button" aria-pressed="false" title="Favorite LoRA">☆</button>
+        </div>
+        <dl class="lora-detail-list">
+          <div><dt>Filename</dt><dd id="loraDetailFilename">—</dd></div>
+          <div><dt>File size</dt><dd id="loraDetailSize">—</dd></div>
+          <div><dt>SHA256</dt><dd class="lora-hash" id="loraDetailHash">Not inspected</dd></div>
+          <div><dt>Network type</dt><dd id="loraDetailNetworkType">Unknown</dd></div>
+          <div><dt>Tensor format</dt><dd id="loraDetailTensorFormat">Unknown</dd></div>
+          <div><dt>Model family</dt><dd id="loraDetailModelFamily">Unknown</dd></div>
+          <div><dt>Modified</dt><dd id="loraDetailModified">—</dd></div>
+        </dl>
+        <label class="field-block"><span>Display name</span><input id="loraMetadataDisplayName" type="text" maxlength="160"></label>
+        <label class="field-block"><span>Activation text</span><input id="loraMetadataActivationText" type="text" placeholder="thg-teresa"></label>
+        <div class="lora-metadata-grid">
+          <label class="field-block"><span>Preferred weight</span><input id="loraMetadataPreferredWeight" type="number" min="-4" max="4" step="0.05"></label>
+          <label class="field-block"><span>Model family</span><select id="loraMetadataModelFamily"><option value="">Unknown / any</option><option value="sd1.x">SD 1.x</option><option value="sd2.x">SD 2.x</option><option value="sdxl">SDXL</option><option value="any">Any</option></select></label>
+        </div>
+        <label class="field-block"><span>Source URL</span><input id="loraMetadataSourceUrl" type="url" placeholder="https://civitai.com/models/…"></label>
+        <label class="field-block"><span>Category</span><select id="loraMetadataCategory"><option value="">Uncategorized</option><option value="character">Character</option><option value="style">Style</option><option value="clothing">Clothing</option><option value="background">Background</option><option value="pose">Pose</option><option value="utility">Utility</option></select></label>
+        <label class="field-block"><span>Tags</span><input id="loraMetadataTags" type="text" placeholder="female, blonde hair, blue eyes"></label>
+        <label class="field-block"><span>Description</span><textarea id="loraMetadataDescription" rows="3"></textarea></label>
+        <label class="field-block"><span>Notes</span><textarea id="loraMetadataNotes" rows="3"></textarea></label>
+        <div class="lora-detail-actions">
+          <button class="primary-button" id="loraDetailAddButton" type="button">+ Add to Prompt</button>
+          <button class="secondary-button" id="loraCopyPathButton" type="button">Copy Path</button>
+          <button class="secondary-button" id="loraCopySyntaxButton" type="button">Copy A1111 Syntax</button>
+          <button class="secondary-button" id="loraOpenSourceButton" type="button">Open Source</button>
+          <button class="secondary-button" id="loraOpenFolderButton" type="button">Open Folder</button>
+          <button class="secondary-button" id="loraReplacePreviewButton" type="button">Replace Preview</button>
+          <button class="secondary-button" id="loraChooseRecentPreviewButton" type="button">Choose from Recent Outputs</button>
+          <input id="loraPreviewFileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <button class="primary-button" id="loraSaveMetadataButton" type="button">Save Metadata</button>
+          <button class="secondary-button danger-button" id="loraDeleteButton" type="button">Delete LoRA</button>
+        </div>
+        <small class="field-status subtle" id="loraDetailStatus">Editable metadata is stored beside the LoRA in an .imagegen.json sidecar.</small>
+      </div>
+    </section>
+  </aside>
+</main>

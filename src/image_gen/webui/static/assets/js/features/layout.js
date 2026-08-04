@@ -3,7 +3,8 @@ import { state } from "../state.js";
 import { $, debounce } from "../utils.js";
 
 const MIN_LEFT_COLUMN = 170;
-const MIN_CENTER_COLUMN = 180;
+const MIN_CENTER_COLUMN = 240;
+const PREFERRED_CENTER_COLUMN = 640;
 const MIN_RIGHT_COLUMN = 190;
 const MAX_STORED_COLUMN = Number.MAX_SAFE_INTEGER;
 const MIN_GALLERY_HEIGHT = 96;
@@ -11,30 +12,68 @@ const MIN_OUTPUT_HEIGHT = 120;
 const MAX_GALLERY_HEIGHT = Number.MAX_SAFE_INTEGER;
 const MIN_LIVE_PREVIEW_HEIGHT = 240;
 const MAX_LIVE_PREVIEW_HEIGHT = 450;
+const MIN_STARTUP_DEFAULTS_WIDTH = 260;
+const MAX_STARTUP_DEFAULTS_WIDTH = 520;
 const PANEL_SCALE_MIN = 60;
 const PANEL_SCALE_MAX = 240;
 const PANEL_SCALE_STEP = 10;
+const WORKSPACE_LAYOUT_VERSION = 1;
+const VALID_ZONES = Object.freeze(["left", "center", "right"]);
 
 export const DEFAULT_PANEL_SCALES = Object.freeze({
   controls: 100,
   output_viewer: 100,
   recent_outputs: 100,
   live_preview: 100,
+  active_prompt_assets: 100,
   memory_status: 100,
+  runtime_status: 100,
   queue: 100,
   recent_runs: 100,
   prompt_presets: 100,
   model_refresh: 100,
   maintenance: 100,
+  startup_defaults: 100,
 });
 
+export const DEFAULT_PANEL_ZONES = Object.freeze({
+  left: Object.freeze(["generation_controls"]),
+  center: Object.freeze(["output_viewer", "recent_outputs"]),
+  right: Object.freeze([
+    "live_preview",
+    "active_prompt_assets",
+    "memory_status",
+    "runtime_status",
+    "queue",
+    "recent_runs",
+    "prompt_presets",
+    "model_refresh",
+    "maintenance",
+  ]),
+});
+
+const PANEL_DEFAULT_ZONE = Object.freeze(
+  Object.entries(DEFAULT_PANEL_ZONES).reduce((result, [zone, panelIds]) => {
+    panelIds.forEach((panelId) => { result[panelId] = zone; });
+    return result;
+  }, {}),
+);
+
+const PROTECTED_PANEL_IDS = new Set(["output_viewer"]);
+
 export const DEFAULT_LAYOUT = Object.freeze({
+  workspace_layout_version: WORKSPACE_LAYOUT_VERSION,
   left_column_width: 330,
   right_column_width: 360,
   gallery_panel_height: 132,
   live_preview_panel_height: 360,
   live_preview_collapsed: false,
   follow_newest_output: false,
+  startup_defaults_open: false,
+  startup_defaults_pinned: false,
+  startup_defaults_width: 300,
+  panel_zones: DEFAULT_PANEL_ZONES,
+  collapsed_panels: Object.freeze([]),
   panel_scales: DEFAULT_PANEL_SCALES,
 });
 
@@ -50,29 +89,94 @@ function normalizePanelScales(value = {}) {
   );
 }
 
+function normalizedPanelIdList(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value
+    .map((item) => String(item || "").trim())
+    .filter((item) => PANEL_DEFAULT_ZONE[item] && !seen.has(item) && seen.add(item));
+}
+
+function normalizePanelZones(value = {}) {
+  const stored = value && typeof value === "object" ? value : {};
+  const result = { left: [], center: [], right: [] };
+  const assigned = new Set();
+
+  VALID_ZONES.forEach((zone) => {
+    normalizedPanelIdList(stored[zone]).forEach((panelId) => {
+      if (assigned.has(panelId)) return;
+      if (PROTECTED_PANEL_IDS.has(panelId) && zone !== "center") return;
+      result[zone].push(panelId);
+      assigned.add(panelId);
+    });
+  });
+
+  VALID_ZONES.forEach((zone) => {
+    DEFAULT_PANEL_ZONES[zone].forEach((panelId) => {
+      if (assigned.has(panelId)) return;
+      result[zone].push(panelId);
+      assigned.add(panelId);
+    });
+  });
+
+  result.center = ["output_viewer", ...result.center.filter((panelId) => panelId !== "output_viewer")];
+  return result;
+}
+
+function normalizeCollapsedPanels(value, livePreviewCollapsed = false) {
+  const collapsed = new Set(normalizedPanelIdList(value));
+  if (livePreviewCollapsed) collapsed.add("live_preview");
+  PROTECTED_PANEL_IDS.forEach((panelId) => collapsed.delete(panelId));
+  return [...collapsed];
+}
+
 function normalizeLayout(settings = {}) {
   const stored = settings.ui_layout && typeof settings.ui_layout === "object"
     ? settings.ui_layout
     : {};
+  const hasStructuredCollapsedPanels = Array.isArray(stored.collapsed_panels);
+  const collapsedPanels = normalizeCollapsedPanels(
+    stored.collapsed_panels,
+    !hasStructuredCollapsedPanels && Boolean(stored.live_preview_collapsed),
+  );
   return {
+    workspace_layout_version: WORKSPACE_LAYOUT_VERSION,
     left_column_width: clamp(stored.left_column_width ?? DEFAULT_LAYOUT.left_column_width, MIN_LEFT_COLUMN, MAX_STORED_COLUMN),
     right_column_width: clamp(stored.right_column_width ?? DEFAULT_LAYOUT.right_column_width, MIN_RIGHT_COLUMN, MAX_STORED_COLUMN),
     gallery_panel_height: clamp(stored.gallery_panel_height ?? DEFAULT_LAYOUT.gallery_panel_height, MIN_GALLERY_HEIGHT, MAX_GALLERY_HEIGHT),
     live_preview_panel_height: clamp(stored.live_preview_panel_height ?? DEFAULT_LAYOUT.live_preview_panel_height, MIN_LIVE_PREVIEW_HEIGHT, MAX_LIVE_PREVIEW_HEIGHT),
-    live_preview_collapsed: Boolean(stored.live_preview_collapsed),
+    live_preview_collapsed: collapsedPanels.includes("live_preview"),
     follow_newest_output: Boolean(stored.follow_newest_output),
+    startup_defaults_open: Boolean(stored.startup_defaults_open),
+    startup_defaults_pinned: Boolean(stored.startup_defaults_pinned),
+    startup_defaults_width: clamp(
+      stored.startup_defaults_width ?? DEFAULT_LAYOUT.startup_defaults_width,
+      MIN_STARTUP_DEFAULTS_WIDTH,
+      MAX_STARTUP_DEFAULTS_WIDTH,
+    ),
+    panel_zones: normalizePanelZones(stored.panel_zones),
+    collapsed_panels: collapsedPanels,
     panel_scales: normalizePanelScales(stored.panel_scales),
   };
 }
 
 function cloneLayout(layout) {
-  return { ...layout, panel_scales: { ...layout.panel_scales } };
+  return {
+    ...layout,
+    panel_zones: Object.fromEntries(VALID_ZONES.map((zone) => [zone, [...layout.panel_zones[zone]]])),
+    collapsed_panels: [...layout.collapsed_panels],
+    panel_scales: { ...layout.panel_scales },
+  };
 }
 
 function mergeLayoutValues(baseLayout = {}, overrideLayout = {}) {
   return {
     ...baseLayout,
     ...overrideLayout,
+    panel_zones: {
+      ...(baseLayout.panel_zones || {}),
+      ...(overrideLayout.panel_zones || {}),
+    },
     panel_scales: {
       ...(baseLayout.panel_scales || {}),
       ...(overrideLayout.panel_scales || {}),
@@ -99,25 +203,31 @@ function resolveLayoutDefaultsForScale(settings = {}, scale = null) {
   });
 }
 
-function workspaceHorizontalMetrics() {
+function workspaceHorizontalMetrics(layout) {
   const workspace = $("#workspace");
   const styles = window.getComputedStyle(workspace);
   const gap = Number.parseFloat(styles.columnGap || styles.gap) || 0;
   const splitterWidth = [$("#leftColumnSplitter"), $("#rightColumnSplitter")]
     .reduce((total, item) => total + (item?.getBoundingClientRect().width || 0), 0);
-  const fixedWidth = splitterWidth + (gap * 4);
-  return {
-    width: workspace.getBoundingClientRect().width,
-    fixedWidth,
-    usableWidth: Math.max(0, workspace.getBoundingClientRect().width - fixedWidth),
-  };
+  const drawerWidth = layout.startup_defaults_open && layout.startup_defaults_pinned
+    ? layout.startup_defaults_width
+    : 0;
+  const gapCount = drawerWidth > 0 ? 5 : 4;
+  const fixedWidth = splitterWidth + drawerWidth + (gap * gapCount);
+  const width = workspace.getBoundingClientRect().width;
+  const usableWidth = Math.max(0, width - fixedWidth);
+  const centerMinimum = Math.min(
+    PREFERRED_CENTER_COLUMN,
+    Math.max(MIN_CENTER_COLUMN, usableWidth - MIN_LEFT_COLUMN - MIN_RIGHT_COLUMN),
+  );
+  return { width, fixedWidth, usableWidth, centerMinimum };
 }
 
 function fitHorizontalLayout(layout, preference = "balanced") {
-  const { usableWidth } = workspaceHorizontalMetrics();
+  const { usableWidth, centerMinimum } = workspaceHorizontalMetrics(layout);
   const maximumSideTotal = Math.max(
     MIN_LEFT_COLUMN + MIN_RIGHT_COLUMN,
-    usableWidth - MIN_CENTER_COLUMN,
+    usableWidth - centerMinimum,
   );
   let left = clamp(layout.left_column_width, MIN_LEFT_COLUMN, MAX_STORED_COLUMN);
   let right = clamp(layout.right_column_width, MIN_RIGHT_COLUMN, MAX_STORED_COLUMN);
@@ -147,6 +257,7 @@ function fitHorizontalLayout(layout, preference = "balanced") {
   return {
     left_column_width: Math.round(left),
     right_column_width: Math.round(right),
+    center_column_min_width: Math.round(centerMinimum),
   };
 }
 
@@ -154,10 +265,15 @@ function copyToState(layout, renderedHorizontal = layout, effectiveGalleryHeight
   state.layout = {
     leftColumnWidth: renderedHorizontal.left_column_width,
     rightColumnWidth: renderedHorizontal.right_column_width,
+    centerColumnMinWidth: renderedHorizontal.center_column_min_width,
     galleryPanelHeight: effectiveGalleryHeight,
     livePreviewPanelHeight: layout.live_preview_panel_height,
     livePreviewCollapsed: layout.live_preview_collapsed,
     followNewestOutput: layout.follow_newest_output,
+    startupDefaultsOpen: layout.startup_defaults_open,
+    startupDefaultsPinned: layout.startup_defaults_pinned,
+    panelZones: Object.fromEntries(VALID_ZONES.map((zone) => [zone, [...layout.panel_zones[zone]]])),
+    collapsedPanels: [...layout.collapsed_panels],
     panelScales: { ...layout.panel_scales },
   };
 }
@@ -196,6 +312,23 @@ function createPanelScaleControls(panel, label, onChange) {
   return group;
 }
 
+function headingActionsFor(panel) {
+  const heading = panel.querySelector(":scope > .panel-heading");
+  if (!heading) return null;
+  let actions = heading.querySelector(
+    ":scope > .viewer-actions, :scope > .gallery-selection-actions, :scope > .live-preview-heading-actions, :scope > .panel-heading-actions",
+  );
+  if (!actions) {
+    actions = document.createElement("div");
+    actions.className = "panel-heading-actions";
+    [...heading.children]
+      .filter((child) => child.matches("button, .panel-toggle"))
+      .forEach((child) => actions.append(child));
+    heading.append(actions);
+  }
+  return actions;
+}
+
 function installPanelScaleControls(onScaleChange) {
   document.querySelectorAll("[data-panel-scale-key]").forEach((panel) => {
     if (panel.querySelector(":scope > .panel-heading .panel-scale-controls")) return;
@@ -206,19 +339,7 @@ function installPanelScaleControls(onScaleChange) {
     const controls = createPanelScaleControls(panel, label, (delta, reset = false) => {
       onScaleChange(key, reset ? 100 : delta, reset);
     });
-
-    let actions = heading.querySelector(
-      ":scope > .viewer-actions, :scope > .gallery-selection-actions, :scope > .live-preview-heading-actions, :scope > .panel-heading-actions",
-    );
-    if (!actions) {
-      actions = document.createElement("div");
-      actions.className = "panel-heading-actions";
-      [...heading.children]
-        .filter((child) => child.matches("button, .panel-toggle"))
-        .forEach((child) => actions.append(child));
-      heading.append(actions);
-    }
-    actions.prepend(controls);
+    headingActionsFor(panel)?.prepend(controls);
   });
 }
 
@@ -235,16 +356,40 @@ function applyPanelScales(panelScales) {
   });
 }
 
+function zoneForPanel(layout, panelId) {
+  return VALID_ZONES.find((zone) => layout.panel_zones[zone].includes(panelId)) || PANEL_DEFAULT_ZONE[panelId];
+}
+
+function panelElement(panelId) {
+  return document.querySelector(`[data-workspace-panel="${panelId}"]`);
+}
+
+function zoneElement(zone) {
+  return document.querySelector(`[data-workspace-zone="${zone}"]`);
+}
+
+function serializeLayout(layout) {
+  const payload = cloneLayout(layout);
+  payload.live_preview_collapsed = payload.collapsed_panels.includes("live_preview");
+  return payload;
+}
+
 export function bindWorkspaceLayout(settings = {}) {
   let sourceSettings = settings;
   let layout = normalizeLayout(settings);
   let renderedHorizontal = fitHorizontalLayout(layout);
   let effectiveGalleryHeight = layout.gallery_panel_height;
   let gallerySyncFrame = 0;
+  let draggedPanelId = "";
 
   const persistSoon = debounce(async () => {
     try {
-      const saved = await api.saveSettings({ ui_layout: { ...layout, panel_scales: { ...layout.panel_scales } } });
+      const response = await api.saveWorkspaceLayout(serializeLayout(layout));
+      const saved = {
+        ...state.settings,
+        ...(response.settings || {}),
+        ui_layout: response.layout || response.settings?.ui_layout || serializeLayout(layout),
+      };
       state.settings = saved;
       sourceSettings = saved;
     } catch (error) {
@@ -252,10 +397,70 @@ export function bindWorkspaceLayout(settings = {}) {
     }
   }, 250);
 
+  const syncPanelToggle = (panelId) => {
+    const panel = panelElement(panelId);
+    if (!panel) return;
+    const collapsed = layout.collapsed_panels.includes(panelId);
+    panel.classList.toggle("is-collapsed", collapsed);
+    panel.querySelectorAll(":scope > .panel-heading [data-workspace-collapse]").forEach((button) => {
+      button.textContent = collapsed ? "⌄" : "⌃";
+      button.setAttribute("aria-expanded", String(!collapsed));
+      button.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${panel.querySelector("h2")?.textContent || "panel"}`);
+    });
+  };
+
+  const refreshPanelControlStates = () => {
+    document.querySelectorAll("[data-workspace-panel]").forEach((panel) => {
+      const panelId = panel.dataset.workspacePanel;
+      const currentZone = zoneForPanel(layout, panelId);
+      panel.querySelectorAll("[data-workspace-move]").forEach((button) => {
+        button.disabled = PROTECTED_PANEL_IDS.has(panelId) || button.dataset.workspaceMove === currentZone;
+      });
+      panel.querySelectorAll("[data-workspace-current-zone]").forEach((output) => {
+        output.textContent = currentZone;
+      });
+      syncPanelToggle(panelId);
+    });
+  };
+
+  const syncStructuralSplitters = () => {
+    const center = zoneElement("center");
+    const outputPanel = panelElement("output_viewer");
+    const recentPanel = panelElement("recent_outputs");
+    const centerSplitter = $("#centerSplitter");
+    const recentInCenter = center && recentPanel?.parentElement === center && outputPanel?.parentElement === center;
+    if (centerSplitter) {
+      centerSplitter.classList.toggle("is-hidden", !recentInCenter || layout.collapsed_panels.includes("recent_outputs"));
+      if (recentInCenter) center.insertBefore(centerSplitter, recentPanel);
+    }
+
+    const right = zoneElement("right");
+    const livePanel = panelElement("live_preview");
+    const liveSplitter = $("#livePreviewSplitter");
+    const liveInRight = right && livePanel?.parentElement === right;
+    if (liveSplitter) {
+      liveSplitter.classList.toggle("is-hidden", !liveInRight);
+      if (liveInRight) livePanel.after(liveSplitter);
+    }
+  };
+
+  const applyPanelPositions = () => {
+    VALID_ZONES.forEach((zone) => {
+      const container = zoneElement(zone);
+      if (!container) return;
+      layout.panel_zones[zone].forEach((panelId) => {
+        const panel = panelElement(panelId);
+        if (panel) container.append(panel);
+      });
+    });
+    syncStructuralSplitters();
+    refreshPanelControlStates();
+  };
+
   const updateSeparatorValues = () => {
-    const metrics = workspaceHorizontalMetrics();
-    const maxLeft = Math.max(MIN_LEFT_COLUMN, metrics.usableWidth - MIN_CENTER_COLUMN - MIN_RIGHT_COLUMN);
-    const maxRight = Math.max(MIN_RIGHT_COLUMN, metrics.usableWidth - MIN_CENTER_COLUMN - MIN_LEFT_COLUMN);
+    const metrics = workspaceHorizontalMetrics(layout);
+    const maxLeft = Math.max(MIN_LEFT_COLUMN, metrics.usableWidth - metrics.centerMinimum - MIN_RIGHT_COLUMN);
+    const maxRight = Math.max(MIN_RIGHT_COLUMN, metrics.usableWidth - metrics.centerMinimum - MIN_LEFT_COLUMN);
     const leftSplitter = $("#leftColumnSplitter");
     const rightSplitter = $("#rightColumnSplitter");
     leftSplitter?.setAttribute("aria-valuemin", String(MIN_LEFT_COLUMN));
@@ -272,10 +477,12 @@ export function bindWorkspaceLayout(settings = {}) {
     gallerySyncFrame = window.requestAnimationFrame(() => {
       const workspace = $("#workspace");
       const browser = $("#outputBrowser");
+      const recentPanel = panelElement("recent_outputs");
       const splitter = $("#centerSplitter");
       if (!workspace || !browser) return;
 
-      if (window.matchMedia("(max-width: 720px)").matches) {
+      const recentInCenter = recentPanel?.parentElement === browser;
+      if (window.matchMedia("(max-width: 720px)").matches || !recentInCenter) {
         effectiveGalleryHeight = layout.gallery_panel_height;
       } else {
         const splitterHeight = splitter?.classList.contains("is-hidden")
@@ -298,25 +505,51 @@ export function bindWorkspaceLayout(settings = {}) {
     });
   };
 
+  const applyStartupDefaultsDrawer = () => {
+    const workspace = $("#workspace");
+    const drawer = $("#startupDefaultsDrawer");
+    const trigger = $("#startupDefaultsTrigger");
+    const pin = $("#pinStartupDefaultsButton");
+    if (!workspace || !drawer) return;
+    const open = layout.startup_defaults_open;
+    const pinned = open && layout.startup_defaults_pinned;
+    workspace.classList.toggle("has-open-startup-defaults", open);
+    workspace.classList.toggle("has-pinned-startup-defaults", pinned);
+    drawer.hidden = !open;
+    drawer.classList.toggle("is-pinned", pinned);
+    drawer.classList.toggle("is-temporary", open && !pinned);
+    workspace.style.setProperty("--startup-defaults-width", `${layout.startup_defaults_width}px`);
+    trigger?.setAttribute("aria-expanded", String(open));
+    trigger?.classList.toggle("is-active", open);
+    if (pin) {
+      pin.textContent = pinned ? "◆" : "◇";
+      pin.setAttribute("aria-pressed", String(pinned));
+      pin.title = pinned ? "Unpin startup defaults" : "Pin startup defaults as a workspace column";
+    }
+  };
+
   const applyLayout = (preference = "balanced") => {
     const workspace = $("#workspace");
+    applyStartupDefaultsDrawer();
     renderedHorizontal = fitHorizontalLayout(layout, preference);
     workspace.style.setProperty("--left-column-width", `${renderedHorizontal.left_column_width}px`);
     workspace.style.setProperty("--right-column-width", `${renderedHorizontal.right_column_width}px`);
-    workspace.style.setProperty("--center-column-min-width", `${MIN_CENTER_COLUMN}px`);
+    workspace.style.setProperty("--center-column-min-width", `${renderedHorizontal.center_column_min_width}px`);
     workspace.style.setProperty("--gallery-panel-height", `${layout.gallery_panel_height}px`);
     workspace.style.setProperty("--live-preview-panel-height", `${layout.live_preview_panel_height}px`);
+    applyPanelPositions();
     applyPanelScales(layout.panel_scales);
 
     const livePanel = $("#livePreviewPanel");
     const liveToggle = $("#livePreviewToggle");
-    livePanel.classList.toggle("is-collapsed", layout.live_preview_collapsed);
-    liveToggle.textContent = layout.live_preview_collapsed ? "⌄" : "⌃";
-    liveToggle.setAttribute("aria-expanded", String(!layout.live_preview_collapsed));
-    liveToggle.setAttribute(
-      "aria-label",
-      layout.live_preview_collapsed ? "Expand live preview" : "Collapse live preview",
-    );
+    const liveCollapsed = layout.collapsed_panels.includes("live_preview");
+    layout.live_preview_collapsed = liveCollapsed;
+    livePanel?.classList.toggle("is-collapsed", liveCollapsed);
+    if (liveToggle) {
+      liveToggle.textContent = liveCollapsed ? "⌄" : "⌃";
+      liveToggle.setAttribute("aria-expanded", String(!liveCollapsed));
+      liveToggle.setAttribute("aria-label", liveCollapsed ? "Expand live preview" : "Collapse live preview");
+    }
 
     const followNewest = $("#followNewestOutput");
     if (followNewest) followNewest.checked = layout.follow_newest_output;
@@ -326,14 +559,7 @@ export function bindWorkspaceLayout(settings = {}) {
   };
 
   const update = (changes, { persist = true, preference = "balanced", useRenderedHorizontal = false } = {}) => {
-    const merged = {
-      ...layout,
-      ...changes,
-      panel_scales: {
-        ...layout.panel_scales,
-        ...(changes.panel_scales || {}),
-      },
-    };
+    const merged = mergeLayoutValues(layout, changes);
     layout = normalizeLayout({ ui_layout: merged });
     applyLayout(preference);
     if (useRenderedHorizontal) {
@@ -343,6 +569,163 @@ export function bindWorkspaceLayout(settings = {}) {
     if (persist) persistSoon();
   };
 
+  const movePanel = (panelId, targetZone, { persist = true } = {}) => {
+    if (!VALID_ZONES.includes(targetZone) || PROTECTED_PANEL_IDS.has(panelId)) return;
+    const nextZones = Object.fromEntries(
+      VALID_ZONES.map((zone) => [zone, layout.panel_zones[zone].filter((item) => item !== panelId)]),
+    );
+    nextZones[targetZone].push(panelId);
+    update({ panel_zones: nextZones }, { persist });
+  };
+
+  const resetPanelPosition = (panelId) => {
+    const defaultZone = PANEL_DEFAULT_ZONE[panelId];
+    if (!defaultZone || PROTECTED_PANEL_IDS.has(panelId)) return;
+    const nextZones = Object.fromEntries(
+      VALID_ZONES.map((zone) => [zone, layout.panel_zones[zone].filter((item) => item !== panelId)]),
+    );
+    const defaultOrder = DEFAULT_PANEL_ZONES[defaultZone];
+    const targetIndex = defaultOrder.indexOf(panelId);
+    const insertionIndex = nextZones[defaultZone].findIndex((existingId) => {
+      const existingDefaultIndex = defaultOrder.indexOf(existingId);
+      return existingDefaultIndex >= 0 && existingDefaultIndex > targetIndex;
+    });
+    if (insertionIndex < 0) nextZones[defaultZone].push(panelId);
+    else nextZones[defaultZone].splice(insertionIndex, 0, panelId);
+    const collapsed = layout.collapsed_panels.filter((item) => item !== panelId);
+    update({ panel_zones: nextZones, collapsed_panels: collapsed });
+  };
+
+  const togglePanelCollapsed = (panelId) => {
+    if (PROTECTED_PANEL_IDS.has(panelId)) return;
+    const collapsed = new Set(layout.collapsed_panels);
+    if (collapsed.has(panelId)) collapsed.delete(panelId);
+    else collapsed.add(panelId);
+    update({ collapsed_panels: [...collapsed] });
+  };
+
+  const closeDockMenus = (except = null) => {
+    document.querySelectorAll(".panel-dock-menu[open]").forEach((details) => {
+      if (details !== except) details.removeAttribute("open");
+    });
+  };
+
+  const installPanelDockControls = () => {
+    document.querySelectorAll("[data-workspace-panel]").forEach((panel) => {
+      if (panel.dataset.workspaceControlsInstalled === "true") return;
+      const panelId = panel.dataset.workspacePanel;
+      const protectedPanel = PROTECTED_PANEL_IDS.has(panelId) || panel.dataset.workspaceProtected === "true";
+      const heading = panel.querySelector(":scope > .panel-heading");
+      const actions = headingActionsFor(panel);
+      if (!heading || !actions) return;
+      panel.dataset.workspaceControlsInstalled = "true";
+
+      if (!protectedPanel) {
+        const dragHandle = document.createElement("button");
+        dragHandle.type = "button";
+        dragHandle.className = "panel-drag-handle";
+        dragHandle.textContent = "⠿";
+        dragHandle.title = "Drag panel to another workspace column";
+        dragHandle.setAttribute("aria-label", dragHandle.title);
+        dragHandle.draggable = true;
+        dragHandle.addEventListener("dragstart", (event) => {
+          draggedPanelId = panelId;
+          panel.classList.add("is-dragging");
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", panelId);
+        });
+        dragHandle.addEventListener("dragend", () => {
+          draggedPanelId = "";
+          panel.classList.remove("is-dragging");
+          document.querySelectorAll(".workspace-column.is-drop-target").forEach((zone) => zone.classList.remove("is-drop-target"));
+        });
+        actions.append(dragHandle);
+      }
+
+      if (!protectedPanel) {
+        let collapse = panel.querySelector(":scope > .panel-heading .panel-toggle");
+        if (!collapse) {
+          collapse = document.createElement("button");
+          collapse.type = "button";
+          collapse.className = "icon-button workspace-panel-collapse";
+          actions.append(collapse);
+        }
+        collapse.dataset.workspaceCollapse = panelId;
+        collapse.dataset.layoutBound = "true";
+        collapse.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          togglePanelCollapsed(panelId);
+        });
+      }
+
+      const menu = document.createElement("details");
+      menu.className = "panel-dock-menu";
+      const summary = document.createElement("summary");
+      summary.className = "icon-button panel-dock-menu-trigger";
+      summary.textContent = protectedPanel ? "▣" : "⋮";
+      summary.title = protectedPanel ? "Primary panel is locked to the center column" : "Panel layout options";
+      summary.setAttribute("aria-label", summary.title);
+      menu.append(summary);
+
+      const popup = document.createElement("div");
+      popup.className = "panel-dock-menu-popup";
+      const zoneLabel = document.createElement("small");
+      zoneLabel.innerHTML = 'Current column: <strong data-workspace-current-zone></strong>';
+      popup.append(zoneLabel);
+
+      VALID_ZONES.forEach((zone) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.workspaceMove = zone;
+        button.textContent = `Move to ${zone} column`;
+        button.disabled = protectedPanel;
+        button.addEventListener("click", () => {
+          movePanel(panelId, zone);
+          menu.removeAttribute("open");
+        });
+        popup.append(button);
+      });
+
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.textContent = protectedPanel ? "Primary center panel" : "Reset panel position";
+      reset.disabled = protectedPanel;
+      reset.addEventListener("click", () => {
+        resetPanelPosition(panelId);
+        menu.removeAttribute("open");
+      });
+      popup.append(reset);
+      menu.append(popup);
+      menu.addEventListener("toggle", () => {
+        if (menu.open) closeDockMenus(menu);
+      });
+      actions.append(menu);
+    });
+
+    VALID_ZONES.forEach((zone) => {
+      const container = zoneElement(zone);
+      if (!container || container.dataset.workspaceDropInstalled === "true") return;
+      container.dataset.workspaceDropInstalled = "true";
+      container.addEventListener("dragover", (event) => {
+        if (!draggedPanelId || PROTECTED_PANEL_IDS.has(draggedPanelId)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        container.classList.add("is-drop-target");
+      });
+      container.addEventListener("dragleave", (event) => {
+        if (!container.contains(event.relatedTarget)) container.classList.remove("is-drop-target");
+      });
+      container.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const panelId = draggedPanelId || event.dataTransfer.getData("text/plain");
+        container.classList.remove("is-drop-target");
+        if (panelId) movePanel(panelId, zone);
+      });
+    });
+  };
+
+  installPanelDockControls();
   installPanelScaleControls((key, value, reset = false) => {
     const current = layout.panel_scales[key] ?? 100;
     const next = reset ? 100 : clamp(current + value, PANEL_SCALE_MIN, PANEL_SCALE_MAX);
@@ -370,7 +753,7 @@ export function bindWorkspaceLayout(settings = {}) {
     handle.addEventListener("pointercancel", finish);
   };
 
-  $("#leftColumnSplitter").addEventListener("pointerdown", (event) => {
+  $("#leftColumnSplitter")?.addEventListener("pointerdown", (event) => {
     const bounds = $("#workspace").getBoundingClientRect();
     beginPointerResize(event, (moveEvent) => {
       update(
@@ -380,7 +763,7 @@ export function bindWorkspaceLayout(settings = {}) {
     });
   });
 
-  $("#rightColumnSplitter").addEventListener("pointerdown", (event) => {
+  $("#rightColumnSplitter")?.addEventListener("pointerdown", (event) => {
     const bounds = $("#workspace").getBoundingClientRect();
     beginPointerResize(event, (moveEvent) => {
       update(
@@ -390,7 +773,8 @@ export function bindWorkspaceLayout(settings = {}) {
     });
   });
 
-  $("#centerSplitter").addEventListener("pointerdown", (event) => {
+  $("#centerSplitter")?.addEventListener("pointerdown", (event) => {
+    if (panelElement("recent_outputs")?.parentElement !== zoneElement("center")) return;
     const bounds = $("#outputBrowser").getBoundingClientRect();
     beginPointerResize(event, (moveEvent) => {
       const maximum = Math.min(MAX_GALLERY_HEIGHT, Math.max(MIN_GALLERY_HEIGHT, bounds.height - MIN_OUTPUT_HEIGHT));
@@ -401,7 +785,8 @@ export function bindWorkspaceLayout(settings = {}) {
     });
   });
 
-  $("#livePreviewSplitter").addEventListener("pointerdown", (event) => {
+  $("#livePreviewSplitter")?.addEventListener("pointerdown", (event) => {
+    if (panelElement("live_preview")?.parentElement !== zoneElement("right")) return;
     const startY = event.clientY;
     const startHeight = layout.live_preview_panel_height;
     beginPointerResize(event, (moveEvent) => {
@@ -414,7 +799,7 @@ export function bindWorkspaceLayout(settings = {}) {
   });
 
   const keyboardStep = (event) => event.shiftKey ? 48 : 12;
-  $("#leftColumnSplitter").addEventListener("keydown", (event) => {
+  $("#leftColumnSplitter")?.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
     const delta = event.key === "ArrowRight" ? keyboardStep(event) : -keyboardStep(event);
@@ -424,7 +809,7 @@ export function bindWorkspaceLayout(settings = {}) {
     );
   });
 
-  $("#rightColumnSplitter").addEventListener("keydown", (event) => {
+  $("#rightColumnSplitter")?.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
     const delta = event.key === "ArrowLeft" ? keyboardStep(event) : -keyboardStep(event);
@@ -434,30 +819,60 @@ export function bindWorkspaceLayout(settings = {}) {
     );
   });
 
-  $("#centerSplitter").addEventListener("keydown", (event) => {
+  $("#centerSplitter")?.addEventListener("keydown", (event) => {
     if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
     const delta = event.key === "ArrowUp" ? keyboardStep(event) : -keyboardStep(event);
     update({ gallery_panel_height: layout.gallery_panel_height + delta });
   });
 
-  $("#livePreviewSplitter").addEventListener("keydown", (event) => {
+  $("#livePreviewSplitter")?.addEventListener("keydown", (event) => {
     if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
     const delta = event.key === "ArrowDown" ? keyboardStep(event) : -keyboardStep(event);
     update({ live_preview_panel_height: layout.live_preview_panel_height + delta });
   });
 
-  $("#livePreviewToggle").addEventListener("click", () => {
-    update({ live_preview_collapsed: !layout.live_preview_collapsed });
+  const followNewest = $("#followNewestOutput");
+  followNewest?.addEventListener("change", (event) => {
+    update({ follow_newest_output: event.target.checked });
   });
 
-  const followNewest = $("#followNewestOutput");
-  if (followNewest) {
-    followNewest.addEventListener("change", (event) => {
-      update({ follow_newest_output: event.target.checked });
+  const startupTrigger = $("#startupDefaultsTrigger");
+  startupTrigger?.addEventListener("click", () => {
+    if (layout.startup_defaults_open) {
+      update({ startup_defaults_open: false, startup_defaults_pinned: false });
+    } else {
+      update({ startup_defaults_open: true, startup_defaults_pinned: false });
+      window.setTimeout(() => $("#startupDefaultsDrawer")?.focus?.(), 0);
+    }
+  });
+  $("#closeStartupDefaultsButton")?.addEventListener("click", () => {
+    update({ startup_defaults_open: false, startup_defaults_pinned: false });
+    startupTrigger?.focus();
+  });
+  $("#pinStartupDefaultsButton")?.addEventListener("click", () => {
+    update({
+      startup_defaults_open: true,
+      startup_defaults_pinned: !layout.startup_defaults_pinned,
     });
-  }
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!layout.startup_defaults_open || layout.startup_defaults_pinned) return;
+    const drawer = $("#startupDefaultsDrawer");
+    if (drawer?.contains(event.target) || startupTrigger?.contains(event.target)) return;
+    update({ startup_defaults_open: false }, { persist: true });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && layout.startup_defaults_open && !layout.startup_defaults_pinned) {
+      update({ startup_defaults_open: false });
+      startupTrigger?.focus();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest(".panel-dock-menu")) closeDockMenus();
+  });
 
   const workspaceResizeObserver = new ResizeObserver(() => applyLayout());
   workspaceResizeObserver.observe($("#workspace"));
@@ -468,14 +883,19 @@ export function bindWorkspaceLayout(settings = {}) {
     reset: async () => {
       layout = resolveLayoutDefaultsForScale(sourceSettings, sourceSettings?.ui_scale ?? state.settings?.ui_scale ?? 100);
       applyLayout();
-      const saved = await api.saveSettings({ ui_layout: { ...layout, panel_scales: { ...layout.panel_scales } } });
+      const response = await api.saveWorkspaceLayout(serializeLayout(layout));
+      const saved = {
+        ...state.settings,
+        ...(response.settings || {}),
+        ui_layout: response.layout || response.settings?.ui_layout || serializeLayout(layout),
+      };
       state.settings = saved;
       sourceSettings = saved;
       return cloneLayout(layout);
     },
     saveCurrentScaleDefault: async (scale) => {
       const scaleKey = String(Math.round(Number(scale ?? sourceSettings?.ui_scale ?? state.settings?.ui_scale ?? 100) || 100));
-      const payload = cloneLayout(layout);
+      const payload = serializeLayout(layout);
       const saved = await api.saveSettings({
         ui_layout: payload,
         ui_scale_layout_defaults: { [scaleKey]: payload },
@@ -485,5 +905,7 @@ export function bindWorkspaceLayout(settings = {}) {
       return { scale: scaleKey, layout: payload, settings: saved };
     },
     current: () => cloneLayout(layout),
+    movePanel,
+    togglePanelCollapsed,
   };
 }

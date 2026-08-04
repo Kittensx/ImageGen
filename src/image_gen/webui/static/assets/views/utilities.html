@@ -1,5 +1,5 @@
-<aside class="right-column" id="rightPanel">
-  <section class="panel live-preview-panel is-idle" id="livePreviewPanel" data-panel-scale-key="live_preview">
+<aside class="workspace-column right-column" id="rightPanel" data-workspace-zone="right" aria-label="Right workspace column">
+  <section class="panel live-preview-panel is-idle" id="livePreviewPanel" data-panel-scale-key="live_preview" data-workspace-panel="live_preview" data-default-zone="right">
     <div class="panel-heading">
       <div class="live-preview-title-group">
         <h2>Live Preview</h2>
@@ -66,7 +66,39 @@
   </section>
   <div class="panel-splitter panel-splitter--horizontal" id="livePreviewSplitter" role="separator" aria-label="Resize live preview" aria-orientation="horizontal" tabindex="0"></div>
 
-  <section class="panel utility-panel memory-status-panel" id="memoryStatusPanel" data-panel-scale-key="memory_status">
+  <section class="panel utility-panel active-prompt-assets-panel" id="activePromptAssetsPanel" data-panel-scale-key="active_prompt_assets" data-workspace-panel="active_prompt_assets" data-default-zone="right">
+    <div class="panel-heading">
+      <div>
+        <h2>Active Prompt Assets</h2>
+        <small class="field-status subtle" id="activePromptAssetsSource">Visual prompt assets</small>
+      </div>
+    </div>
+    <div class="active-prompt-assets-toolbar">
+      <input id="promptAssetQuickSearch" type="search" placeholder="Search assets…" aria-label="Search prompt assets" disabled>
+      <button class="primary-button compact-button" id="addPromptLoraButton" type="button">+ Add Default</button>
+    </div>
+    <section class="active-prompt-assets-group" aria-labelledby="activeLorasTitle">
+      <div class="active-prompt-assets-heading">
+        <strong id="activeLorasTitle">Active LoRAs</strong>
+        <span class="status-badge" id="activeLorasCount">0</span>
+      </div>
+      <div class="active-prompt-assets-list" id="activeLoraList"></div>
+    </section>
+    <section class="active-prompt-assets-group" aria-labelledby="activeTextualInversionsTitle">
+      <div class="active-prompt-assets-heading">
+        <strong id="activeTextualInversionsTitle">Active Textual Inversions</strong>
+        <span class="status-badge" id="activeTextualInversionsCount">0</span>
+      </div>
+      <div class="active-textual-inversion-list" id="activeTextualInversionList"></div>
+    </section>
+    <div class="active-prompt-assets-actions">
+      <button class="secondary-button compact-button" id="reloadActiveDefaultsButton" type="button">Reload Saved Defaults</button>
+      <button class="secondary-button compact-button" id="clearActivePromptAssetsButton" type="button">Clear</button>
+    </div>
+    <small class="field-status subtle" id="activePromptAssetsStatus">Saved defaults can be staged visually now. Runtime LoRA/TI application is added in the asset runtime phase.</small>
+  </section>
+
+  <section class="panel utility-panel memory-status-panel" id="memoryStatusPanel" data-panel-scale-key="memory_status" data-workspace-panel="memory_status" data-default-zone="right">
     <div class="panel-heading"><h2>Memory</h2><span id="memoryPolicyBadge" class="status-badge">Auto</span></div>
     <div class="memory-status-grid">
       <article><strong>Physical VRAM used</strong><span id="memoryPhysicalVramUsed">Unavailable</span></article>
@@ -88,7 +120,7 @@
     <small id="memoryPreviewStatus" class="field-status subtle">Image preview active; CFG telemetry is independent.</small>
   </section>
 
-  <section class="panel utility-panel runtime-status-panel" id="runtimeStatusPanel" data-panel-scale-key="runtime_status">
+  <section class="panel utility-panel runtime-status-panel" id="runtimeStatusPanel" data-panel-scale-key="runtime_status" data-workspace-panel="runtime_status" data-default-zone="right">
     <div class="panel-heading"><h2>Runtime</h2><span id="runtimeRestartBadge" class="status-badge">Active</span></div>
     <dl class="runtime-status-list">
       <div><dt>Profile</dt><dd id="runtimeProfileStatus">Loading…</dd></div>
@@ -107,7 +139,7 @@
     <small id="runtimeRestartStatus" class="field-status subtle">Process-start settings are active.</small>
   </section>
 
-  <section class="panel utility-panel" id="queuePanel" data-panel-scale-key="queue">
+  <section class="panel utility-panel" id="queuePanel" data-panel-scale-key="queue" data-workspace-panel="queue" data-default-zone="right">
     <div class="panel-heading"><h2>Queue</h2><button class="icon-button panel-toggle" data-target="queuePanel" type="button" aria-label="Collapse queue">⌃</button></div>
     <div class="queue-toolbar" role="toolbar" aria-label="Queue controls">
       <button class="small-button queue-toolbar-button" id="clearCompletedQueueButton" type="button"><span class="queue-action-icon" aria-hidden="true">✓</span><span class="queue-action-label">Clear finished</span></button>
@@ -125,12 +157,12 @@
     <div id="queueList" class="stack-list empty-state">No queued generations.</div>
   </section>
 
-  <section class="panel utility-panel" id="recentRunsPanel" data-panel-scale-key="recent_runs">
+  <section class="panel utility-panel" id="recentRunsPanel" data-panel-scale-key="recent_runs" data-workspace-panel="recent_runs" data-default-zone="right">
     <div class="panel-heading"><h2>Recent Runs</h2></div>
     <div id="recentRuns" class="compact-list empty-state">No recent runs.</div>
   </section>
 
-  <section class="panel utility-panel" id="promptPresetsPanel" data-panel-scale-key="prompt_presets">
+  <section class="panel utility-panel" id="promptPresetsPanel" data-panel-scale-key="prompt_presets" data-workspace-panel="prompt_presets" data-default-zone="right">
     <div class="panel-heading"><h2>Prompt Presets</h2></div>
     <div class="preset-controls">
       <select id="promptPreset"></select>
@@ -141,7 +173,7 @@
     </div>
   </section>
 
-  <section class="panel utility-panel" id="modelRefreshPanel" data-panel-scale-key="model_refresh">
+  <section class="panel utility-panel" id="modelRefreshPanel" data-panel-scale-key="model_refresh" data-workspace-panel="model_refresh" data-default-zone="right">
     <div class="panel-heading"><h2>Model Refresh</h2></div>
     <dl class="model-status">
       <div><dt>Models</dt><dd id="modelCount">0</dd></div>
@@ -151,7 +183,7 @@
     <button class="secondary-button full-width" id="refreshModelsButton" type="button">Refresh Models</button>
   </section>
 
-  <section class="panel utility-panel" id="maintenancePanel" data-panel-scale-key="maintenance">
+  <section class="panel utility-panel" id="maintenancePanel" data-panel-scale-key="maintenance" data-workspace-panel="maintenance" data-default-zone="right">
     <div class="panel-heading"><h2>Maintenance</h2></div>
     <p class="maintenance-copy">Generation job data is session-only. Old requests, prompts, logs, diagnostics, and live-preview frames are cleared automatically when the WebUI starts.</p>
     <button class="secondary-button full-width" id="clearJobCacheButton" type="button">Clear Job Cache</button>

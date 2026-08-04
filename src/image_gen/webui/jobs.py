@@ -18,6 +18,10 @@ from urllib.parse import quote
 
 import torch
 
+from image_gen.contracts import (
+    PROMPT_ASSET_CONTRACT_VERSION,
+    normalize_prompt_asset_list,
+)
 from image_gen.systems.image_conditioning import (
     DEFAULT_HIRES_STEP_POLICY,
     SUPPORTED_HIRES_STEP_POLICIES,
@@ -61,90 +65,6 @@ _ACTIVE_JOB_STATUSES = {"preparing_model", "warming_model", "running", "finalizi
 _CANCELLABLE_JOB_STATUSES = {"preparing_model", "warming_model", "running"}
 _MISSING = object()
 _SUBPROCESS_STREAM_LIMIT = 16 * 1024 * 1024
-_UNLIMITED_LOG_HISTORY_LIMIT = 2000
-_UNLIMITED_COMMAND_COMPLETION_LIMIT = 16
-_UNLIMITED_BATCH_ARTIFACT_LIMIT = 6
-_DEFAULT_UNLIMITED_BATCH_COOLDOWN_SECONDS = 1.0
-_REGION_PROMPT_MARKER = "REGION{"
-_REQUEST_BATCH_FILENAME_RE = re.compile(r"^request-batch-(?P<batch>\d+)\.json$")
-_BATCH_PREVIEW_DIRECTORY_RE = re.compile(r"^batch_(?P<batch>\d+)$")
-
-
-def _trim_list_tail(values: list[Any], limit: int) -> list[Any]:
-    if limit <= 0:
-        return []
-    if len(values) <= limit:
-        return values
-    return values[-limit:]
-
-
-def _request_contains_region(payload: Mapping[str, Any] | None) -> bool:
-    if not isinstance(payload, Mapping):
-        return False
-    for key in (
-        "positive_prompt",
-        "hires_positive_prompt",
-        "prompt",
-        "hires_prompt",
-    ):
-        value = payload.get(key)
-        if _REGION_PROMPT_MARKER in str(value or ""):
-            return True
-    region_recorded = payload.get("region_recorded")
-    if isinstance(region_recorded, Mapping) and region_recorded:
-        return True
-    region_pass_records = payload.get("region_pass_records")
-    if isinstance(region_pass_records, Mapping) and region_pass_records:
-        return True
-    return False
-
-
-def _prune_batch_artifacts(job_root: Path, *, keep_latest_batches: int) -> dict[str, list[str]]:
-    report = {"request_files": [], "preview_directories": []}
-    keep_limit = max(0, int(keep_latest_batches or 0))
-    if keep_limit == 0 or not job_root.exists():
-        return report
-
-    request_entries: list[tuple[int, Path]] = []
-    for path in job_root.glob('request-batch-*.json'):
-        match = _REQUEST_BATCH_FILENAME_RE.match(path.name)
-        if match is None:
-            continue
-        try:
-            batch_number = int(match.group('batch'))
-        except (TypeError, ValueError):
-            continue
-        request_entries.append((batch_number, path))
-    request_entries.sort(key=lambda item: item[0], reverse=True)
-    for _batch_number, stale_path in request_entries[keep_limit:]:
-        try:
-            stale_path.unlink()
-        except OSError:
-            continue
-        report['request_files'].append(str(stale_path))
-
-    preview_root = job_root / 'live-preview'
-    preview_entries: list[tuple[int, Path]] = []
-    if preview_root.exists():
-        for path in preview_root.iterdir():
-            if not path.is_dir():
-                continue
-            match = _BATCH_PREVIEW_DIRECTORY_RE.match(path.name)
-            if match is None:
-                continue
-            try:
-                batch_number = int(match.group('batch'))
-            except (TypeError, ValueError):
-                continue
-            preview_entries.append((batch_number, path))
-    preview_entries.sort(key=lambda item: item[0], reverse=True)
-    for _batch_number, stale_path in preview_entries[keep_limit:]:
-        try:
-            shutil.rmtree(stale_path)
-        except OSError:
-            continue
-        report['preview_directories'].append(str(stale_path))
-    return report
 
 
 def _normalize_live_memory_status(value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -318,6 +238,24 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     seed_value = normalized.get("seed")
     normalized["seed"] = _coerce_top_level_number(seed_value, integer=True, default=None) if seed_value not in (None, "") else None
     normalized["save_images"] = _coerce_boolean(normalized.get("save_images", True), default=True)
+    normalized["prompt_asset_contract_version"] = str(
+        normalized.get("prompt_asset_contract_version")
+        or PROMPT_ASSET_CONTRACT_VERSION
+    )
+    normalized["loras"] = [
+        asset.to_serializable_dict()
+        for asset in normalize_prompt_asset_list(
+            normalized.get("loras") or [],
+            asset_type="lora",
+        )
+    ]
+    normalized["textual_inversions"] = [
+        asset.to_serializable_dict()
+        for asset in normalize_prompt_asset_list(
+            normalized.get("textual_inversions") or [],
+            asset_type="textual_inversion",
+        )
+    ]
     return normalized
 
 
@@ -691,20 +629,6 @@ class GenerationJobManager:
     def _application_settings(self) -> dict[str, Any]:
         return dict(self.settings_provider() or {}) if callable(self.settings_provider) else {}
 
-    def _generate_forever_batch_cooldown_seconds(self) -> float:
-        settings = self._application_settings()
-        try:
-            return max(0.0, float(settings.get('generate_forever_batch_cooldown_seconds', _DEFAULT_UNLIMITED_BATCH_COOLDOWN_SECONDS) or 0.0))
-        except (TypeError, ValueError):
-            return _DEFAULT_UNLIMITED_BATCH_COOLDOWN_SECONDS
-
-    def _generate_forever_artifact_retention_batches(self) -> int:
-        settings = self._application_settings()
-        try:
-            return max(1, int(settings.get('generate_forever_artifact_retention_batches', _UNLIMITED_BATCH_ARTIFACT_LIMIT) or _UNLIMITED_BATCH_ARTIFACT_LIMIT))
-        except (TypeError, ValueError):
-            return _UNLIMITED_BATCH_ARTIFACT_LIMIT
-
     @staticmethod
     def _diagnostics_request_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
         mode = str(settings.get("diagnostics_mode") or "failures_only").strip().lower()
@@ -801,6 +725,12 @@ class GenerationJobManager:
         if selection:
             result["selection"] = dict(selection)
         return {**completion, "status": status, "result": result}
+
+    async def unload_model(self) -> dict[str, Any]:
+        completion = await self.model_runtime.unload()
+        if not completion.get("ok"):
+            raise RuntimeError(str(completion.get("error") or "Model unload failed."))
+        return dict(completion.get("result") or {})
 
     def model_runtime_status(self) -> dict[str, Any]:
         return self.model_runtime.status()
@@ -2660,10 +2590,6 @@ class GenerationJobManager:
         unlimited = _coerce_boolean(base_request.get("unlimited", False), default=False)
         base_seed = base_request.get("seed")
         seed_iterator = iter_batch_base_seeds(base_seed, batch_size=batch_size)
-        region_request = _request_contains_region(base_request)
-        preview_suppressed_for_region = region_request
-        batch_cooldown_seconds = self._generate_forever_batch_cooldown_seconds()
-        artifact_retention_batches = self._generate_forever_artifact_retention_batches()
 
         job.model_diagnostics["pipeline_parity"] = {
             "shares_canonical_runner_with_run_bat": True,
@@ -2721,8 +2647,6 @@ class GenerationJobManager:
         with console_path.open("w", encoding="utf-8", newline="\n") as console:
             async def on_line(line: str) -> None:
                 job.log_lines.append(line)
-                if len(job.log_lines) > _UNLIMITED_LOG_HISTORY_LIMIT:
-                    job.log_lines = job.log_lines[-_UNLIMITED_LOG_HISTORY_LIMIT:]
                 console.write(line + "\n")
                 console.flush()
                 self._apply_runtime_line(job, line)
@@ -2743,10 +2667,6 @@ class GenerationJobManager:
                 iteration_preview_root = job_root / "live-preview" / f"batch_{batch_number:05d}"
                 iteration_preview_root.mkdir(parents=True, exist_ok=True)
                 iteration_request["live_preview_root"] = str(iteration_preview_root)
-                if preview_suppressed_for_region:
-                    iteration_request["live_preview_enabled"] = False
-                    iteration_request["live_preview_telemetry_enabled"] = True
-                    iteration_request["_webui_region_preview_suppressed"] = True
                 iteration_request_path = job_root / f"request-batch-{batch_number:05d}.json"
                 iteration_request_path.write_text(
                     json.dumps(iteration_request, indent=2, ensure_ascii=False),
@@ -2815,10 +2735,6 @@ class GenerationJobManager:
                     "error": completion.get("error"),
                 }
                 orchestration["command_completions"].append(completion_summary)
-                orchestration["command_completions"] = _trim_list_tail(
-                    list(orchestration.get("command_completions") or []),
-                    _UNLIMITED_COMMAND_COMPLETION_LIMIT,
-                )
 
                 if not completion.get("ok"):
                     job.return_code = 1
@@ -2865,61 +2781,6 @@ class GenerationJobManager:
                     f"WEBUI_BATCH_COMPLETE_JSON: {json.dumps({'batch_number': batch_number, 'completed_batches': completed_batches, 'output_count': len(job.output_paths)}, sort_keys=True)}\n"
                 )
                 console.flush()
-
-                prune_report = _prune_batch_artifacts(
-                    job_root,
-                    keep_latest_batches=artifact_retention_batches,
-                )
-                if prune_report['request_files'] or prune_report['preview_directories']:
-                    console.write(
-                        "WEBUI_BATCH_ARTIFACT_PRUNE_JSON: "
-                        + json.dumps(
-                            {
-                                'batch_number': batch_number,
-                                'request_files_removed': len(prune_report['request_files']),
-                                'preview_directories_removed': len(prune_report['preview_directories']),
-                                'kept_latest_batches': artifact_retention_batches,
-                            },
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    )
-                    console.flush()
-
-                should_pause_between_batches = (
-                    batch_cooldown_seconds > 0.0
-                    and (unlimited or region_request)
-                    and (unlimited or completed_batches < requested_batch_count)
-                )
-                if should_pause_between_batches:
-                    self._transition_job(job, status=job.status, worker_stage='cooldown_between_batches')
-                    self._touch_job_runtime(job, progress=False)
-                    self._persist_job(job)
-                    self._publish_event(
-                        job,
-                        'job-progress',
-                        worker_stage=job.worker_stage,
-                        batch_number=batch_number,
-                        batch_count=requested_batch_count,
-                        completed_batches=completed_batches,
-                        unlimited=unlimited,
-                        cooldown_seconds=batch_cooldown_seconds,
-                        region_preview_suppressed=preview_suppressed_for_region,
-                    )
-                    console.write(
-                        "WEBUI_BATCH_COOLDOWN_JSON: "
-                        + json.dumps(
-                            {
-                                'batch_number': batch_number,
-                                'cooldown_seconds': batch_cooldown_seconds,
-                                'reason': 'region_or_generate_forever_stability',
-                            },
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    )
-                    console.flush()
-                    await asyncio.sleep(batch_cooldown_seconds)
 
                 # Give cancellation and UI polling requests a scheduling point between
                 # images, especially for generate-forever mode.

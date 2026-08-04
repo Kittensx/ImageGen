@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from image_gen.webui.default_assets import default_document, normalize_document
+
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 DEFAULT_PANEL_SCALES: dict[str, int] = {
@@ -13,12 +15,15 @@ DEFAULT_PANEL_SCALES: dict[str, int] = {
     "output_viewer": 100,
     "recent_outputs": 100,
     "live_preview": 100,
+    "active_prompt_assets": 100,
     "memory_status": 100,
+    "runtime_status": 100,
     "queue": 100,
     "recent_runs": 100,
     "prompt_presets": 100,
     "model_refresh": 100,
     "maintenance": 100,
+    "startup_defaults": 100,
 }
 
 FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
@@ -60,6 +65,11 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
     "memory_pinned_cpu_memory": False,
     "memory_allow_tiled_vae_fallback": True,
     "memory_allow_preview_suspension_on_oom": True,
+    "checkpoint_startup_mode": "last_used",
+    "checkpoint_startup_path": "",
+    "checkpoint_preload_on_startup": True,
+    "lora_prompt_integration_mode": "visual",
+    "lora_auto_scan_unknown_on_startup": True,
     "attention_backend": "auto",
     "allocator_options": {"PYTORCH_CUDA_ALLOC_CONF": ""},
     "runtime_job_overrides": {},
@@ -77,12 +87,32 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
     "recent_outputs_refresh_ms_active": 4000,
     "recent_outputs_refresh_ms_idle": 12000,
     "ui_layout": {
+        "workspace_layout_version": 1,
         "left_column_width": 330,
         "right_column_width": 360,
         "gallery_panel_height": 132,
         "live_preview_panel_height": 360,
         "live_preview_collapsed": False,
         "follow_newest_output": False,
+        "startup_defaults_open": False,
+        "startup_defaults_pinned": False,
+        "startup_defaults_width": 300,
+        "panel_zones": {
+            "left": ["generation_controls"],
+            "center": ["output_viewer", "recent_outputs"],
+            "right": [
+                "live_preview",
+                "active_prompt_assets",
+                "memory_status",
+                "runtime_status",
+                "queue",
+                "recent_runs",
+                "prompt_presets",
+                "model_refresh",
+                "maintenance",
+            ],
+        },
+        "collapsed_panels": [],
         "panel_scales": dict(DEFAULT_PANEL_SCALES),
     },
     "ui_scale_layout_defaults": {},
@@ -126,6 +156,7 @@ class WebUIStore:
         self.prompt_parser_preset_dir = self.root / "prompt-parser-presets"
         self.settings_dir = self.root / "settings"
         self.recent_outputs_dir = self.root / "recent-outputs"
+        self.default_assets_dir = self.root / "default-assets"
         for directory in (
             self.session_dir,
             self.profile_dir,
@@ -134,6 +165,7 @@ class WebUIStore:
             self.prompt_parser_preset_dir,
             self.settings_dir,
             self.recent_outputs_dir,
+            self.default_assets_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -176,6 +208,27 @@ class WebUIStore:
     @classmethod
     def _normalize_layout(cls, value: Any) -> dict[str, Any]:
         stored = value if isinstance(value, dict) else {}
+        panel_zones = stored.get("panel_zones") if isinstance(stored.get("panel_zones"), dict) else {}
+
+        def _zone_items(name: str, fallback: list[str]) -> list[str]:
+            raw = panel_zones.get(name)
+            return list(raw) if isinstance(raw, list) else list(fallback)
+
+        normalized_zones = {
+            "left": _zone_items("left", ["generation_controls"]),
+            "center": _zone_items("center", ["output_viewer", "recent_outputs"]),
+            "right": _zone_items("right", [
+                "live_preview",
+                "active_prompt_assets",
+                "memory_status",
+                "runtime_status",
+                "queue",
+                "recent_runs",
+                "prompt_presets",
+                "model_refresh",
+                "maintenance",
+            ]),
+        }
         return {
             "left_column_width": 330,
             "right_column_width": 360,
@@ -183,7 +236,15 @@ class WebUIStore:
             "live_preview_panel_height": 360,
             "live_preview_collapsed": False,
             "follow_newest_output": False,
+            "startup_defaults_open": False,
+            "startup_defaults_pinned": False,
+            "startup_defaults_width": 300,
             **stored,
+            "workspace_layout_version": 1,
+            "startup_defaults_open": bool(stored.get("startup_defaults_open", False)),
+            "startup_defaults_pinned": bool(stored.get("startup_defaults_pinned", False)),
+            "panel_zones": normalized_zones,
+            "collapsed_panels": list(stored.get("collapsed_panels") or []),
             "panel_scales": cls._normalize_panel_scales(stored.get("panel_scales")),
         }
 
@@ -260,6 +321,15 @@ class WebUIStore:
             "warm_worker_retain_text_encoder_between_jobs",
         ):
             merged.pop(legacy_key, None)
+        startup_mode = str(merged.get("checkpoint_startup_mode") or "last_used").strip().lower()
+        if startup_mode not in {"last_used", "pinned_default", "none"}:
+            startup_mode = "last_used"
+        merged["checkpoint_startup_mode"] = startup_mode
+        merged["checkpoint_startup_path"] = str(merged.get("checkpoint_startup_path") or "").strip()
+        merged["checkpoint_preload_on_startup"] = bool(merged.get("checkpoint_preload_on_startup", True))
+        lora_mode = str(merged.get("lora_prompt_integration_mode") or "visual").strip().lower()
+        merged["lora_prompt_integration_mode"] = lora_mode if lora_mode in {"visual", "inline"} else "visual"
+        merged["lora_auto_scan_unknown_on_startup"] = bool(merged.get("lora_auto_scan_unknown_on_startup", True))
         merged["cfg_lab_enabled"] = bool(merged.get("cfg_lab_enabled", False))
         if not merged["cfg_lab_enabled"]:
             merged["live_preview_cfg_visual_enabled"] = False
@@ -352,6 +422,15 @@ class WebUIStore:
             persisted["phase13_troubleshooting_lock_removed"] = True
         self._write(self.settings_dir / "application.json", persisted)
         return self.load_application_settings()
+
+    def load_default_asset_profiles(self) -> dict[str, Any]:
+        payload = self._read(self.default_assets_dir / "profiles.json", default_document())
+        return normalize_document(payload if isinstance(payload, dict) else {})
+
+    def save_default_asset_profiles(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = normalize_document(payload)
+        self._write(self.default_assets_dir / "profiles.json", normalized)
+        return normalized
 
     def load_recent_output_visibility(self) -> dict[str, Any]:
         payload = self._read(
