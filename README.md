@@ -35,7 +35,7 @@ run_webui.bat
 Users must still provide their own legally obtained compatible Stable Diffusion checkpoint and any LoRA files they want to use. Models are not included with IMAGE_GEN.
 
 ---
-
+---
 
 
 ## Current Support at a Glance
