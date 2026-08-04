@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from PIL.PngImagePlugin import PngInfo
 
 from image_gen.systems.diagnostics.serialization import json_safe
 from modules.txt2img.generation_manifest import GenerationManifest
+
+
+_LORA_INFOTEXT_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def _trim_number(value: Any) -> str:
@@ -28,6 +32,112 @@ def _stem_from_path(value: Any) -> str:
     return Path(text).stem
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _sanitize_lora_infotext_name(value: Any, *, fallback_hash: str = "") -> str:
+    """Return a Civitai/A1111 prompt-tag-safe LoRA name."""
+
+    stem = _stem_from_path(value)
+    cleaned = _LORA_INFOTEXT_NAME_RE.sub("_", stem).strip("_.-")
+    if cleaned:
+        return cleaned
+    suffix = re.sub(r"[^0-9a-fA-F]", "", str(fallback_hash or ""))[:12]
+    return f"lora_{suffix or 'asset'}"
+
+
+def _lora_compatibility_hash(asset: Any) -> str:
+    extra = _mapping(getattr(asset, "extra", {}))
+    metadata = _mapping(extra.get("metadata"))
+    scan_cache = _mapping(metadata.get("_lora_scan_cache"))
+    candidates = (
+        extra.get("a1111_short_hash"),
+        metadata.get("a1111_short_hash"),
+        scan_cache.get("a1111_short_hash"),
+        extra.get("a1111_hash"),
+        metadata.get("a1111_hash"),
+        scan_cache.get("a1111_hash"),
+    )
+    for value in candidates:
+        token = str(value or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{12,128}", token):
+            return token[:12]
+
+    # For non-Safetensors adapters the A1111 compatibility hash is the normal
+    # file SHA-256. Do not use this fallback for Safetensors because its
+    # compatible identity excludes the mutable header.
+    filename = str(
+        getattr(asset, "resolved_filename", "")
+        or getattr(asset, "requested_filename", "")
+        or getattr(asset, "resolved_path", "")
+        or getattr(asset, "requested_path", "")
+        or ""
+    ).lower()
+    if not filename.endswith(".safetensors"):
+        fallback = str(
+            getattr(asset, "resolved_hash", "")
+            or getattr(asset, "requested_hash", "")
+            or ""
+        ).strip().lower()
+        if re.fullmatch(r"[0-9a-f]{12,128}", fallback):
+            return fallback[:12]
+    return ""
+
+
+def _active_lora_metadata(manifest: GenerationManifest) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    used_names: set[str] = set()
+    for asset in manifest.loras:
+        extra = _mapping(getattr(asset, "extra", {}))
+        enabled = bool(extra.get("enabled", True))
+        used = bool(getattr(asset, "was_used_for_generation", False))
+        applied = str(getattr(asset, "action_taken", "") or "").strip().lower() == "applied"
+        if not enabled or not (used or applied):
+            continue
+
+        short_hash = _lora_compatibility_hash(asset)
+        label = (
+            getattr(asset, "resolved_display_name", "")
+            or getattr(asset, "requested_display_name", "")
+            or getattr(asset, "resolved_filename", "")
+            or getattr(asset, "requested_filename", "")
+            or getattr(asset, "resolved_path", "")
+            or getattr(asset, "requested_path", "")
+        )
+        base_name = _sanitize_lora_infotext_name(label, fallback_hash=short_hash)
+        name = base_name
+        if name.casefold() in used_names:
+            suffix = short_hash[:8] if short_hash else str(len(records) + 1)
+            name = f"{base_name}_{suffix}"
+        used_names.add(name.casefold())
+        try:
+            weight = float(extra.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+        records.append(
+            {
+                "name": name,
+                "hash": short_hash,
+                "weight": weight,
+            }
+        )
+    return records
+
+
+def _append_lora_infotext_tags(prompt: str, records: list[dict[str, Any]]) -> str:
+    tags = [
+        f"<lora:{item['name']}:{_trim_number(item['weight'])}>"
+        for item in records
+        if item.get("name")
+    ]
+    if not tags:
+        return prompt
+    base = str(prompt or "").rstrip()
+    suffix = " ".join(tags)
+    return f"{base} {suffix}".strip()
+
+
 def manifest_to_civitai_parameters(manifest: GenerationManifest) -> str:
     """Return an A1111/Civitai-style PNG infotext string.
 
@@ -46,7 +156,8 @@ def manifest_to_civitai_parameters(manifest: GenerationManifest) -> str:
     req = manifest.required_for_rerun
     opt = manifest.optional_for_rerun
 
-    positive = str(req.prompt or "")
+    lora_records = _active_lora_metadata(manifest)
+    positive = _append_lora_infotext_tags(str(req.prompt or ""), lora_records)
     negative = str(req.negative_prompt or "")
 
     provenance = dict(manifest.extra.get("model_provenance") or {})
@@ -90,22 +201,21 @@ def manifest_to_civitai_parameters(manifest: GenerationManifest) -> str:
         fields.append(("Guidance rescale", _trim_number(opt.guidance_rescale)))
     if opt.tiling is not None:
         fields.append(("Tiling", _trim_number(opt.tiling)))
-    if manifest.loras:
-        lora_names = []
-        for asset in manifest.loras:
-            label = (
-                getattr(asset, "resolved_display_name", "")
-                or getattr(asset, "requested_display_name", "")
-                or getattr(asset, "resolved_filename", "")
-                or getattr(asset, "requested_filename", "")
-                or getattr(asset, "resolved_path", "")
-                or getattr(asset, "requested_path", "")
+    lora_hash_entries = [
+        f"{item['name']}: {item['hash']}"
+        for item in lora_records
+        if item.get("name") and item.get("hash")
+    ]
+    if lora_hash_entries:
+        # The nested name/hash mapping contains commas and colons, so it must
+        # be emitted as one JSON-quoted infotext value. Civitai/A1111 then
+        # parse that quoted value as the ``Lora hashes`` mapping.
+        fields.append(
+            (
+                "Lora hashes",
+                json.dumps(", ".join(lora_hash_entries), ensure_ascii=False),
             )
-            stem = _stem_from_path(label)
-            if stem:
-                lora_names.append(stem)
-        if lora_names:
-            fields.append(("Lora hashes", ", ".join(lora_names)))
+        )
 
     settings_line = ", ".join(f"{key}: {value}" for key, value in fields if str(value).strip())
     return "\n".join([

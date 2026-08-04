@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from modules.project_context import ProjectContext
-from image_gen.runtime.lora_inspector import canonical_model_family
+from image_gen.runtime.lora_inspector import (
+    cached_or_compute_lora_compatibility_hash,
+    canonical_model_family,
+)
 from image_gen.contracts import (
     PROMPT_ASSET_CONTRACT_VERSION,
     GenerationRequest,
@@ -85,10 +88,18 @@ class ResolvedLoRAAsset:
     original_source: str = ""
     order: int = 0
     file_hash: str = ""
+    a1111_hash: str = ""
+    a1111_short_hash: str = ""
+    a1111_hash_source: str = ""
     adapter_name: str = ""
     metadata: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
+        metadata = dict(self.metadata or {})
+        if self.a1111_hash:
+            metadata["a1111_hash"] = self.a1111_hash
+            metadata["a1111_short_hash"] = self.a1111_short_hash or self.a1111_hash[:12]
+            metadata["a1111_hash_source"] = self.a1111_hash_source
         return {
             "asset_type": "lora",
             "asset_id": self.asset_id,
@@ -101,6 +112,9 @@ class ResolvedLoRAAsset:
             "requested_hash": self.requested_hash,
             "resolved_hash": self.file_hash,
             "file_hash": self.file_hash,
+            "a1111_hash": self.a1111_hash,
+            "a1111_short_hash": self.a1111_short_hash,
+            "a1111_hash_source": self.a1111_hash_source,
             "weight": self.weight,
             "enabled": self.enabled,
             "polarity": self.polarity,
@@ -112,7 +126,7 @@ class ResolvedLoRAAsset:
             "origin": self.source,
             "order": self.order,
             "adapter_name": self.adapter_name,
-            "metadata": dict(self.metadata or {}),
+            "metadata": metadata,
         }
 
 
@@ -121,6 +135,7 @@ class LoRAResolver:
         self.context = context
         self._catalog_cache: dict[str, Path] | None = None
         self._hash_cache: dict[tuple[str, int, int], str] = {}
+        self._compatibility_hash_cache: dict[tuple[str, int, int], dict[str, str]] = {}
         self._metadata_cache: dict[tuple[str, int], dict[str, Any]] = {}
 
     def _scan_catalog(self) -> dict[str, Path]:
@@ -200,6 +215,45 @@ class LoRAResolver:
         if len(self._hash_cache) > 128:
             self._hash_cache = dict(list(self._hash_cache.items())[:128])
         return digest
+
+    def compatibility_hash(
+        self,
+        path: Path,
+        *,
+        sidecar_metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, str]:
+        try:
+            stat = path.stat()
+        except OSError:
+            return {
+                "a1111_hash": "",
+                "a1111_short_hash": "",
+                "a1111_hash_source": "",
+            }
+        cache_key = (_path_token(path), int(stat.st_size), int(stat.st_mtime_ns))
+        cached = self._compatibility_hash_cache.get(cache_key)
+        if cached is not None:
+            return dict(cached)
+        try:
+            payload = cached_or_compute_lora_compatibility_hash(
+                path,
+                sidecar_metadata=sidecar_metadata,
+            )
+        except Exception:
+            payload = {
+                "a1111_hash": "",
+                "a1111_short_hash": "",
+                "a1111_hash_source": "",
+            }
+        self._compatibility_hash_cache = {
+            cache_key: dict(payload),
+            **self._compatibility_hash_cache,
+        }
+        if len(self._compatibility_hash_cache) > 128:
+            self._compatibility_hash_cache = dict(
+                list(self._compatibility_hash_cache.items())[:128]
+            )
+        return dict(payload)
 
 
     def metadata(self, path: Path) -> dict[str, Any]:
@@ -284,6 +338,10 @@ class LoRARuntimeManager:
             resolved_path = self.resolver.resolve(requested_name, requested_path)
             file_hash = self.resolver.file_hash(resolved_path)
             sidecar_metadata = self.resolver.metadata(resolved_path)
+            compatibility_hash = self.resolver.compatibility_hash(
+                resolved_path,
+                sidecar_metadata=sidecar_metadata,
+            )
             adapter_token = file_hash[:12] if file_hash else f"{abs(hash(str(resolved_path))) & 0xffffffff:08x}"
             source = canonical_prompt_asset_source(
                 item.get("source")
@@ -316,6 +374,9 @@ class LoRARuntimeManager:
                 original_source=canonical_prompt_asset_source(item.get("original_source"), default="") if item.get("original_source") else "",
                 order=order,
                 file_hash=file_hash,
+                a1111_hash=str(compatibility_hash.get("a1111_hash") or ""),
+                a1111_short_hash=str(compatibility_hash.get("a1111_short_hash") or ""),
+                a1111_hash_source=str(compatibility_hash.get("a1111_hash_source") or ""),
                 adapter_name=f"lora_{adapter_token}",
                 metadata={**sidecar_metadata, **dict(item.get("metadata") or {})},
             )

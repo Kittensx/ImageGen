@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -7,10 +8,135 @@ from typing import Any, Mapping
 
 
 _KNOWN_MODEL_FAMILIES = {"sd1", "sd2", "sdxl", "sd3", "flux"}
+LORA_SCAN_CACHE_SCHEMA_VERSION = 4
+_HASH_CHUNK_SIZE = 1024 * 1024
+_HEX_HASH_RE = re.compile(r"^[0-9a-fA-F]{12,128}$")
 
 
 def _compact_token(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _normalized_hash(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    return token if _HEX_HASH_RE.fullmatch(token) else ""
+
+
+def _sha256_stream(path: Path, *, offset: int = 0) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        if offset:
+            stream.seek(offset)
+        for chunk in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def addnet_hash_safetensors(path: str | Path) -> str:
+    """Return the Kohya/AddNet SHA-256 used by A1111 for Safetensors LoRAs.
+
+    The compatibility hash intentionally excludes the mutable Safetensors JSON
+    header and hashes only the tensor-data payload. This is distinct from the
+    full-file SHA-256 used by IMAGE_GEN for local integrity and replay identity.
+    """
+
+    resolved = Path(path).expanduser().resolve()
+    file_size = resolved.stat().st_size
+    with resolved.open("rb") as stream:
+        header = stream.read(8)
+    if len(header) != 8:
+        raise ValueError("Safetensors file is too short to contain a header length.")
+    header_size = int.from_bytes(header, "little", signed=False)
+    data_offset = header_size + 8
+    if header_size <= 0 or data_offset > file_size:
+        raise ValueError(
+            "Safetensors header length is invalid for the current file size: "
+            f"header_size={header_size}, file_size={file_size}."
+        )
+    return _sha256_stream(resolved, offset=data_offset)
+
+
+def compute_lora_compatibility_hash(
+    path: str | Path,
+    *,
+    safetensors_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Compute the hash identity expected by A1111/Civitai LoRA metadata."""
+
+    resolved = Path(path).expanduser().resolve()
+    metadata = dict(safetensors_metadata or {})
+    embedded = _normalized_hash(metadata.get("sshs_model_hash"))
+    if resolved.suffix.lower() == ".safetensors":
+        if embedded:
+            full_hash = embedded
+            source = "safetensors:sshs_model_hash"
+        else:
+            full_hash = addnet_hash_safetensors(resolved)
+            source = "safetensors_payload_sha256"
+    else:
+        full_hash = _sha256_stream(resolved)
+        source = "full_file_sha256"
+    return {
+        "a1111_hash": full_hash,
+        "a1111_short_hash": full_hash[:12],
+        "a1111_hash_source": source,
+    }
+
+
+def lora_scan_cache_is_current(
+    path: str | Path,
+    cache: Mapping[str, Any] | None,
+    *,
+    require_compatibility_hash: bool = True,
+) -> bool:
+    """Return whether a persisted LoRA scan matches the current file."""
+
+    resolved = Path(path).expanduser().resolve()
+    payload = dict(cache or {})
+    signature = payload.get("file_signature") if isinstance(payload.get("file_signature"), Mapping) else {}
+    try:
+        stat = resolved.stat()
+        valid = bool(
+            int(payload.get("schema_version") or 0) >= LORA_SCAN_CACHE_SCHEMA_VERSION
+            and payload.get("scan_status")
+            and int(signature.get("size_bytes") or 0) == int(stat.st_size)
+            and int(signature.get("modified_ns") or 0) == int(stat.st_mtime_ns)
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+    if require_compatibility_hash:
+        valid = valid and bool(_normalized_hash(payload.get("a1111_hash")))
+    return valid
+
+
+def cached_or_compute_lora_compatibility_hash(
+    path: str | Path,
+    *,
+    sidecar_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Use a current scan-cache hash, otherwise compute a compatibility hash."""
+
+    sidecar = dict(sidecar_metadata or {})
+    cache = dict(sidecar.get("_lora_scan_cache") or {})
+    if lora_scan_cache_is_current(path, cache, require_compatibility_hash=True):
+        full_hash = _normalized_hash(cache.get("a1111_hash"))
+        short_hash = _normalized_hash(cache.get("a1111_short_hash")) or full_hash[:12]
+        return {
+            "a1111_hash": full_hash,
+            "a1111_short_hash": short_hash[:12],
+            "a1111_hash_source": str(cache.get("a1111_hash_source") or "scan_cache"),
+        }
+
+    metadata: dict[str, Any] = {}
+    if Path(path).suffix.lower() == ".safetensors":
+        try:
+            from safetensors import safe_open
+
+            with safe_open(str(Path(path).expanduser().resolve()), framework="pt", device="cpu") as handle:
+                metadata = dict(handle.metadata() or {})
+        except Exception:
+            metadata = {}
+    return compute_lora_compatibility_hash(path, safetensors_metadata=metadata)
 
 
 def canonical_model_family(value: Any) -> str:
@@ -222,6 +348,10 @@ def inspect_lora_file(
         "activation_text": "",
         "activation_text_source": "",
         "safetensors_metadata": {},
+        "a1111_hash": "",
+        "a1111_short_hash": "",
+        "a1111_hash_source": "",
+        "a1111_hash_error": "",
         "inspection_error": "",
     }
     if resolved.suffix.lower() != ".safetensors":
@@ -248,6 +378,19 @@ def inspect_lora_file(
 
         family = _family_from_metadata(metadata) or _family_from_keys_and_shapes(keys, shapes)
         activation_text, activation_source = _activation_text_from_sources(sidecar, metadata)
+        try:
+            compatibility_hash = compute_lora_compatibility_hash(
+                resolved,
+                safetensors_metadata=metadata,
+            )
+            compatibility_hash_error = ""
+        except Exception as exc:
+            compatibility_hash = {
+                "a1111_hash": "",
+                "a1111_short_hash": "",
+                "a1111_hash_source": "",
+            }
+            compatibility_hash_error = f"{type(exc).__name__}: {exc}"
         result.update(
             {
                 "tensor_key_count": len(keys),
@@ -256,6 +399,8 @@ def inspect_lora_file(
                 "activation_text": activation_text,
                 "activation_text_source": activation_source,
                 "safetensors_metadata": metadata,
+                **compatibility_hash,
+                "a1111_hash_error": compatibility_hash_error,
                 "inspection_error": "",
             }
         )

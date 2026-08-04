@@ -10,7 +10,13 @@ from typing import Any, Iterable
 from urllib.parse import quote
 
 from image_gen.systems.registry import RuntimeRegistrySystem
-from image_gen.runtime.lora_inspector import canonical_model_family, inspect_lora_file
+from image_gen.runtime.lora_inspector import (
+    LORA_SCAN_CACHE_SCHEMA_VERSION,
+    canonical_model_family,
+    compute_lora_compatibility_hash,
+    inspect_lora_file,
+    lora_scan_cache_is_current,
+)
 from image_gen.webui.asset_metadata import (
     load_asset_metadata,
     replace_asset_preview,
@@ -396,6 +402,10 @@ class WebUICatalog:
                 "modified_ns": modified_ns,
             },
             "sha256": str(cache.get("sha256") or ""),
+            "a1111_hash": str(cache.get("a1111_hash") or ""),
+            "a1111_short_hash": str(cache.get("a1111_short_hash") or ""),
+            "a1111_hash_source": str(cache.get("a1111_hash_source") or ""),
+            "a1111_hash_error": str(cache.get("a1111_hash_error") or ""),
             "network_type": str(cache.get("network_type") or "Unknown"),
             "tensor_key_format": str(cache.get("tensor_key_format") or "Unknown"),
             "tensor_key_count": int(cache.get("tensor_key_count") or 0),
@@ -410,12 +420,10 @@ class WebUICatalog:
     def _lora_scan_cache_payload(self, path: Path, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         data = metadata if isinstance(metadata, dict) else load_asset_metadata(path)
         cache = self._normalize_lora_scan_cache(data.get("_lora_scan_cache"))
-        signature = cache.get("file_signature") or {}
-        valid = bool(
-            int(cache.get("schema_version") or 0) >= 3
-            and cache.get("scan_status")
-            and int(signature.get("size_bytes") or 0) == int(path.stat().st_size)
-            and int(signature.get("modified_ns") or 0) == int(path.stat().st_mtime_ns)
+        valid = lora_scan_cache_is_current(
+            path,
+            cache,
+            require_compatibility_hash=True,
         )
         if not valid:
             return {
@@ -440,6 +448,10 @@ class WebUICatalog:
             "activation_text": str(cache.get("activation_text") or ""),
             "activation_text_source": str(cache.get("activation_text_source") or ""),
             "sha256": str(cache.get("sha256") or ""),
+            "a1111_hash": str(cache.get("a1111_hash") or ""),
+            "a1111_short_hash": str(cache.get("a1111_short_hash") or ""),
+            "a1111_hash_source": str(cache.get("a1111_hash_source") or ""),
+            "a1111_hash_error": str(cache.get("a1111_hash_error") or ""),
             "inspection_error": str(cache.get("inspection_error") or ""),
             "scan_status": str(cache.get("scan_status") or "cached"),
             "scanned_at": str(cache.get("scanned_at") or ""),
@@ -456,6 +468,10 @@ class WebUICatalog:
         scan_signature = self._lora_scan_signature(path)
         technical = {
             "sha256": "",
+            "a1111_hash": "",
+            "a1111_short_hash": "",
+            "a1111_hash_source": "",
+            "a1111_hash_error": "",
             "network_type": "Unknown",
             "tensor_key_format": "Unknown",
             "tensor_key_count": 0,
@@ -477,6 +493,10 @@ class WebUICatalog:
                 network_type = network_module or ("LoRA" if report.checkpoint_kind == "lora" else report.checkpoint_kind or "Unknown")
                 technical = {
                     "sha256": report.sha256,
+                    "a1111_hash": str(lora_analysis.get("a1111_hash") or ""),
+                    "a1111_short_hash": str(lora_analysis.get("a1111_short_hash") or ""),
+                    "a1111_hash_source": str(lora_analysis.get("a1111_hash_source") or ""),
+                    "a1111_hash_error": str(lora_analysis.get("a1111_hash_error") or ""),
                     "network_type": network_type,
                     "tensor_key_format": str(lora_analysis.get("tensor_key_format") or "Unknown"),
                     "tensor_key_count": int(lora_analysis.get("tensor_key_count") or report.total_keys or 0),
@@ -493,14 +513,31 @@ class WebUICatalog:
                 scan_status = "error"
         else:
             scan_status = "unsupported"
-            technical = {**technical, "inspection_error": "Technical scan is currently available only for .safetensors LoRA files."}
+            try:
+                compatibility_hash = compute_lora_compatibility_hash(path)
+            except Exception as exc:
+                compatibility_hash = {
+                    "a1111_hash": "",
+                    "a1111_short_hash": "",
+                    "a1111_hash_source": "",
+                }
+                technical["a1111_hash_error"] = f"{type(exc).__name__}: {exc}"
+            technical = {
+                **technical,
+                **compatibility_hash,
+                "inspection_error": "Technical tensor inspection is currently available only for .safetensors LoRA files.",
+            }
 
         persisted_cache = {
-            "schema_version": 3,
+            "schema_version": LORA_SCAN_CACHE_SCHEMA_VERSION,
             "scan_status": scan_status,
             "scanned_at": datetime.now(timezone.utc).isoformat(),
             "file_signature": scan_signature,
             "sha256": technical.get("sha256") or "",
+            "a1111_hash": technical.get("a1111_hash") or "",
+            "a1111_short_hash": technical.get("a1111_short_hash") or "",
+            "a1111_hash_source": technical.get("a1111_hash_source") or "",
+            "a1111_hash_error": technical.get("a1111_hash_error") or "",
             "network_type": technical.get("network_type") or "Unknown",
             "tensor_key_format": technical.get("tensor_key_format") or "Unknown",
             "tensor_key_count": int(technical.get("tensor_key_count") or 0),

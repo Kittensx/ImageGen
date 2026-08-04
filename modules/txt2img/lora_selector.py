@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from image_gen.runtime.lora_inspector import canonical_model_family, inspect_lora_file
+from image_gen.runtime.lora_inspector import (
+    canonical_model_family,
+    inspect_lora_file,
+    lora_scan_cache_is_current,
+)
 from image_gen.webui.asset_metadata import load_asset_metadata, save_asset_metadata
 from modules.project_context import ProjectContext
 
@@ -74,17 +78,11 @@ class LoRASelector:
 
     @staticmethod
     def _scan_cache_is_current(path: Path, cache: dict[str, Any]) -> bool:
-        signature = cache.get("file_signature") if isinstance(cache.get("file_signature"), dict) else {}
-        try:
-            stat = path.stat()
-            return bool(
-                int(cache.get("schema_version") or 0) >= 3
-                and cache.get("scan_status")
-                and int(signature.get("size_bytes") or 0) == int(stat.st_size)
-                and int(signature.get("modified_ns") or 0) == int(stat.st_mtime_ns)
-            )
-        except (OSError, TypeError, ValueError):
-            return False
+        return lora_scan_cache_is_current(
+            path,
+            cache,
+            require_compatibility_hash=True,
+        )
 
     def scan_loras(
         self,
