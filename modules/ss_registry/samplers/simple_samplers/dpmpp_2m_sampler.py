@@ -4,7 +4,13 @@ from typing import Any, Optional
 
 import torch
 
+from image_gen.systems.guidance import (
+    prompt_cfg_payload_from_request,
+    requested_cfg_scale_for_step,
+)
+
 from modules.pipeline.conditioning_utils import resolve_step_conditioning
+from modules.pipeline.regional_conditioning import get_regional_conditioning_resolver
 from modules.pipeline.sampler_trace_mixin import SamplerTraceMixin
 
 from modules.contracts import SamplerCapabilities, SamplerOutput
@@ -388,6 +394,9 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
             getattr(request, "_phase08d_euler_reference_latents", {}) or {}
         )
         stepwise_conditioning_used = False
+        cfg_effective_per_step: list[dict[str, Any]] = []
+        regional_resolver = get_regional_conditioning_resolver(conditioning)
+        regional_guidance_active_any = False
         trace_recorder = self._get_trace_recorder(request)
         trace_enabled = bool(
             trace_recorder is not None and getattr(trace_recorder, "enabled", False)
@@ -423,34 +432,81 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 resolver = conditioning_extra.get("resolver")
                 stepwise_conditioning_used = resolver is not None
 
+            step_cfg_scale, prompt_cfg_step = requested_cfg_scale_for_step(
+                request, step_index=i, total_steps=effective_steps
+            )
+            cfg_effective_per_step.append({
+                "step_index": int(i),
+                "requested_cfg_scale": float(step_cfg_scale),
+                "effective_cfg_scale": float(step_cfg_scale),
+                "ui_cfg_scale": float(cfg_scale),
+                **prompt_cfg_step,
+            })
+
+            active_regions = (
+                regional_resolver.resolve_regions(step_index=i, latents=x)
+                if regional_resolver is not None
+                else []
+            )
+            regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
             denoising_contract = self._denoising_contract(guided_model_fn)
             if prediction_mode == "canonical_predicted_x0":
-                predict_denoised = getattr(guided_model_fn, "predict_denoised", None)
+                if active_regions:
+                    predict_denoised = getattr(guided_model_fn, "predict_regional_denoised", None)
+                else:
+                    predict_denoised = getattr(guided_model_fn, "predict_denoised", None)
                 if not callable(predict_denoised):
                     raise TypeError(
                         "DPM++ 2M requires the Phase 8C canonical predict_denoised callback."
                     )
-                denoised = predict_denoised(
-                    x,
-                    sigma,
-                    timestep,
-                    cond,
-                    uncond,
-                    cfg_scale,
-                )
+                if active_regions:
+                    denoised = predict_denoised(
+                        x,
+                        sigma,
+                        timestep,
+                        cond,
+                        uncond,
+                        step_cfg_scale,
+                        active_regions,
+                        regional_resolver.overlap_policy,
+                    )
+                else:
+                    denoised = predict_denoised(
+                        x,
+                        sigma,
+                        timestep,
+                        cond,
+                        uncond,
+                        step_cfg_scale,
+                    )
                 if denoised.dtype != torch.float32:
                     raise TypeError(
                         "The canonical denoiser must return predicted x0 in torch.float32."
                     )
             else:
-                guided_epsilon = guided_model_fn(
-                    x,
-                    sigma,
-                    timestep,
-                    cond,
-                    uncond,
-                    cfg_scale,
-                )
+                if active_regions:
+                    regional_guided = getattr(guided_model_fn, "predict_regional_guided_noise", None)
+                    if not callable(regional_guided):
+                        raise TypeError("The denoising system does not provide native regional guidance.")
+                    guided_epsilon = regional_guided(
+                        x,
+                        sigma,
+                        timestep,
+                        cond,
+                        uncond,
+                        step_cfg_scale,
+                        active_regions,
+                        regional_resolver.overlap_policy,
+                    )
+                else:
+                    guided_epsilon = guided_model_fn(
+                        x,
+                        sigma,
+                        timestep,
+                        cond,
+                        uncond,
+                        step_cfg_scale,
+                    )
                 sigma_value = torch.as_tensor(
                     sigma, device=x.device, dtype=torch.float32
                 )
@@ -500,6 +556,8 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
 
             trace_extra: dict[str, Any] = {
                 "integration_mode": self.SAMPLER_NAME,
+                "regional_guidance_active": bool(active_regions),
+                "regional_active_count": len(active_regions),
                 "history_policy": history_policy,
                 "prediction_mode": prediction_mode,
                 "used_old_denoised": bool(history["history_accepted"]),
@@ -524,6 +582,9 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                     "guidance_math_version", "phase11g_shared_guidance_v1"
                 ),
                 "cfg_rescale": denoising_contract.get("cfg_rescale", 0.0),
+                "requested_cfg_scale": float(step_cfg_scale),
+                "effective_cfg_scale": float(step_cfg_scale),
+                **prompt_cfg_step,
                 "cfg_rescale_applied": bool(denoising_contract.get("cfg_rescale_applied", False)),
                 "legacy_clamp_guidance": bool(denoising_contract.get("legacy_clamp_guidance", False)),
                 **history,
@@ -630,7 +691,7 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 latent_after=x,
                 noise_pred=None,
                 guided_noise=None,
-                cfg_scale=cfg_scale,
+                cfg_scale=step_cfg_scale,
                 extra=trace_extra,
                 predicted_x0_snapshot=preview_predicted_x0.to(dtype=model_input_dtype),
             )
@@ -674,6 +735,14 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
             requested_steps=requested_steps,
             effective_steps=effective_steps,
         )
+
+        regional_runtime = (
+            regional_resolver.runtime_snapshot() if regional_resolver is not None else {}
+        )
+        if regional_runtime and isinstance(getattr(request, "diagnostics", None), dict):
+            request.diagnostics["regional_runtime"] = regional_runtime
+            passes = request.diagnostics.setdefault("regional_runtime_passes", {})
+            passes[str(regional_runtime.get("pass") or "base")] = regional_runtime
 
         return SamplerOutput(
             latents=x.to(dtype=model_input_dtype),
@@ -723,6 +792,12 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                     float(value) for value in timesteps[: sigmas.numel() - 1].detach().cpu().flatten()
                 ],
                 "stepwise_conditioning_used": stepwise_conditioning_used,
+                "prompt_cfg_schedule": prompt_cfg_payload_from_request(request),
+                "prompt_cfg_applied": any(bool(item.get("prompt_cfg_applied")) for item in cfg_effective_per_step),
+                "cfg_effective_per_step": cfg_effective_per_step,
+                "regional_guidance_used": bool(regional_guidance_active_any),
+                "regional_backend": "image_gen_model_output" if regional_guidance_active_any else "none",
+                "regional_runtime": regional_runtime,
                 "model_input_dtype": str(model_input_dtype),
                 "solver_dtype": str(solver_dtype),
                 "solver_state_initial_dtype": str(model_input_dtype),

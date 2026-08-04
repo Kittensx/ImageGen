@@ -3933,3 +3933,160 @@ body.is-resizing .center-splitter::before {
 .runtime-command-actions .compact-button {
   justify-self: start;
 }
+
+/* SuperHybrid Phase 2: prompt-CFG source and replay readout. */
+.cfg-lab-toolbar {
+  grid-template-columns: minmax(180px, 1fr) auto auto minmax(240px, 1.35fr);
+}
+
+.cfg-prompt-policy-field.is-disabled {
+  opacity: 0.55;
+}
+
+.cfg-source-readout {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface-raised, #162535) 78%, transparent);
+}
+
+.cfg-source-readout > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cfg-source-readout > div > span {
+  color: var(--text-subtle, #93a4b5);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cfg-source-readout > div > strong {
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.cfg-source-readout > small {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .cfg-lab-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .cfg-source-readout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .cfg-lab-toolbar,
+  .cfg-source-readout,
+  .cfg-lab-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* SuperHybrid Phase 6 REGION builder and preflight timeline */
+.region-preflight-card {
+  min-width: 0;
+}
+.region-timeline {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.region-timeline-empty {
+  color: var(--text-muted, #8d97a5);
+  font-size: 12px;
+}
+.region-timeline-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.8fr) minmax(140px, 2fr);
+  gap: 8px;
+  align-items: center;
+}
+.region-timeline-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted, #9aa4b2);
+}
+.region-timeline-track {
+  position: relative;
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle, #374151);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.region-timeline-window {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--accent, #1b9ddd);
+  opacity: 0.82;
+}
+
+
+.region-builder-launch-row {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+.region-builder-launch-row .secondary-button {
+  width: 100%;
+}
+
+.region-builder-dialog {
+  width: min(96vw, 1440px);
+  max-width: 1440px;
+  height: min(94vh, 980px);
+  max-height: 94vh;
+  padding: 0;
+  border: 1px solid var(--panel-border, #2b2f37);
+  border-radius: 18px;
+  background: #12161d;
+  color: inherit;
+  overflow: hidden;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+}
+
+.region-builder-dialog::backdrop {
+  background: rgba(5, 8, 13, 0.76);
+  backdrop-filter: blur(2px);
+}
+
+.region-builder-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.region-builder-frame-wrap {
+  min-height: 0;
+  background: #0d1016;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#regionBuilderFrame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: #0d0d0d;
+  display: block;
+}

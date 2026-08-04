@@ -57,6 +57,20 @@ class GenerationRequest:
     steps: int = 20
     cfg_scale: float = 7.0
     cfg_rescale: float = 0.0
+    prompt_cfg_schedule: dict[str, Any] = field(default_factory=dict)
+    prompt_cfg_pass_schedules: dict[str, Any] = field(default_factory=dict)
+    prompt_cfg_recorded_schedules: dict[str, Any] = field(default_factory=dict)
+    prompt_cfg_replay_mode: str = "reconstruct"
+    prompt_expansion_record: dict[str, Any] = field(default_factory=dict)
+    prompt_expansion_pass_records: dict[str, Any] = field(default_factory=dict)
+    prompt_expansion_recorded: dict[str, Any] = field(default_factory=dict)
+    prompt_expansion_replay_mode: str = "reconstruct"
+    prompt_semantic_pass_records: dict[str, Any] = field(default_factory=dict)
+    prompt_semantic_recorded: dict[str, Any] = field(default_factory=dict)
+    prompt_semantic_replay_mode: str = "reconstruct"
+    region_pass_records: dict[str, Any] = field(default_factory=dict)
+    region_recorded: dict[str, Any] = field(default_factory=dict)
+    region_replay_mode: str = "reconstruct"
     batch_size: int = 1
     seed: Optional[int] = None
     resolved_seeds: list[int] = field(default_factory=list)
@@ -128,6 +142,20 @@ class GenerationRequest:
             "steps": int(self.steps),
             "cfg_scale": float(self.cfg_scale),
             "cfg_rescale": float(self.cfg_rescale),
+            "prompt_cfg_schedule": _json_safe(self.prompt_cfg_schedule),
+            "prompt_cfg_pass_schedules": _json_safe(self.prompt_cfg_pass_schedules),
+            "prompt_cfg_recorded_schedules": _json_safe(self.prompt_cfg_recorded_schedules),
+            "prompt_cfg_replay_mode": str(self.prompt_cfg_replay_mode or "reconstruct"),
+            "prompt_expansion_record": _json_safe(self.prompt_expansion_record),
+            "prompt_expansion_pass_records": _json_safe(self.prompt_expansion_pass_records),
+            "prompt_expansion_recorded": _json_safe(self.prompt_expansion_recorded),
+            "prompt_expansion_replay_mode": str(self.prompt_expansion_replay_mode or "reconstruct"),
+            "prompt_semantic_pass_records": _json_safe(self.prompt_semantic_pass_records),
+            "prompt_semantic_recorded": _json_safe(self.prompt_semantic_recorded),
+            "prompt_semantic_replay_mode": str(self.prompt_semantic_replay_mode or "reconstruct"),
+            "region_pass_records": _json_safe(self.region_pass_records),
+            "region_recorded": _json_safe(self.region_recorded),
+            "region_replay_mode": str(self.region_replay_mode or "reconstruct"),
             "batch_size": int(self.batch_size),
             "seed": self.seed,
             "resolved_seeds": [int(seed) for seed in self.resolved_seeds],

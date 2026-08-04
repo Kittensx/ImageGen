@@ -131,10 +131,10 @@ class PromptConfigurationService:
         if any(self._token(item.get("preset_id")) == preset_id and item.get("builtin") for item in BUILTIN_PARSER_PRESETS):
             raise ValueError("Built-in prompt parser presets are read-only.")
         parser_id = self.parser_registry.resolve_id(record.get("prompt_parser_name") or "legacy")
-        fallback = "legacy_default" if parser_id == "legacy" else ("parser21_native" if parser_id == "parser21" else "canonical")
+        fallback = "legacy_default" if parser_id == "legacy" else ("parser21_native" if parser_id == "parser21" else ("superhybrid_native" if parser_id == "superhybrid" else "canonical"))
         profile = self.profile_registry().get(record.get("shortcut_profile_name") or fallback)
         compatible = parser_id in profile.compatible_parsers or (
-            parser_id == "combined" and any(item in profile.compatible_parsers for item in ("legacy", "parser21"))
+            parser_id == "combined" and any(item in profile.compatible_parsers for item in ("legacy", "parser21", "superhybrid"))
         )
         if not compatible:
             raise ValueError(f"Shortcut profile {profile.profile_id!r} is not compatible with parser {parser_id!r}.")
@@ -169,10 +169,10 @@ class PromptConfigurationService:
             if not validation.valid:
                 raise ValueError("Embedded shortcut profile snapshot is invalid: " + " | ".join(issue.message for issue in validation.errors))
         else:
-            fallback = "legacy_default" if parser_id == "legacy" else ("parser21_native" if parser_id == "parser21" else "canonical")
+            fallback = "legacy_default" if parser_id == "legacy" else ("parser21_native" if parser_id == "parser21" else ("superhybrid_native" if parser_id == "superhybrid" else "canonical"))
             profile = self.profile_registry().get(profile_name or fallback)
         compatible = parser_id in profile.compatible_parsers or (
-            parser_id == "combined" and any(item in profile.compatible_parsers for item in ("legacy", "parser21"))
+            parser_id == "combined" and any(item in profile.compatible_parsers for item in ("legacy", "parser21", "superhybrid"))
         )
         if not compatible:
             raise ValueError(f"Shortcut profile {profile.profile_id!r} is not compatible with parser {parser_id!r}.")

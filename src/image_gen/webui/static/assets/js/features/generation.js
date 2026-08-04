@@ -9,7 +9,7 @@ import {
 } from "./live-preview.js?v=0.1.56";
 import { showOutput, upsertRecentOutput } from "./gallery.js";
 import { openOutputDetailsData } from "./output-details.js";
-import { preflightCurrentPrompt } from "./prompt-tools.js?v=0.1.57";
+import { preflightCurrentPrompt } from "./prompt-tools.js?v=0.1.68";
 
 let refreshOutputs = async () => {};
 let collectValues = () => ({});
@@ -23,6 +23,17 @@ let eventStream = null;
 let eventStreamJobId = null;
 let eventStreamFailures = 0;
 let eventStreamDisabledUntil = 0;
+
+function requestUsesRegion(values = {}) {
+  const prompts = [values.positive_prompt, values.hires_positive_prompt];
+  return prompts.some((prompt) => String(prompt || "").includes("REGION{"));
+}
+
+const REGION_FOREVER_BLOCK_MESSAGE =
+  "Generate Forever is temporarily disabled while REGION prompting is active. " +
+  "REGION performs extra UNet evaluations for every active branch and has not yet " +
+  "passed sustained-run thermal and memory qualification. Use a finite batch count " +
+  "with batch size 1 while REGION is enabled.";
 
 function setSubmissionBusy(active, stage = "") {
   ["#generateButton", "#topGenerateButton"].forEach((selector) => {
@@ -708,6 +719,9 @@ async function submit(unlimited) {
   setSubmissionBusy(true, "Validating…");
   try {
     const values = { ...collectValues(), unlimited: Boolean(unlimited) };
+    if (values.unlimited && requestUsesRegion(values)) {
+      throw new Error(REGION_FOREVER_BLOCK_MESSAGE);
+    }
     setSubmissionBusy(true, "Validating prompt…");
     const promptPreflight = await preflightCurrentPrompt(values);
     const promptErrors = promptPreflight.blocking_errors || [];

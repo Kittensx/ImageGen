@@ -5,6 +5,7 @@ from typing import Any
 
 from modules.prompt_parsers.adapters.legacy import LegacyPromptParserAdapter
 from modules.prompt_parsers.adapters.parser21 import Parser21PromptParserAdapter
+from modules.prompt_parsers.adapters.superhybrid import SuperHybridPromptParserAdapter
 from modules.prompt_parsers.adapters.combined import CombinedPromptParserAdapter
 from modules.prompt_parsers.contracts import PromptParserDescriptor, PromptParserProtocol
 
@@ -13,7 +14,7 @@ class PromptParserRegistry:
     def __init__(self, adapters: Iterable[PromptParserProtocol] | None = None) -> None:
         self._adapters: dict[str, PromptParserProtocol] = {}
         self._aliases: dict[str, str] = {}
-        for adapter in adapters or (LegacyPromptParserAdapter(), Parser21PromptParserAdapter(), CombinedPromptParserAdapter()):
+        for adapter in adapters or (LegacyPromptParserAdapter(), Parser21PromptParserAdapter(), SuperHybridPromptParserAdapter(), CombinedPromptParserAdapter()):
             self.register(adapter)
 
     @staticmethod

@@ -7,6 +7,13 @@ import time
 from collections import OrderedDict
 from typing import Any, Mapping
 
+from image_gen.systems.prompt_expansion import PromptExpansionError, expand_superhybrid_prompt_batch
+from image_gen.systems.regional_prompting import (
+    RegionalPromptError,
+    estimate_region_runtime,
+    extract_superhybrid_region_slot,
+)
+from modules.txt2img.seed_utils import resolve_seed_sequence
 from modules.prompt_parsers.canonical import canonicalize_prompt
 from modules.prompt_parsers.contracts import PromptParserError
 from modules.prompt_parsers.adapters.legacy import LegacyPromptParserAdapter
@@ -40,7 +47,7 @@ def _cached_syntax_validation(
     seed: int | None,
 ) -> dict[str, Any]:
     parser_id = str(adapter.descriptor.parser_id)
-    effective_seed = seed if parser_id in {"parser21", "combined"} else None
+    effective_seed = seed if parser_id in {"parser21", "combined", "superhybrid"} else None
     key = (
         parser_id,
         str(adapter.descriptor.version),
@@ -215,11 +222,13 @@ class PromptProcessingPreflight:
                 fallback = "legacy_default"
             elif parser_id == "parser21":
                 fallback = "parser21_native"
+            elif parser_id == "superhybrid":
+                fallback = "superhybrid_native"
             else:
                 fallback = "canonical"
             profile = self.profile_registry.get(profile_name or fallback)
         compatible = parser_id in profile.compatible_parsers or (
-            parser_id == "combined" and any(item in profile.compatible_parsers for item in ("legacy", "parser21"))
+            parser_id == "combined" and any(item in profile.compatible_parsers for item in ("legacy", "parser21", "superhybrid"))
         )
         if not compatible:
             raise ValueError(
@@ -240,6 +249,12 @@ class PromptProcessingPreflight:
         steps: int,
         hires_steps: int | None,
         seed: int | None,
+        batch_size: int,
+        width: int,
+        height: int,
+        prompt_expansion_recorded: Mapping[str, Any] | None = None,
+        prompt_expansion_replay_mode: str = "reconstruct",
+        defer_prompt_expansion: bool = False,
         shadow_compare: bool = False,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         messages: list[dict[str, Any]] = []
@@ -256,6 +271,114 @@ class PromptProcessingPreflight:
             parser_id=parser_id,
             snapshot=profile_snapshot,
         )
+
+        expansion_record: dict[str, Any] = {}
+        expansion_error: dict[str, Any] | None = None
+        expanded_positive_prompt = str(positive_prompt or "")
+        expanded_negative_prompt = str(negative_prompt or "")
+        expanded_positive_slots = [expanded_positive_prompt for _ in range(max(1, int(batch_size)))]
+        expanded_negative_slots = [expanded_negative_prompt for _ in range(max(1, int(batch_size)))]
+        image_seeds = resolve_seed_sequence(seed, max(1, int(batch_size)))
+        parser_slot_seeds = list(image_seeds)
+        if parser_id == "superhybrid":
+            if defer_prompt_expansion:
+                messages.append(_message(
+                    "informational_notice",
+                    "disabled_hires_prompt_expansion_deferred",
+                    "The disabled hires pass has no recorded prompt expansion, so its SuperHybrid expansion preview was deferred.",
+                    pass_name=pass_name,
+                ))
+            else:
+                parser_seed = options.get("seed")
+                if parser_seed in (None, ""):
+                    parser_seed = seed
+                try:
+                    recorded_expansions = dict(prompt_expansion_recorded or {})
+                    if parser_seed in (None, "") or int(parser_seed) < 0:
+                        selection_seeds = list(image_seeds)
+                    else:
+                        selection_seeds = resolve_seed_sequence(int(parser_seed), max(1, int(batch_size)))
+                    expansion_scope = str(options.get("prompt_expansion_scope", "per_batch") or "per_batch")
+                    parser_slot_seeds = (
+                        list(selection_seeds)
+                        if expansion_scope == "per_image"
+                        else [int(selection_seeds[0])] * len(image_seeds)
+                    )
+                    expansion_record = expand_superhybrid_prompt_batch(
+                        expanded_positive_prompt,
+                        expanded_negative_prompt,
+                        resolved_seeds=image_seeds,
+                        selection_seeds=selection_seeds,
+                        pass_name=pass_name,
+                        parser_version=str(descriptor.get("version") or ""),
+                        scope=expansion_scope,
+                        wildcard_directory=str(options.get("wildcard_directory", "wildcards") or "wildcards"),
+                        recorded=dict(recorded_expansions.get(pass_name) or {}),
+                        replay_mode=prompt_expansion_replay_mode,
+                    )
+                    expanded_positive_slots = [str(value or "") for value in list(expansion_record.get("expanded_positive_by_slot") or [])]
+                    expanded_negative_slots = [str(value or "") for value in list(expansion_record.get("expanded_negative_by_slot") or [])]
+                    expanded_positive_prompt = expanded_positive_slots[0]
+                    expanded_negative_prompt = expanded_negative_slots[0]
+                except PromptExpansionError as exc:
+                    expansion_error = {
+                        "error_kind": "superhybrid_prompt_expansion_failed",
+                        "message": str(exc),
+                        "pass": pass_name,
+                    }
+                    messages.append(_message(
+                        "blocking_error",
+                        "superhybrid_prompt_expansion_failed",
+                        f"SuperHybrid prompt expansion failed: {exc}",
+                        pass_name=pass_name,
+                        diagnostics=expansion_error,
+                    ))
+        elif str(prompt_expansion_replay_mode or "reconstruct").strip().lower() == "recorded_exact":
+            recorded_for_pass = (
+                dict(prompt_expansion_recorded.get(pass_name) or {})
+                if isinstance(prompt_expansion_recorded, Mapping)
+                else {}
+            )
+            if recorded_for_pass:
+                expansion_error = {
+                    "error_kind": "prompt_expansion_parser_mismatch",
+                    "message": "Recorded SuperHybrid prompt expansion cannot be applied to a different prompt parser.",
+                    "pass": pass_name,
+                }
+                messages.append(_message(
+                    "blocking_error",
+                    "prompt_expansion_parser_mismatch",
+                    expansion_error["message"],
+                    pass_name=pass_name,
+                    diagnostics=expansion_error,
+                ))
+
+        region_slots: list[dict[str, Any]] = []
+        region_error: RegionalPromptError | None = None
+        if not defer_prompt_expansion and expansion_error is None:
+            try:
+                base_prompts: list[str] = []
+                for slot_index, prompt in enumerate(expanded_positive_slots):
+                    base_prompt, _runtime_specs, region_slot = extract_superhybrid_region_slot(
+                        prompt,
+                        slot_index=slot_index,
+                        steps=int(steps),
+                        seed=int(parser_slot_seeds[slot_index]),
+                        width=int(width),
+                        height=int(height),
+                    )
+                    base_prompts.append(base_prompt)
+                    region_slots.append(region_slot)
+                expanded_positive_slots = base_prompts
+                expanded_positive_prompt = expanded_positive_slots[0]
+            except RegionalPromptError as exc:
+                region_error = exc
+                messages.append(_message(
+                    "blocking_error",
+                    "region_plan_failed",
+                    f"REGION planning failed: {exc}",
+                    pass_name=pass_name,
+                ))
 
         if descriptor.get("experimental"):
             messages.append(_message(
@@ -275,7 +398,8 @@ class PromptProcessingPreflight:
             ))
 
         roles: dict[str, Any] = {}
-        for role, raw_prompt in (("positive", positive_prompt), ("negative", negative_prompt)):
+        prompt_pairs = (("positive", expanded_positive_prompt), ("negative", expanded_negative_prompt))
+        for role, raw_prompt in prompt_pairs:
             try:
                 translated = self.translator.translate(
                     str(raw_prompt or ""),
@@ -319,8 +443,30 @@ class PromptProcessingPreflight:
                     prompt_role=role,
                 ))
             validation: dict[str, Any] = {"valid": True, "warnings": []}
+            if defer_prompt_expansion and parser_id == "superhybrid":
+                validation = {
+                    "valid": True,
+                    "warnings": [],
+                    "skipped": "disabled_hires_prompt_expansion_deferred",
+                }
+            elif role == "positive" and region_error is not None:
+                validation = {
+                    "valid": False,
+                    "warnings": [],
+                    "skipped": "region_plan_failed",
+                    "error": {
+                        "error_kind": "region_plan_failed",
+                        "message": str(region_error),
+                    },
+                }
             validator = getattr(adapter, "validate_syntax", None)
-            if callable(validator) and not any(item["severity"] == "blocking_error" for item in option_messages):
+            if (
+                callable(validator)
+                and not defer_prompt_expansion
+                and expansion_error is None
+                and not (role == "positive" and region_error is not None)
+                and not any(item["severity"] == "blocking_error" for item in option_messages)
+            ):
                 try:
                     validation = _cached_syntax_validation(
                         adapter,
@@ -328,8 +474,11 @@ class PromptProcessingPreflight:
                         prompt_role=f"hires_{role}" if pass_name == "hires" else role,
                         steps=int(steps),
                         hires_steps=hires_steps,
-                        parser_options=options,
-                        seed=seed,
+                        parser_options=(
+                            {**options, "seed": parser_slot_seeds[0]}
+                            if parser_id == "superhybrid" else options
+                        ),
+                        seed=(parser_slot_seeds[0] if parser_id == "superhybrid" else seed),
                     )
                 except PromptParserError as exc:
                     messages.append(_message(
@@ -360,7 +509,7 @@ class PromptProcessingPreflight:
                     route_plan=route_plan,
                 ))
             shadow = None
-            if shadow_compare:
+            if shadow_compare and parser_id != "superhybrid":
                 shadow = shadow_compare_parsers(
                     raw_prompt=translated.parser_input,
                     prompt_role=f"hires_{role}" if pass_name == "hires" else role,
@@ -399,6 +548,54 @@ class PromptProcessingPreflight:
                     pass_name=pass_name,
                     prompt_role=role,
                 ))
+            slot_prompts = expanded_positive_slots if role == "positive" else expanded_negative_slots
+            slot_seeds = list(expansion_record.get("resolved_seeds") or resolve_seed_sequence(seed, len(slot_prompts)))
+            slot_previews = [{
+                **translated.metadata(),
+                "slot_index": 0,
+                "parser_canonical_prompt": canonical_prompt,
+                "parser_canonical_structure": canonical_structure,
+                "parser_validation": validation,
+            }]
+            for slot_index, slot_prompt in enumerate(slot_prompts[1:], start=1):
+                try:
+                    slot_translation = self.translator.translate(
+                        str(slot_prompt or ""),
+                        profile=profile,
+                        parser_id=parser_id,
+                        prompt_role=f"{pass_name}_{role}" if pass_name == "hires" else role,
+                    )
+                    slot_validation = validator(
+                        slot_translation.parser_input,
+                        prompt_role=f"{pass_name}_{role}" if pass_name == "hires" else role,
+                        steps=steps,
+                        hires_steps=hires_steps,
+                        parser_options=(
+                            {**options, "seed": parser_slot_seeds[slot_index]}
+                            if parser_id == "superhybrid" else options
+                        ),
+                        seed=(parser_slot_seeds[slot_index] if parser_id == "superhybrid" else slot_seeds[slot_index]),
+                    ) if callable(validator) and expansion_error is None else {"valid": True}
+                    slot_canonical, slot_structure, _ = canonicalize_prompt(
+                        slot_translation.parser_input, parser_id=parser_id
+                    )
+                    slot_previews.append({
+                        **slot_translation.metadata(),
+                        "slot_index": slot_index,
+                        "parser_canonical_prompt": slot_canonical,
+                        "parser_canonical_structure": slot_structure,
+                        "parser_validation": slot_validation,
+                    })
+                except Exception as exc:
+                    messages.append(_message(
+                        "blocking_error",
+                        "per_image_prompt_slot_validation_failed",
+                        f"Prompt slot {slot_index + 1} failed validation: {exc}",
+                        pass_name=pass_name,
+                        prompt_role=role,
+                        slot_index=slot_index,
+                    ))
+                    slot_previews.append({"slot_index": slot_index, "raw_prompt": slot_prompt, "error": str(exc)})
             roles[role] = {
                 **translated.metadata(),
                 "parser_canonical_prompt": canonical_prompt,
@@ -406,6 +603,7 @@ class PromptProcessingPreflight:
                 "parser_validation": validation,
                 "route_plan": route_plan,
                 "shadow_comparison": shadow,
+                "slots": slot_previews,
                 "performance": {
                     "shortcut_translation_duration_ms": translated.diagnostics.get("translation_duration_ms"),
                     "canonicalization_duration_ms": canonicalization_duration_ms,
@@ -423,6 +621,33 @@ class PromptProcessingPreflight:
             "parser_options": options,
             "shortcut_profile": profile.to_dict(parser_id=parser_id),
             "shortcut_profile_snapshot": profile.snapshot(),
+            "prompt_expansion": dict(expansion_record),
+            "prompt_expansion_replay_mode": str(prompt_expansion_replay_mode or "reconstruct"),
+            "prompt_expansion_error": dict(expansion_error or {}),
+            "prompt_expansion_deferred": bool(defer_prompt_expansion),
+            "raw_prompts": {"positive": str(positive_prompt or ""), "negative": str(negative_prompt or "")},
+            "expanded_prompts": {"positive": expanded_positive_prompt, "negative": expanded_negative_prompt},
+            "expanded_prompts_by_slot": {
+                "positive": list(expanded_positive_slots),
+                "negative": list(expanded_negative_slots),
+            },
+            "prompt_expansion_scope": str(expansion_record.get("scope") or options.get("prompt_expansion_scope") or "per_batch"),
+            "regional_prompting": {
+                "backend": "image_gen_model_output",
+                "overlap_policy": str(options.get("region_overlap_policy", "additive") or "additive"),
+                "slots": region_slots,
+                "region_count": sum(int(item.get("region_count", 0) or 0) for item in region_slots),
+                "runtime_estimate": estimate_region_runtime(
+                    width=int(width),
+                    height=int(height),
+                    steps=int(steps),
+                    slots=region_slots,
+                ),
+            },
+            "semantic_fingerprints_by_slot": {
+                "positive": [dict(item.get("parser_validation", {}).get("diagnostics", {}).get("semantic_fingerprint") or item.get("parser_validation", {}).get("semantic_fingerprint") or {}) for item in roles["positive"].get("slots", [])],
+                "negative": [dict(item.get("parser_validation", {}).get("diagnostics", {}).get("semantic_fingerprint") or item.get("parser_validation", {}).get("semantic_fingerprint") or {}) for item in roles["negative"].get("slots", [])],
+            },
             "positive": roles["positive"],
             "negative": roles["negative"],
         }, messages
@@ -435,6 +660,9 @@ class PromptProcessingPreflight:
         seed_raw = source.get("seed")
         seed = int(seed_raw) if seed_raw not in (None, "") else None
         shadow_compare = bool(source.get("prompt_shadow_compare", False))
+        batch_size = max(1, int(source.get("batch_size") or 1))
+        base_width = int(source.get("generation_width") or source.get("width") or 512)
+        base_height = int(source.get("generation_height") or source.get("height") or 512)
 
         base_parser = source.get("prompt_parser_name") or source.get("base_prompt_parser_name") or "legacy"
         base_profile = source.get("prompt_shortcut_profile_name") or source.get("base_shortcut_profile_name")
@@ -444,6 +672,15 @@ class PromptProcessingPreflight:
             legacy_options.pop(compatibility_key, None)
         for key, value in legacy_options.items():
             base_options.setdefault(key, value)
+        prompt_expansion_recorded = (
+            source.get("prompt_expansion_recorded")
+            if isinstance(source.get("prompt_expansion_recorded"), Mapping)
+            else None
+        )
+        prompt_expansion_replay_mode = str(
+            source.get("prompt_expansion_replay_mode") or "reconstruct"
+        ).strip().lower()
+
         base, messages = self._validate_pass(
             pass_name="base",
             parser_name=base_parser,
@@ -455,6 +692,11 @@ class PromptProcessingPreflight:
             steps=steps,
             hires_steps=hires_steps,
             seed=seed,
+            batch_size=batch_size,
+            width=base_width,
+            height=base_height,
+            prompt_expansion_recorded=prompt_expansion_recorded,
+            prompt_expansion_replay_mode=prompt_expansion_replay_mode,
             shadow_compare=shadow_compare,
         )
 
@@ -486,6 +728,22 @@ class PromptProcessingPreflight:
 
         hires_positive = str(source.get("hires_positive_prompt") or source.get("positive_prompt") or "")
         hires_negative = str(source.get("hires_negative_prompt") or source.get("negative_prompt") or "")
+        recorded_hires_expansion = (
+            dict(prompt_expansion_recorded.get("hires") or {})
+            if isinstance(prompt_expansion_recorded, Mapping)
+            else {}
+        )
+        defer_hires_prompt_expansion = bool(
+            prompt_expansion_replay_mode == "recorded_exact"
+            and not bool(source.get("hires_enabled", False))
+            and not recorded_hires_expansion
+        )
+        hires_width = int(source.get("hires_width") or 0)
+        hires_height = int(source.get("hires_height") or 0)
+        if hires_width <= 0:
+            hires_width = max(1, int(round(base_width * float(source.get("hires_scale") or 2.0))))
+        if hires_height <= 0:
+            hires_height = max(1, int(round(base_height * float(source.get("hires_scale") or 2.0))))
         hires, hires_messages = self._validate_pass(
             pass_name="hires",
             parser_name=hires_parser,
@@ -497,6 +755,12 @@ class PromptProcessingPreflight:
             steps=steps,
             hires_steps=hires_steps or steps,
             seed=seed,
+            batch_size=batch_size,
+            width=hires_width,
+            height=hires_height,
+            prompt_expansion_recorded=prompt_expansion_recorded,
+            prompt_expansion_replay_mode=prompt_expansion_replay_mode,
+            defer_prompt_expansion=defer_hires_prompt_expansion,
             shadow_compare=shadow_compare,
         )
         messages.extend(hires_messages)

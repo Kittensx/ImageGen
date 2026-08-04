@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import torch
+
+from image_gen.systems.guidance import (
+    prompt_cfg_payload_from_request,
+    requested_cfg_scale_for_step,
+)
 from typing import Any, Optional
 
 from modules.contracts import SamplerCapabilities, SamplerOutput
 
 from modules.pipeline.conditioning_utils import resolve_step_conditioning
+from modules.pipeline.regional_conditioning import get_regional_conditioning_resolver
 from modules.pipeline.sampler_trace_mixin import SamplerTraceMixin
 
 # -------------------------
@@ -88,6 +94,9 @@ class SimpleEulerSampler(SamplerTraceMixin):
         )
 
         stepwise_conditioning_used = False
+        cfg_effective_per_step = []
+        regional_resolver = get_regional_conditioning_resolver(conditioning)
+        regional_guidance_active_any = False
 
         requested_steps, effective_steps = self._resolve_effective_steps(
             request=request,
@@ -114,15 +123,50 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 resolver = getattr(conditioning, "extra", {}).get("resolver", None)
                 stepwise_conditioning_used = resolver is not None
 
-            # 🔑 Pipeline-owned CFG
-            noise = guided_model_fn(
-                x,
-                sigma,
-                timestep,
-                cond,
-                uncond,
-                cfg_scale,
+            step_cfg_scale, prompt_cfg_step = requested_cfg_scale_for_step(
+                request, step_index=i, total_steps=effective_steps
             )
+            cfg_effective_per_step.append({
+                "step_index": int(i),
+                "requested_cfg_scale": float(step_cfg_scale),
+                "effective_cfg_scale": float(step_cfg_scale),
+                "ui_cfg_scale": float(cfg_scale),
+                **prompt_cfg_step,
+            })
+
+            active_regions = (
+                regional_resolver.resolve_regions(step_index=i, latents=x)
+                if regional_resolver is not None
+                else []
+            )
+
+            regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
+
+            # Pipeline-owned CFG remains canonical; REGION replaces only the
+            # conditional model output before CFG is applied.
+            if active_regions:
+                regional_guided = getattr(guided_model_fn, "predict_regional_guided_noise", None)
+                if not callable(regional_guided):
+                    raise TypeError("The denoising system does not provide native regional guidance.")
+                noise = regional_guided(
+                    x,
+                    sigma,
+                    timestep,
+                    cond,
+                    uncond,
+                    step_cfg_scale,
+                    active_regions,
+                    regional_resolver.overlap_policy,
+                )
+            else:
+                noise = guided_model_fn(
+                    x,
+                    sigma,
+                    timestep,
+                    cond,
+                    uncond,
+                    step_cfg_scale,
+                )
             predicted_x0 = x - sigma * noise
 
             dt = sigma_next - sigma
@@ -136,9 +180,11 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 latent_before=latent_before,
                 latent_after=x,
                 guided_noise=noise,
-                cfg_scale=cfg_scale,
+                cfg_scale=step_cfg_scale,
                 extra={
                     "integration_mode": self.SAMPLER_NAME,
+                    "regional_guidance_active": bool(active_regions),
+                    "regional_active_count": len(active_regions),
                 },
             )
             self._emit_live_preview(
@@ -152,6 +198,9 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 model_timestep=timestep,
                 metadata={
                     "integration_mode": self.SAMPLER_NAME,
+                    "requested_cfg_scale": float(step_cfg_scale),
+                    "effective_cfg_scale": float(step_cfg_scale),
+                    **prompt_cfg_step,
                 },
             )
             if progress is not None:
@@ -164,6 +213,14 @@ class SimpleEulerSampler(SamplerTraceMixin):
 
        
         
+        regional_runtime = (
+            regional_resolver.runtime_snapshot() if regional_resolver is not None else {}
+        )
+        if regional_runtime and isinstance(getattr(request, "diagnostics", None), dict):
+            request.diagnostics["regional_runtime"] = regional_runtime
+            passes = request.diagnostics.setdefault("regional_runtime_passes", {})
+            passes[str(regional_runtime.get("pass") or "base")] = regional_runtime
+
         return SamplerOutput(
             latents=x,
             extra={
@@ -177,6 +234,12 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 "integration_prediction_type": "epsilon",
                 "schedule_transitions": int(sigmas.numel() - 1),
                 "stepwise_conditioning_used": stepwise_conditioning_used,
+                "prompt_cfg_schedule": prompt_cfg_payload_from_request(request),
+                "prompt_cfg_applied": any(bool(item.get("prompt_cfg_applied")) for item in cfg_effective_per_step),
+                "cfg_effective_per_step": cfg_effective_per_step,
+                "regional_guidance_used": bool(regional_guidance_active_any),
+                "regional_backend": "image_gen_model_output" if regional_guidance_active_any else "none",
+                "regional_runtime": regional_runtime,
                 
             },
         )

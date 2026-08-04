@@ -39,6 +39,15 @@ _FORM_REPLAY_FIELDS = {
     "scheduler_kwargs",
     "prompt_parser_name",
     "prompt_parser_kwargs",
+    "prompt_cfg_pass_schedules",
+    "prompt_expansion_pass_records",
+    "prompt_semantic_pass_records",
+    "batch_prompt_semantic_pass_records",
+    "region_pass_records",
+    "batch_region_pass_records",
+    "regional_runtime",
+    "regional_runtime_passes",
+    "batch_regional_runtime_passes",
     "prompt_shortcut_profile_name",
     "prompt_shortcut_profile_snapshot",
     "prompt_parser_preset_name",
@@ -81,6 +90,15 @@ _BACKEND_REPLAY_OPTIONAL_MAP = {
 _BACKEND_REPLAY_EXTRA_FIELDS = {
     "prompt_parser_name",
     "prompt_parser_kwargs",
+    "prompt_cfg_pass_schedules",
+    "prompt_expansion_pass_records",
+    "prompt_semantic_pass_records",
+    "batch_prompt_semantic_pass_records",
+    "region_pass_records",
+    "batch_region_pass_records",
+    "regional_runtime",
+    "regional_runtime_passes",
+    "batch_regional_runtime_passes",
     "prompt_shortcut_profile_name",
     "prompt_shortcut_profile_snapshot",
     "prompt_parser_preset_name",
@@ -701,7 +719,7 @@ def _classify_plugin_support(
 
     from modules.prompt_shortcuts import PromptShortcutProfileDescriptor, default_prompt_shortcut_registry, validate_prompt_shortcut_profile
 
-    profile_name = replay.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else "parser21_native")
+    profile_name = replay.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else ("superhybrid_native" if requested_parser == "superhybrid" else "parser21_native"))
     snapshot = replay.get("prompt_shortcut_profile_snapshot")
     if isinstance(snapshot, Mapping) and snapshot:
         profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))

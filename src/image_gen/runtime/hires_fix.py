@@ -152,7 +152,7 @@ def build_hires_request(
     request: GenerationRequest,
     plan: HiresExecutionPlan,
 ) -> GenerationRequest:
-    return replace(
+    hires_request = replace(
         request,
         positive_prompt=str(request.hires_positive_prompt or request.positive_prompt),
         negative_prompt=str(
@@ -173,6 +173,20 @@ def build_hires_request(
         ),
         cfg_scale=float(plan.cfg_scale),
         cfg_rescale=float(plan.cfg_rescale),
+        prompt_cfg_schedule={},
+        prompt_cfg_pass_schedules=dict(request.prompt_cfg_pass_schedules or {}),
+        prompt_cfg_recorded_schedules=dict(request.prompt_cfg_recorded_schedules or {}),
+        prompt_cfg_replay_mode=str(request.prompt_cfg_replay_mode or "reconstruct"),
+        prompt_expansion_record={},
+        prompt_expansion_pass_records=dict(request.prompt_expansion_pass_records or {}),
+        prompt_expansion_recorded=dict(request.prompt_expansion_recorded or {}),
+        prompt_expansion_replay_mode=str(request.prompt_expansion_replay_mode or "reconstruct"),
+        prompt_semantic_pass_records=dict(request.prompt_semantic_pass_records or {}),
+        prompt_semantic_recorded=dict(request.prompt_semantic_recorded or {}),
+        prompt_semantic_replay_mode=str(request.prompt_semantic_replay_mode or "reconstruct"),
+        region_pass_records=dict(request.region_pass_records or {}),
+        region_recorded=dict(request.region_recorded or {}),
+        region_replay_mode=str(request.region_replay_mode or "reconstruct"),
         prompt_parser_name=str(request.hires_prompt_parser_name or request.prompt_parser_name),
         prompt_parser_kwargs=dict(request.hires_prompt_parser_kwargs or request.prompt_parser_kwargs),
         prompt_shortcut_profile_name=str(
@@ -192,6 +206,8 @@ def build_hires_request(
         output_dir=None,
         resolved_seeds=list(request.resolved_seeds),
     )
+    setattr(hires_request, "_is_hires_request", True)
+    return hires_request
 
 
 def hires_schedule_baseline_metadata(schedule: SchedulerOutput) -> dict[str, Any]:

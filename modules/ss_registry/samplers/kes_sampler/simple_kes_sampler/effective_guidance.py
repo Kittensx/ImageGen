@@ -78,8 +78,13 @@ class EffectiveGuidanceController:
         sigma: Any,
         sigma_max: Any,
         sigma_min: Any,
+        requested_cfg_scale: float | None = None,
     ) -> tuple[float, Dict[str, Any]]:
-        requested = float(self.profile.requested_cfg_scale)
+        requested = (
+            float(self.profile.requested_cfg_scale)
+            if requested_cfg_scale is None
+            else max(0.0, _coerce_float(requested_cfg_scale, self.profile.requested_cfg_scale))
+        )
         progress = _normalized_progress(step_index, total_steps)
         sigma_fraction = _normalized_sigma_fraction(sigma, sigma_max, sigma_min)
         mode = self.profile.cfg_guidance_mode

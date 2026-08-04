@@ -1,7 +1,7 @@
 import { state } from "../state.js";
 import { $, shortText } from "../utils.js";
 import { openLiveLightbox, syncLiveLightbox } from "./lightbox.js";
-import { renderCfgGraph } from "./cfg-lab.js?v=0.1.44";
+import { renderCfgGraph } from "./cfg-lab.js?v=0.1.45";
 import { renderMemoryStatus } from "./memory-status.js?v=0.1.45";
 
 let currentJob = null;

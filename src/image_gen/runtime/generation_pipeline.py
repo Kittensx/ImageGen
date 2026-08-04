@@ -479,6 +479,12 @@ class GenerationPipeline:
                 dimension_plan=dimension_plan,
                 preview_mode=base_preview_policy.effective_preview_mode,
             )
+            diagnostics.run_stage(
+                session,
+                "latent_preparation",
+                "resolve_seeds",
+                lambda: self.systems.latent_preparation.resolve_seeds(request),
+            )
             conditioning = diagnostics.run_stage(
                 session,
                 "conditioning",
@@ -548,6 +554,39 @@ class GenerationPipeline:
                 "denoising",
                 "predict_guided_noise",
                 self.systems.denoising.predict_guided_noise,
+            )
+            regional_conditional_fn = diagnostics.wrap_callable(
+                session,
+                "denoising",
+                "predict_regional_conditional_noise",
+                self.systems.denoising.predict_regional_conditional_noise,
+            )
+            regional_guided_fn = diagnostics.wrap_callable(
+                session,
+                "denoising",
+                "predict_regional_guided_noise",
+                self.systems.denoising.predict_regional_guided_noise,
+            )
+            regional_denoised_fn = diagnostics.wrap_callable(
+                session,
+                "denoising",
+                "predict_regional_denoised",
+                self.systems.denoising.predict_regional_denoised,
+            )
+            setattr(
+                raw_model_fn,
+                "predict_regional_conditional_noise",
+                regional_conditional_fn,
+            )
+            setattr(
+                guided_model_fn,
+                "predict_regional_guided_noise",
+                regional_guided_fn,
+            )
+            setattr(
+                guided_model_fn,
+                "predict_regional_denoised",
+                regional_denoised_fn,
             )
             guided_denoiser_adapter = self.systems.denoising.build_guided_epsilon_denoiser(
                 guided_model_fn,
@@ -808,6 +847,56 @@ class GenerationPipeline:
                         request=hires_request,
                     ),
                 )
+                request.prompt_cfg_pass_schedules = dict(
+                    getattr(request, "prompt_cfg_pass_schedules", {}) or {}
+                )
+                hires_prompt_cfg = dict(
+                    getattr(hires_request, "prompt_cfg_schedule", {}) or {}
+                )
+                if hires_prompt_cfg:
+                    request.prompt_cfg_pass_schedules["hires"] = hires_prompt_cfg
+                    hires_metadata["prompt_cfg_schedule"] = hires_prompt_cfg
+                else:
+                    request.prompt_cfg_pass_schedules.pop("hires", None)
+
+                request.prompt_expansion_pass_records = dict(
+                    getattr(request, "prompt_expansion_pass_records", {}) or {}
+                )
+                hires_prompt_expansion = dict(
+                    getattr(hires_request, "prompt_expansion_record", {}) or {}
+                )
+                if hires_prompt_expansion:
+                    request.prompt_expansion_pass_records["hires"] = hires_prompt_expansion
+                    hires_metadata["prompt_expansion"] = hires_prompt_expansion
+                else:
+                    request.prompt_expansion_pass_records.pop("hires", None)
+
+                request.prompt_semantic_pass_records = dict(
+                    getattr(request, "prompt_semantic_pass_records", {}) or {}
+                )
+                hires_prompt_semantics = dict(
+                    (getattr(hires_request, "prompt_semantic_pass_records", {}) or {}).get("hires")
+                    or {}
+                )
+                if hires_prompt_semantics:
+                    request.prompt_semantic_pass_records["hires"] = hires_prompt_semantics
+                    hires_metadata["prompt_semantics"] = hires_prompt_semantics
+                else:
+                    request.prompt_semantic_pass_records.pop("hires", None)
+
+                request.region_pass_records = dict(
+                    getattr(request, "region_pass_records", {}) or {}
+                )
+                hires_regions = dict(
+                    (getattr(hires_request, "region_pass_records", {}) or {}).get("hires")
+                    or {}
+                )
+                if hires_regions:
+                    request.region_pass_records["hires"] = hires_regions
+                    hires_metadata["regional_prompting"] = hires_regions
+                else:
+                    request.region_pass_records.pop("hires", None)
+
                 replay_mode = str(
                     getattr(request, "hires_schedule_replay_mode", "reconstruct")
                     or "reconstruct"
@@ -1146,6 +1235,17 @@ class GenerationPipeline:
                 }
                 diagnostics.update_schedule(session, hires_schedule)
                 diagnostics.update_sampler(session, sample_output)
+                hires_region_runtime = dict(
+                    (getattr(hires_request, "diagnostics", {}) or {})
+                    .get("regional_runtime_passes", {})
+                    .get("hires")
+                    or sample_output.extra.get("regional_runtime")
+                    or {}
+                )
+                if hires_region_runtime:
+                    request.diagnostics.setdefault("regional_runtime_passes", {})["hires"] = hires_region_runtime
+                    request.diagnostics["regional_runtime"] = hires_region_runtime
+                    hires_metadata["regional_runtime"] = hires_region_runtime
                 provider_execution_after_hires = get_execution_evidence()
                 conditioning = hires_conditioning
                 schedule = hires_schedule
@@ -1507,6 +1607,15 @@ class GenerationPipeline:
                     "prompt_shortcut_profile": dict((conditioning.extra or {}).get("prompt_shortcut_profile") or {}),
                     "prompt_translation": dict((conditioning.extra or {}).get("prompt_translation") or {}),
                     "prompt_contract": dict((conditioning.extra or {}).get("prompt_contract") or {}),
+                    "regional_runtime": dict(
+                        (getattr(request, "diagnostics", {}) or {}).get("regional_runtime")
+                        or sample_output.extra.get("regional_runtime")
+                        or {}
+                    ),
+                    "regional_runtime_passes": dict(
+                        (getattr(request, "diagnostics", {}) or {}).get("regional_runtime_passes")
+                        or {}
+                    ),
                     "dimension_plan": dimension_plan.to_serializable_dict(),
                     "base_dimension_plan": base_dimension_plan.to_serializable_dict(),
                     "hires_fix": hires_metadata,

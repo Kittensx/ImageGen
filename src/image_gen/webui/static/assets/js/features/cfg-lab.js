@@ -98,6 +98,164 @@ function numberValue(selector, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+const PROMPT_CFG_DIRECTIVE = /<param\s*\[\s*cfg\s*\]\s*:\s*([^<]+?)\s*(?<!-)>/i;
+const PROMPT_CFG_CURVES = new Set(["linear", "smoothstep", "cosine", "exp_decay"]);
+
+function safeJsonInput(selector) {
+  try {
+    const value = JSON.parse(String($(selector)?.value || "{}"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function isSuperHybridParser() {
+  return String($("#promptParserName")?.value || "").toLowerCase() === "superhybrid";
+}
+
+function syncPromptCfgBehaviorFromOptions() {
+  const select = $("#promptCfgBehavior");
+  if (!select) return;
+  const options = safeJsonInput("#promptParserKwargs");
+  const behavior = ["replace_ui", "shape_ui", "disabled"].includes(String(options.prompt_cfg_behavior || ""))
+    ? String(options.prompt_cfg_behavior)
+    : "replace_ui";
+  select.value = behavior;
+}
+
+function writePromptCfgBehavior() {
+  const select = $("#promptCfgBehavior");
+  const hidden = $("#promptParserKwargs");
+  if (!select || !hidden) return;
+  const options = safeJsonInput("#promptParserKwargs");
+  options.prompt_cfg_behavior = select.value || "replace_ui";
+  hidden.value = JSON.stringify(options);
+  const mirrored = document.querySelector('[data-parser-setting="prompt_cfg_behavior"]');
+  if (mirrored) mirrored.value = options.prompt_cfg_behavior;
+  if (($("#hiresPromptParserMode")?.value || "same_as_base") === "same_as_base") {
+    const hiresHidden = $("#hiresPromptParserKwargs");
+    if (hiresHidden) hiresHidden.value = hidden.value;
+  }
+  hidden.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function resolvePromptCfgPositions(explicit) {
+  const count = explicit.length;
+  if (count === 1) return [0];
+  const anchors = new Map([[0, 0], [count - 1, 1]]);
+  explicit.forEach((position, index) => {
+    if (position === null) return;
+    if (!Number.isFinite(position) || position < 0 || position > 1) throw new Error("@ positions must be between 0 and 1");
+    if (index === 0 && position !== 0) throw new Error("the first control point must be at @0");
+    if (index === count - 1 && position !== 1) throw new Error("the last control point must be at @1");
+    anchors.set(index, position);
+  });
+  const ordered = [...anchors.entries()].sort((a, b) => a[0] - b[0]);
+  const positions = Array(count).fill(0);
+  ordered.forEach(([index, position]) => { positions[index] = position; });
+  for (let pair = 0; pair < ordered.length - 1; pair += 1) {
+    const [leftIndex, leftPosition] = ordered[pair];
+    const [rightIndex, rightPosition] = ordered[pair + 1];
+    if (rightPosition <= leftPosition) throw new Error("@ positions must increase from left to right");
+    const span = rightIndex - leftIndex;
+    for (let offset = 1; offset < span; offset += 1) {
+      positions[leftIndex + offset] = leftPosition + (rightPosition - leftPosition) * (offset / span);
+    }
+  }
+  return positions;
+}
+
+function parsePromptCfgDirective(raw) {
+  let text = String(raw || "").trim();
+  if (!text) throw new Error("the CFG directive is empty");
+  let interpolation = "linear";
+  if (text.includes(":")) {
+    const index = text.lastIndexOf(":");
+    const candidate = text.slice(index + 1).trim().toLowerCase().replaceAll("-", "_");
+    const aliases = { smooth: "smoothstep", ease: "smoothstep", ease_in_out: "smoothstep", exp: "exp_decay", exponential: "exp_decay", piecewise_linear: "linear" };
+    interpolation = aliases[candidate] || candidate;
+    if (!PROMPT_CFG_CURVES.has(interpolation)) throw new Error(`unknown interpolation ${candidate}`);
+    text = text.slice(0, index).trim();
+  }
+  const parts = text.split("->").map((part) => part.trim());
+  if (!parts.length || parts.some((part) => !part)) throw new Error("the CFG curve contains an empty control point");
+  const values = [];
+  const explicit = [];
+  parts.forEach((part) => {
+    const match = part.match(/^([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)(?:\s*@\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?))?$/);
+    if (!match) throw new Error(`invalid control point ${part}`);
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value < 0 || value > 30) throw new Error("CFG values must be between 0 and 30");
+    values.push(value);
+    explicit.push(match[2] === undefined ? null : Number(match[2]));
+  });
+  return { values, positions: resolvePromptCfgPositions(explicit), interpolation };
+}
+
+function promptCurveWeight(value, curve) {
+  const x = clamp01(value);
+  if (curve === "smoothstep") return x * x * (3 - 2 * x);
+  if (curve === "cosine") return 0.5 - 0.5 * Math.cos(Math.PI * x);
+  if (curve === "exp_decay") return x <= 0 ? 0 : (x >= 1 ? 1 : (1 - Math.exp(-4 * x)) / (1 - Math.exp(-4)));
+  return x;
+}
+
+function materializePromptCfg(spec, steps) {
+  if (spec.values.length === 1) return Array(steps).fill(spec.values[0]);
+  return Array.from({ length: steps }, (_, index) => {
+    const progress = steps <= 1 ? 0 : index / (steps - 1);
+    let segment = 0;
+    for (let cursor = 0; cursor < spec.positions.length - 1; cursor += 1) {
+      if (progress >= spec.positions[cursor] && progress <= spec.positions[cursor + 1]) { segment = cursor; break; }
+    }
+    if (progress <= spec.positions[0]) return spec.values[0];
+    if (progress >= spec.positions.at(-1)) return spec.values.at(-1);
+    const left = spec.positions[segment];
+    const right = spec.positions[segment + 1];
+    const local = promptCurveWeight((progress - left) / (right - left), spec.interpolation);
+    return spec.values[segment] + (spec.values[segment + 1] - spec.values[segment]) * local;
+  });
+}
+
+function requestedPromptCfgSeries(steps) {
+  const uiCfg = numberValue("#cfgScale", 7);
+  const flat = Array(steps).fill(uiCfg);
+  const parserActive = isSuperHybridParser();
+  const behavior = $("#promptCfgBehavior")?.value || "replace_ui";
+  const match = String($("#positivePrompt")?.value || "").match(PROMPT_CFG_DIRECTIVE);
+  if (!parserActive) return { values: flat, source: "UI CFG", detail: "SuperHybrid parser is not active.", behavior, directive: null, interpolation: "linear" };
+  if (!match) return { values: flat, source: "UI CFG", detail: "No SuperHybrid CFG directive detected.", behavior, directive: null, interpolation: "linear" };
+  try {
+    const spec = parsePromptCfgDirective(match[1]);
+    const shape = materializePromptCfg(spec, steps);
+    if (behavior === "disabled") return { values: flat, source: "UI CFG", detail: "SuperHybrid CFG directive detected but disabled by policy.", behavior, directive: match[0], interpolation: spec.interpolation };
+    if (behavior === "shape_ui") {
+      if (Math.abs(shape[0]) < 1e-12) throw new Error("shape-with-UI-start requires a non-zero first value");
+      return {
+        values: shape.map((value) => uiCfg * value / shape[0]),
+        source: "SuperHybrid curve shape + UI start",
+        detail: `${match[0]} is normalized to the UI CFG start value.`,
+        behavior,
+        directive: match[0],
+        interpolation: spec.interpolation,
+        controlCount: spec.values.length,
+      };
+    }
+    return {
+      values: shape,
+      source: "SuperHybrid prompt",
+      detail: `${match[0]} replaces the UI CFG schedule before CFG Lab shaping.`,
+      behavior,
+      directive: match[0],
+      interpolation: spec.interpolation,
+      controlCount: spec.values.length,
+    };
+  } catch (error) {
+    return { values: flat, source: "Invalid SuperHybrid CFG", detail: String(error?.message || error), behavior, directive: match[0], interpolation: "linear", error: true };
+  }
+}
+
 export function readCfgLabValues() {
   const sampler_kwargs = {};
   if (isKesSampler()) {
@@ -149,9 +307,9 @@ function curveWeight(value, curveType) {
   return x * x * (3 - 2 * x);
 }
 
-function configuredSeries() {
+function configuredModel() {
   const steps = Math.max(1, Math.round(numberValue("#steps", 20)));
-  const requested = numberValue("#cfgScale", 7);
+  const promptInput = requestedPromptCfgSeries(steps);
   const mode = $("#cfgGuidanceMode")?.value || "legacy_flat";
   const curveType = $("#cfgCurveType")?.value || "smoothstep";
   const strength = numberValue("#cfgCurveStrengthNumber", 1);
@@ -161,28 +319,54 @@ function configuredSeries() {
   const floorEnabled = Boolean($("#cfgEarlyFloorEnabled")?.checked);
   const floorValue = numberValue("#cfgEarlyFloorValueNumber", 6.2);
   const floorDuration = numberValue("#cfgEarlyFloorDurationNumber", 0.3);
-  return Array.from({ length: steps }, (_, stepIndex) => {
+  const kes = isKesSampler();
+  const points = promptInput.values.map((requested, stepIndex) => {
     const progress = steps <= 1 ? 0 : stepIndex / (steps - 1);
     const sigmaFraction = 1 - progress;
     let early = 0;
     let late = 0;
-    let active = mode !== "legacy_flat";
-    if (mode === "step_shaped") {
+    let active = kes && mode !== "legacy_flat";
+    if (active && mode === "step_shaped") {
       early = curveWeight(1 - progress, curveType);
       late = curveWeight(progress, curveType);
-    } else if (mode === "sigma_shaped") {
+    } else if (active && mode === "sigma_shaped") {
       early = curveWeight(sigmaFraction, curveType);
       late = curveWeight(1 - sigmaFraction, curveType);
-    } else if (mode === "auto_low_cfg" && requested < threshold) {
+    } else if (active && mode === "auto_low_cfg" && requested < threshold) {
       early = curveWeight(sigmaFraction, curveType);
       late = curveWeight(1 - sigmaFraction, curveType);
     } else if (mode === "auto_low_cfg") {
       active = false;
     }
     let effective = active ? requested + boostAmount * strength * early - taperAmount * strength * late : requested;
-    if (floorEnabled && progress <= floorDuration) effective = Math.max(effective, floorValue);
-    return { step_index: stepIndex, requested_cfg_scale: requested, effective_cfg_scale: Math.max(0, effective) };
+    if (kes && floorEnabled && progress <= floorDuration) effective = Math.max(effective, floorValue);
+    return { step_index: stepIndex, requested_cfg_scale: requested, effective_cfg_scale: Math.max(0, effective), cfg_source: promptInput.source };
   });
+  const requestedMin = Math.min(...promptInput.values);
+  const requestedMax = Math.max(...promptInput.values);
+  const effective = points.map((point) => point.effective_cfg_scale);
+  const rescale = numberValue("#cfgRescaleNumber", 0);
+  const transform = kes
+    ? `${mode.replaceAll("_", " ")}${mode === "legacy_flat" ? "" : ` · ${curveType}`}${rescale > 0 ? ` · rescale ${rescale.toFixed(2)}` : ""}`
+    : `pipeline direct schedule${rescale > 0 ? ` · rescale ${rescale.toFixed(2)}` : ""}`;
+  return {
+    points,
+    source: promptInput.source,
+    detail: promptInput.detail,
+    error: Boolean(promptInput.error),
+    requestedSummary: requestedMin === requestedMax
+      ? `${requestedMin.toFixed(2)} flat`
+      : `${promptInput.values[0].toFixed(2)} → ${promptInput.values.at(-1).toFixed(2)} · ${promptInput.interpolation}`,
+    transform,
+    owner: kes ? "KES sampler" : "Pipeline-owned guidance",
+    replay: "Reconstruct from prompt · fingerprint on save",
+    effectiveMin: Math.min(...effective),
+    effectiveMax: Math.max(...effective),
+  };
+}
+
+function configuredSeries() {
+  return configuredModel().points;
 }
 
 function svgElement(name, attributes = {}) {
@@ -277,14 +461,21 @@ export function renderCfgGraph(container, points, { compact = false, currentStep
 }
 
 export function renderCfgCurvePreview() {
-  const points = configuredSeries();
-  renderCfgGraph($("#cfgCurvePreviewGraph"), points, { compact: true });
-  const effective = points.map((point) => point.effective_cfg_scale);
-  const requested = points[0]?.requested_cfg_scale ?? 0;
-  const min = Math.min(...effective);
-  const max = Math.max(...effective);
+  syncPromptCfgBehaviorFromOptions();
+  const model = configuredModel();
+  renderCfgGraph($("#cfgCurvePreviewGraph"), model.points, { compact: true });
   const summary = $("#cfgCurvePreviewSummary");
-  if (summary) summary.textContent = `Requested ${requested.toFixed(2)} · effective ${min.toFixed(2)}–${max.toFixed(2)} · ${points.length} steps`;
+  if (summary) summary.textContent = `Requested ${model.requestedSummary} · effective ${model.effectiveMin.toFixed(2)}–${model.effectiveMax.toFixed(2)} · ${model.points.length} steps`;
+  if ($("#cfgSourceValue")) $("#cfgSourceValue").textContent = model.source;
+  if ($("#cfgRequestedCurveValue")) $("#cfgRequestedCurveValue").textContent = model.requestedSummary;
+  if ($("#cfgTransformValue")) $("#cfgTransformValue").textContent = model.transform;
+  if ($("#cfgGuidanceOwnerValue")) $("#cfgGuidanceOwnerValue").textContent = model.owner;
+  if ($("#cfgReplayValue")) $("#cfgReplayValue").textContent = model.replay;
+  const status = $("#cfgPromptDirectiveStatus");
+  if (status) {
+    status.textContent = model.detail;
+    status.classList.toggle("error", model.error);
+  }
 }
 
 function updateSamplerAvailability() {
@@ -293,10 +484,14 @@ function updateSamplerAvailability() {
     node.classList.toggle("is-disabled", !kes);
     node.querySelectorAll("input, select").forEach((input) => { input.disabled = !kes; });
   });
+  const policyField = $("#promptCfgBehavior")?.closest(".cfg-prompt-policy-field");
+  const promptPolicyEnabled = isSuperHybridParser();
+  if ($("#promptCfgBehavior")) $("#promptCfgBehavior").disabled = !promptPolicyEnabled;
+  policyField?.classList.toggle("is-disabled", !promptPolicyEnabled);
   const status = $("#cfgLabSamplerStatus");
   if (status) status.textContent = kes
     ? "KES effective-guidance shaping is available. Completed outputs will record the actual CFG used at every step."
-    : "The selected sampler uses flat pipeline guidance. Canonical CFG rescale remains available; KES shaping controls are disabled.";
+    : "The selected sampler uses pipeline-owned guidance and consumes the resolved CFG schedule directly. Canonical CFG rescale remains available; KES shaping controls are disabled.";
 }
 
 function applyPreset(name, saveSession) {
@@ -352,11 +547,14 @@ export function bindCfgLab({ collect = () => ({}), saveSession = () => {}, openV
     range.addEventListener("input", () => sync(range, number));
     number.addEventListener("input", () => sync(number, range));
   });
-  ["#cfgScale", "#steps", "#cfgGuidanceMode", "#cfgCurveType", "#cfgEarlyFloorEnabled"].forEach((selector) => {
+  ["#cfgScale", "#steps", "#cfgGuidanceMode", "#cfgCurveType", "#cfgEarlyFloorEnabled", "#positivePrompt"].forEach((selector) => {
     $(selector)?.addEventListener("input", () => { renderCfgCurvePreview(); saveSession(); });
     $(selector)?.addEventListener("change", () => { renderCfgCurvePreview(); saveSession(); });
   });
   $("#samplerName")?.addEventListener("change", () => { updateSamplerAvailability(); renderCfgCurvePreview(); });
+  $("#promptParserName")?.addEventListener("change", () => { syncPromptCfgBehaviorFromOptions(); updateSamplerAvailability(); renderCfgCurvePreview(); });
+  $("#promptCfgBehavior")?.addEventListener("change", () => { writePromptCfgBehavior(); renderCfgCurvePreview(); saveSession(); });
+  document.addEventListener("prompt-parser-options-changed", () => { syncPromptCfgBehaviorFromOptions(); renderCfgCurvePreview(); });
   $("#applyCfgPresetButton")?.addEventListener("click", () => applyPreset($("#cfgGuidancePreset").value, saveSession));
   $("#openCfgSweepButton")?.addEventListener("click", () => {
     const current = collect();
@@ -369,6 +567,7 @@ export function bindCfgLab({ collect = () => ({}), saveSession = () => {}, openV
       title: "Seed-Locked CFG Lab",
     });
   });
+  syncPromptCfgBehaviorFromOptions();
   updateSamplerAvailability();
   renderCfgCurvePreview();
 }

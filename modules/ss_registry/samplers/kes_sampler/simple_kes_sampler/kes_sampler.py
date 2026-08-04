@@ -7,7 +7,12 @@ from typing import Any, Dict, Optional
 
 import torch
 
-from image_gen.systems.guidance import GuidanceSemantics, combine_guidance_outputs
+from image_gen.systems.guidance import (
+    GuidanceSemantics,
+    combine_guidance_outputs,
+    prompt_cfg_payload_from_request,
+    requested_cfg_scale_for_step,
+)
 from modules.ss_registry.samplers.kes_sampler.simple_kes_sampler.cfg_strategy import CFGStrategy
 from modules.ss_registry.samplers.kes_sampler.simple_kes_sampler.effective_guidance import (
     EffectiveGuidanceController,
@@ -17,6 +22,7 @@ from modules.sampler_state import SamplerState
 from modules.ss_registry.samplers.sampler_config_loader import prepare_sampler_config
 
 from modules.pipeline.conditioning_utils import resolve_step_conditioning
+from modules.pipeline.regional_conditioning import get_regional_conditioning_resolver
 from modules.pipeline.sampler_trace_mixin import SamplerTraceMixin
 from modules.txt2img.seed_utils import create_torch_generator, offset_seed
 
@@ -265,6 +271,7 @@ class KESSampler(SamplerTraceMixin):
             "guidance_mode": guidance_profile.cfg_guidance_mode,
             "requested_cfg_scale": cfg_scale,
             "effective_cfg_scale": effective_cfg_scale,
+            "prompt_cfg_schedule": dict(prompt_cfg_payload_from_request(request)),
             "cfg_rescale": canonical_cfg_rescale,
             "cfg_rescale_applied": bool(canonical_cfg_rescale > 0.0),
             "legacy_clamp_guidance": legacy_clamp_guidance,
@@ -355,6 +362,9 @@ class KESSampler(SamplerTraceMixin):
         cfg_early_floor_applied_any = False
         guidance_shaping_active_any = False
         guidance_shaping_auto_applied_any = False
+        prompt_cfg_payload = prompt_cfg_payload_from_request(request)
+        regional_resolver = get_regional_conditioning_resolver(conditioning)
+        regional_guidance_active_any = False
 
         for i in range(sigmas.numel() - 1):
             sigma = sigmas[i]
@@ -364,13 +374,20 @@ class KESSampler(SamplerTraceMixin):
             
             latent_before = x.detach()
 
+            step_requested_cfg_scale, prompt_cfg_step = requested_cfg_scale_for_step(
+                request,
+                step_index=i,
+                total_steps=effective_steps,
+            )
             step_effective_cfg_scale, guidance_step = guidance_controller.compute(
                 step_index=i,
                 total_steps=effective_steps,
                 sigma=sigma,
                 sigma_max=sigma_max,
                 sigma_min=sigma_min,
+                requested_cfg_scale=step_requested_cfg_scale,
             )
+            guidance_step.update(prompt_cfg_step)
             cfg_early_floor_applied_any = cfg_early_floor_applied_any or bool(
                 guidance_step.get("cfg_early_floor_applied")
             )
@@ -385,7 +402,11 @@ class KESSampler(SamplerTraceMixin):
                     "step_index": int(i),
                     "sigma": float(sigma.item()) if hasattr(sigma, "item") else float(sigma),
                     "timestep": float(timestep.item()) if hasattr(timestep, "item") else float(timestep),
-                    "requested_cfg_scale": float(cfg_scale),
+                    "requested_cfg_scale": float(step_requested_cfg_scale),
+                    "ui_cfg_scale": float(cfg_scale),
+                    "cfg_source": prompt_cfg_step.get("cfg_source", "ui"),
+                    "prompt_cfg_applied": bool(prompt_cfg_step.get("prompt_cfg_applied", False)),
+                    "prompt_cfg_progress_fraction": prompt_cfg_step.get("prompt_cfg_progress_fraction"),
                     "effective_cfg_scale": float(step_effective_cfg_scale * legacy_guidance_multiplier),
                     "effective_cfg_scale_pre_rescale": float(
                         guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale)
@@ -412,8 +433,28 @@ class KESSampler(SamplerTraceMixin):
                 state=state,
             )
 
+            active_regions = (
+                regional_resolver.resolve_regions(step_index=i, latents=x)
+                if regional_resolver is not None
+                else []
+            )
+            regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
             noise_uncond = raw_model_fn(x, sigma, timestep, uncond)
-            noise_cond = raw_model_fn(x, sigma, timestep, cond)
+            if active_regions:
+                regional_conditional = getattr(raw_model_fn, "predict_regional_conditional_noise", None)
+                if not callable(regional_conditional):
+                    raise TypeError("The denoising system does not provide native regional conditional noise.")
+                noise_cond = regional_conditional(
+                    x,
+                    sigma,
+                    timestep,
+                    cond,
+                    active_regions,
+                    regional_resolver.overlap_policy,
+                    uncond_noise=noise_uncond,
+                )
+            else:
+                noise_cond = raw_model_fn(x, sigma, timestep, cond)
             guidance_delta = noise_cond - noise_uncond
 
             guidance_result = combine_guidance_outputs(
@@ -442,8 +483,27 @@ class KESSampler(SamplerTraceMixin):
                     state=state,
                 )
 
+                active_regions_2 = (
+                    regional_resolver.resolve_regions(step_index=i + 1, latents=x_pred)
+                    if regional_resolver is not None
+                    else []
+                )
                 noise_uncond_2 = raw_model_fn(x_pred, sigma_next, timestep_next, uncond_2)
-                noise_cond_2 = raw_model_fn(x_pred, sigma_next, timestep_next, cond_2)
+                if active_regions_2:
+                    regional_conditional = getattr(raw_model_fn, "predict_regional_conditional_noise", None)
+                    if not callable(regional_conditional):
+                        raise TypeError("The denoising system does not provide native regional conditional noise.")
+                    noise_cond_2 = regional_conditional(
+                        x_pred,
+                        sigma_next,
+                        timestep_next,
+                        cond_2,
+                        active_regions_2,
+                        regional_resolver.overlap_policy,
+                        uncond_noise=noise_uncond_2,
+                    )
+                else:
+                    noise_cond_2 = raw_model_fn(x_pred, sigma_next, timestep_next, cond_2)
                 guidance_delta_2 = noise_cond_2 - noise_uncond_2
 
                 guidance_result_2 = combine_guidance_outputs(
@@ -493,6 +553,8 @@ class KESSampler(SamplerTraceMixin):
                 "sampler_name": self.SAMPLER_NAME,
                 "integration_mode": integration_mode,
                 "used_resolver": resolver is not None,
+                "regional_guidance_active": bool(active_regions),
+                "regional_active_count": len(active_regions),
                 "cfg_rescale": canonical_cfg_rescale,
                 "cfg_rescale_applied": cfg_rescale_applied,
                 "legacy_clamp_guidance": legacy_clamp_guidance,
@@ -504,7 +566,10 @@ class KESSampler(SamplerTraceMixin):
                 "guidance_path": "shared_guidance_helper",
                 "guidance_math_version": guidance_semantics.guidance_math_version,
                 "guidance_mode": guidance_profile.cfg_guidance_mode,
-                "requested_cfg_scale": cfg_scale,
+                "requested_cfg_scale": step_requested_cfg_scale,
+                "ui_cfg_scale": cfg_scale,
+                "cfg_source": prompt_cfg_step.get("cfg_source", "ui"),
+                "prompt_cfg_applied": bool(prompt_cfg_step.get("prompt_cfg_applied", False)),
                 "effective_cfg_scale": step_effective_cfg_scale * legacy_guidance_multiplier,
                 "cfg_guidance_mode": guidance_step.get("cfg_guidance_mode"),
                 "guidance_shaping_active": bool(guidance_step.get("guidance_shaping_active")),
@@ -525,8 +590,8 @@ class KESSampler(SamplerTraceMixin):
                 latent_after=x,
                 noise_pred=noise_cond,
                 guided_noise=noise,
-                cfg_scale=cfg_scale,
-                requested_cfg_scale=cfg_scale,
+                cfg_scale=step_requested_cfg_scale,
+                requested_cfg_scale=step_requested_cfg_scale,
                 effective_cfg_scale=step_effective_cfg_scale * legacy_guidance_multiplier,
                 guidance_owner=guidance_owner,
                 unconditional_output=noise_uncond,
@@ -588,6 +653,10 @@ class KESSampler(SamplerTraceMixin):
             "legacy_clamp_guidance": legacy_clamp_guidance,
             "legacy_guidance_multiplier": legacy_guidance_multiplier,
         }
+        metadata["prompt_cfg_schedule"] = dict(prompt_cfg_payload)
+        metadata["prompt_cfg_applied"] = any(
+            bool(item.get("prompt_cfg_applied")) for item in effective_cfg_per_step
+        )
         metadata["cfg_effective_per_step"] = effective_cfg_per_step
         metadata["cfg_step_series"] = {
             "schema_version": 1,
@@ -604,7 +673,13 @@ class KESSampler(SamplerTraceMixin):
                     "guidance_mode": item.get("cfg_guidance_mode", guidance_profile.cfg_guidance_mode),
                     "cfg_rescale": item.get("cfg_rescale", canonical_cfg_rescale),
                     "cfg_rescale_applied": bool(item.get("cfg_rescale_applied", False)),
-                    "override_source": item.get("override_source", "base_request"),
+                    "override_source": (
+                        item.get("cfg_source", "superhybrid_prompt")
+                        if bool(item.get("prompt_cfg_applied", False))
+                        else item.get("override_source", "base_request")
+                    ),
+                    "ui_cfg_scale": item.get("ui_cfg_scale", cfg_scale),
+                    "prompt_cfg_applied": bool(item.get("prompt_cfg_applied", False)),
                     "transition_id": item.get("transition_id"),
                 }
                 for index, item in enumerate(effective_cfg_per_step)
@@ -617,6 +692,17 @@ class KESSampler(SamplerTraceMixin):
         metadata["guidance_shaping_active"] = guidance_shaping_active_any
         metadata["guidance_shaping_auto_applied"] = guidance_shaping_auto_applied_any
         metadata["cfg_early_floor_applied"] = cfg_early_floor_applied_any
+        metadata["regional_guidance_used"] = bool(regional_guidance_active_any)
+        metadata["regional_backend"] = (
+            "image_gen_model_output" if regional_guidance_active_any else "none"
+        )
+        if regional_resolver is not None:
+            regional_runtime = regional_resolver.runtime_snapshot()
+            metadata["regional_runtime"] = regional_runtime
+            if isinstance(getattr(request, "diagnostics", None), dict):
+                request.diagnostics["regional_runtime"] = regional_runtime
+                passes = request.diagnostics.setdefault("regional_runtime_passes", {})
+                passes[str(regional_runtime.get("pass") or "base")] = regional_runtime
 
         stopping_index = None
         if isinstance(schedule_extra, dict):

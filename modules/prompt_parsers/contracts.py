@@ -64,6 +64,7 @@ class PromptParseResult:
     conditioning_source: Any
     warnings: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    directives: dict[str, Any] = field(default_factory=dict)
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -75,6 +76,7 @@ class PromptParseResult:
             "canonical_structure": self.canonical_structure,
             "warnings": list(self.warnings),
             "diagnostics": dict(self.diagnostics),
+            "directives": dict(self.directives),
         }
 
 

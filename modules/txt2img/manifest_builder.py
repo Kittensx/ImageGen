@@ -72,6 +72,39 @@ def build_generation_manifest(
         manifest.optional_for_rerun.extra["prompt_parser_kwargs"] = dict(
             json_safe(getattr(request, "prompt_parser_kwargs", {}) or {})
         )
+        manifest.optional_for_rerun.extra["prompt_cfg_pass_schedules"] = dict(
+            json_safe(getattr(request, "prompt_cfg_pass_schedules", {}) or {})
+        )
+        manifest.optional_for_rerun.extra["prompt_cfg_schedule"] = dict(
+            json_safe(getattr(request, "prompt_cfg_schedule", {}) or {})
+        )
+        manifest.optional_for_rerun.extra["prompt_cfg_contract_version"] = str(
+            (getattr(request, "prompt_cfg_schedule", {}) or {}).get("contract_version") or ""
+        )
+        manifest.optional_for_rerun.extra["prompt_expansion_pass_records"] = dict(
+            json_safe(getattr(request, "prompt_expansion_pass_records", {}) or {})
+        )
+        manifest.optional_for_rerun.extra["prompt_expansion_record"] = dict(
+            json_safe(getattr(request, "prompt_expansion_record", {}) or {})
+        )
+        manifest.optional_for_rerun.extra["prompt_expansion_contract_version"] = str(
+            (getattr(request, "prompt_expansion_record", {}) or {}).get("contract_version") or ""
+        )
+        manifest.optional_for_rerun.extra["prompt_semantic_pass_records"] = dict(
+            json_safe(getattr(request, "prompt_semantic_pass_records", {}) or {})
+        )
+        manifest.optional_for_rerun.extra["region_pass_records"] = dict(
+            json_safe(getattr(request, "region_pass_records", {}) or {})
+        )
+        request_diagnostics = dict(getattr(request, "diagnostics", {}) or {})
+        regional_runtime = dict(json_safe(request_diagnostics.get("regional_runtime") or {}))
+        regional_runtime_passes = dict(
+            json_safe(request_diagnostics.get("regional_runtime_passes") or {})
+        )
+        if regional_runtime:
+            manifest.optional_for_rerun.extra["regional_runtime"] = regional_runtime
+        if regional_runtime_passes:
+            manifest.optional_for_rerun.extra["regional_runtime_passes"] = regional_runtime_passes
         manifest.optional_for_rerun.extra["prompt_shortcut_profile_name"] = str(
             getattr(request, "prompt_shortcut_profile_name", "legacy_default") or "legacy_default"
         )

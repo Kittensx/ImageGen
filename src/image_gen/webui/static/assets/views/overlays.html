@@ -650,6 +650,27 @@
   </section>
 </dialog>
 
+<dialog id="regionBuilderDialog" class="region-builder-dialog" aria-modal="true" aria-labelledby="regionBuilderTitle">
+  <section class="region-builder-shell" id="regionBuilderShell">
+    <header class="lightbox-heading">
+      <div class="lightbox-heading-copy">
+        <span>Prompt tools</span>
+        <h2 id="regionBuilderTitle">REGION Builder</h2>
+      </div>
+      <button class="lightbox-close-button" id="regionBuilderCloseButton" type="button" aria-label="Close REGION Builder">×</button>
+    </header>
+
+    <div class="region-builder-frame-wrap">
+      <iframe id="regionBuilderFrame" title="REGION Builder workspace" loading="eager"></iframe>
+    </div>
+
+    <div class="lightbox-controls" role="toolbar" aria-label="REGION Builder controls">
+      <span class="lightbox-control-spacer"></span>
+      <button class="primary-button" id="regionBuilderCloseToolbarButton" type="button">Close</button>
+    </div>
+  </section>
+</dialog>
+
 <dialog id="variationMatrixDialog" class="variation-matrix-dialog" aria-modal="true" aria-labelledby="variationMatrixTitle">
   <section class="variation-matrix-shell">
     <header class="output-details-heading">

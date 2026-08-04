@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import math
+import time
+
 import torch
 
 from image_gen.systems.guidance import apply_canonical_cfg_rescale
@@ -356,6 +359,331 @@ class DenoisingSystem:
             raise ValueError("Cannot convert x0 or v-prediction to epsilon at sigma zero.")
         epsilon = (sample32 - denoised) / sigma_b
         return epsilon.to(dtype=model_output.dtype)
+
+    @staticmethod
+    def _slice_regional_batch_value(
+        value: torch.Tensor | float,
+        *,
+        slot: int,
+        batch_size: int,
+    ) -> torch.Tensor | float:
+        """Slice a batch-shaped sigma/timestep for one regional latent slot."""
+        if not torch.is_tensor(value):
+            return value
+        tensor = value
+        if tensor.ndim == 0 or tensor.numel() == 1:
+            return value
+        if int(tensor.shape[0]) == int(batch_size):
+            return tensor[slot:slot + 1]
+        return value
+
+    @staticmethod
+    def _regional_branch_parameters(region: Any) -> tuple[float, float]:
+        metadata = dict(getattr(region, "metadata", {}) or {})
+        weight = float(metadata.get("weight", 1.0))
+        base_ratio = float(metadata.get("base_ratio", 0.0))
+        if not math.isfinite(weight) or weight < 0.0:
+            raise ValueError("Regional branch weight must be finite and non-negative.")
+        if not math.isfinite(base_ratio) or not 0.0 <= base_ratio <= 1.0:
+            raise ValueError("Regional base ratio must be between 0 and 1.")
+        return weight, base_ratio
+
+    @classmethod
+    def _blend_regional_outputs(
+        cls,
+        *,
+        base_output: torch.Tensor,
+        reference_output: torch.Tensor,
+        regions: list[Any],
+        region_outputs: list[torch.Tensor],
+        overlap_policy: str,
+    ) -> torch.Tensor:
+        """Blend region branches in one output space before canonical CFG.
+
+        The target branch follows SuperHybrid's latent backend semantics:
+        ``base_ratio * base + (1-base_ratio) * weighted_region`` where the
+        weighted region is measured relative to the unconditional/reference
+        branch. Linear REGION curves are already represented as temporal
+        strength 1.0 by the resolver.
+        """
+        if len(regions) != len(region_outputs):
+            raise ValueError("Regional branch/output counts do not match.")
+        policy = str(overlap_policy or "additive").strip().lower()
+        if policy not in {"normalize", "additive", "priority"}:
+            raise ValueError(f"Unsupported regional overlap policy: {policy!r}.")
+        blended = base_output.clone()
+        by_slot: dict[int, list[tuple[torch.Tensor, torch.Tensor]]] = {}
+        for region, region_output in zip(regions, region_outputs):
+            slot = int(region.slot_index)
+            if slot < 0 or slot >= int(base_output.shape[0]):
+                raise ValueError("Regional conditioning slot is outside the latent batch.")
+            base_slot = base_output[slot:slot + 1]
+            reference_slot = reference_output[slot:slot + 1]
+            weight, base_ratio = cls._regional_branch_parameters(region)
+            weighted_region = reference_slot + weight * (region_output - reference_slot)
+            target = base_ratio * base_slot + (1.0 - base_ratio) * weighted_region
+            temporal_mask = (region.mask * float(region.strength)).to(
+                device=base_output.device, dtype=base_output.dtype
+            ).clamp_min(0.0)
+            by_slot.setdefault(slot, []).append((target, temporal_mask))
+
+        for slot, values in by_slot.items():
+            base_slot = base_output[slot:slot + 1]
+            if policy == "priority":
+                current = base_slot
+                for target, temporal_mask in values:
+                    alpha = temporal_mask.clamp(0.0, 1.0)
+                    current = current * (1.0 - alpha) + target * alpha
+                blended[slot:slot + 1] = current
+                continue
+
+            total = torch.zeros_like(values[0][1])
+            for _target, temporal_mask in values:
+                total = total + temporal_mask
+            scale = torch.ones_like(total)
+            if policy == "normalize":
+                scale = torch.where(
+                    total > 1.0, total.clamp_min(1e-8).reciprocal(), scale
+                )
+            delta = torch.zeros_like(base_slot)
+            for target, temporal_mask in values:
+                delta = delta + (temporal_mask * scale) * (target - base_slot)
+            blended[slot:slot + 1] = base_slot + delta
+
+        if not torch.isfinite(blended).all():
+            raise ValueError("Regional conditional output contains non-finite values.")
+        return blended
+
+    def _predict_regional_model_outputs(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        regions: list[Any],
+        extra_cond_kwargs: dict[str, Any] | None,
+    ) -> list[torch.Tensor]:
+        outputs: list[torch.Tensor] = []
+        batch_size = int(sample.shape[0])
+        for region in regions:
+            slot = int(region.slot_index)
+            if slot < 0 or slot >= batch_size:
+                raise ValueError("Regional conditioning slot is outside the latent batch.")
+            started = time.perf_counter()
+            try:
+                output = self.predict_model_output(
+                    sample[slot:slot + 1],
+                    self._slice_regional_batch_value(
+                        sigma, slot=slot, batch_size=batch_size
+                    ),
+                    self._slice_regional_batch_value(
+                        timestep, slot=slot, batch_size=batch_size
+                    ),
+                    region.conditioning,
+                    extra_cond_kwargs,
+                )
+            finally:
+                telemetry = None
+                metadata = getattr(region, "metadata", None)
+                if isinstance(metadata, dict):
+                    telemetry = metadata.get("_regional_telemetry")
+                if telemetry is not None and hasattr(telemetry, "record_unet_call"):
+                    telemetry.record_unet_call(
+                        slot_index=slot,
+                        region_index=int(region.region_index),
+                        duration_ms=(time.perf_counter() - started) * 1000.0,
+                    )
+            outputs.append(output)
+        return outputs
+
+    def _regional_conditional_model_output(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        base_cond: torch.Tensor,
+        regions: list[Any],
+        *,
+        reference_output: torch.Tensor | None = None,
+        overlap_policy: str = "additive",
+        extra_cond_kwargs: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        base_output = self.predict_model_output(
+            sample, sigma, timestep, base_cond, extra_cond_kwargs
+        )
+        if not regions:
+            return base_output
+        reference = (
+            reference_output.to(device=base_output.device, dtype=base_output.dtype)
+            if reference_output is not None
+            else torch.zeros_like(base_output)
+        )
+        region_outputs = self._predict_regional_model_outputs(
+            sample, sigma, timestep, regions, extra_cond_kwargs
+        )
+        return self._blend_regional_outputs(
+            base_output=base_output,
+            reference_output=reference,
+            regions=regions,
+            region_outputs=region_outputs,
+            overlap_policy=overlap_policy,
+        )
+
+    def predict_regional_conditional_noise(
+        self,
+        latents: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        base_cond: torch.Tensor,
+        regions: list[Any],
+        overlap_policy: str = "additive",
+        extra_cond_kwargs: dict[str, Any] | None = None,
+        *,
+        uncond_noise: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        base_model_output = self.predict_model_output(
+            latents, sigma, timestep, base_cond, extra_cond_kwargs
+        )
+        base_noise = self.convert_model_output_to_epsilon(
+            solver_sample=latents,
+            sigma=sigma,
+            model_output=base_model_output,
+            prediction_type=self.prediction_type,
+        )
+        if not regions:
+            return base_noise
+        region_model_outputs = self._predict_regional_model_outputs(
+            latents, sigma, timestep, regions, extra_cond_kwargs
+        )
+        region_noises: list[torch.Tensor] = []
+        batch_size = int(latents.shape[0])
+        for region, model_output in zip(regions, region_model_outputs):
+            slot = int(region.slot_index)
+            region_noises.append(
+                self.convert_model_output_to_epsilon(
+                    solver_sample=latents[slot:slot + 1],
+                    sigma=self._slice_regional_batch_value(
+                        sigma, slot=slot, batch_size=batch_size
+                    ),
+                    model_output=model_output,
+                    prediction_type=self.prediction_type,
+                )
+            )
+        reference = (
+            uncond_noise.to(device=base_noise.device, dtype=base_noise.dtype)
+            if uncond_noise is not None
+            else torch.zeros_like(base_noise)
+        )
+        return self._blend_regional_outputs(
+            base_output=base_noise,
+            reference_output=reference,
+            regions=regions,
+            region_outputs=region_noises,
+            overlap_policy=overlap_policy,
+        )
+
+    def _regional_guided_model_output(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        base_cond: torch.Tensor,
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        regions: list[Any],
+        overlap_policy: str = "additive",
+        extra_cond_kwargs: dict[str, Any] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        output_uncond = self.predict_model_output(
+            sample, sigma, timestep, uncond, extra_cond_kwargs
+        )
+        output_cond = self._regional_conditional_model_output(
+            sample,
+            sigma,
+            timestep,
+            base_cond,
+            regions,
+            reference_output=output_uncond,
+            overlap_policy=overlap_policy,
+            extra_cond_kwargs=extra_cond_kwargs,
+        )
+        guided = output_uncond + float(cfg_scale) * (output_cond - output_uncond)
+        guided = apply_canonical_cfg_rescale(guided, output_cond, self._cfg_rescale)
+        model_input, _ = self._prepare_model_input(sample, sigma)
+        return guided, output_uncond, output_cond, model_input
+
+    def predict_regional_guided_noise(
+        self,
+        latents: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        base_cond: torch.Tensor,
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        regions: list[Any],
+        overlap_policy: str = "additive",
+        extra_cond_kwargs: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        guided_output, output_uncond, output_cond, model_input = self._regional_guided_model_output(
+            latents, sigma, timestep, base_cond, uncond, cfg_scale, regions,
+            overlap_policy=overlap_policy,
+            extra_cond_kwargs=extra_cond_kwargs,
+        )
+        epsilon = self.convert_model_output_to_epsilon(
+            solver_sample=latents,
+            sigma=sigma,
+            model_output=guided_output,
+            prediction_type=self.prediction_type,
+        )
+        denoised = self.convert_model_output_to_denoised(
+            solver_sample=latents,
+            sigma=sigma,
+            model_output=guided_output,
+            prediction_type=self.prediction_type,
+        )
+        self._record_guidance_trace(
+            sample=latents, sigma=sigma, timestep=timestep, cfg_scale=cfg_scale,
+            model_input=model_input, output_uncond=output_uncond,
+            output_cond=output_cond, guided_output=guided_output,
+            epsilon=epsilon, denoised=denoised,
+        )
+        return epsilon
+
+    def predict_regional_denoised(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        base_cond: torch.Tensor,
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        regions: list[Any],
+        overlap_policy: str = "additive",
+        extra_cond_kwargs: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        guided_output, output_uncond, output_cond, model_input = self._regional_guided_model_output(
+            sample, sigma, timestep, base_cond, uncond, cfg_scale, regions,
+            overlap_policy=overlap_policy,
+            extra_cond_kwargs=extra_cond_kwargs,
+        )
+        denoised = self.convert_model_output_to_denoised(
+            solver_sample=sample,
+            sigma=sigma,
+            model_output=guided_output,
+            prediction_type=self.prediction_type,
+        )
+        epsilon = self.convert_model_output_to_epsilon(
+            solver_sample=sample,
+            sigma=sigma,
+            model_output=guided_output,
+            prediction_type=self.prediction_type,
+        )
+        self._record_guidance_trace(
+            sample=sample, sigma=sigma, timestep=timestep, cfg_scale=cfg_scale,
+            model_input=model_input, output_uncond=output_uncond,
+            output_cond=output_cond, guided_output=guided_output,
+            epsilon=epsilon, denoised=denoised,
+        )
+        return denoised.to(dtype=torch.float32)
 
     def _guided_model_output(
         self,

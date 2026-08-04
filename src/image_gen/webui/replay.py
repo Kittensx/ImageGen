@@ -43,6 +43,14 @@ _EDITABLE_FIELDS = {
     "scheduler_kwargs",
     "prompt_parser_name",
     "prompt_parser_kwargs",
+    "prompt_cfg_recorded_schedules",
+    "prompt_cfg_replay_mode",
+    "prompt_expansion_recorded",
+    "prompt_expansion_replay_mode",
+    "prompt_semantic_recorded",
+    "prompt_semantic_replay_mode",
+    "region_recorded",
+    "region_replay_mode",
     "prompt_shortcut_profile_name",
     "prompt_shortcut_profile_snapshot",
     "prompt_parser_preset_name",
@@ -113,6 +121,12 @@ _PRESERVABLE_BACKEND_FIELDS = {
     "tiling",
     "prompt_parser_name",
     "prompt_parser_kwargs",
+    "prompt_cfg_recorded_schedules",
+    "prompt_cfg_replay_mode",
+    "prompt_expansion_recorded",
+    "prompt_expansion_replay_mode",
+    "prompt_semantic_recorded",
+    "prompt_semantic_replay_mode",
     "prompt_shortcut_profile_name",
     "prompt_shortcut_profile_snapshot",
     "prompt_parser_preset_name",
@@ -231,6 +245,43 @@ class ReplayService:
     @staticmethod
     def _mapping(value: Any) -> dict[str, Any]:
         return dict(value) if isinstance(value, Mapping) else {}
+
+    @staticmethod
+    def _recorded_prompt_cfg_schedules(
+        manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        optional = manifest.get("optional_for_rerun") if isinstance(manifest, Mapping) else {}
+        extra = (optional or {}).get("extra") if isinstance(optional, Mapping) else {}
+        schedules = (extra or {}).get("prompt_cfg_pass_schedules") if isinstance(extra, Mapping) else {}
+        return dict(schedules) if isinstance(schedules, Mapping) else {}
+
+
+    @staticmethod
+    def _recorded_prompt_expansions(
+        manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        optional = manifest.get("optional_for_rerun") if isinstance(manifest, Mapping) else {}
+        extra = (optional or {}).get("extra") if isinstance(optional, Mapping) else {}
+        records = (extra or {}).get("prompt_expansion_pass_records") if isinstance(extra, Mapping) else {}
+        return dict(records) if isinstance(records, Mapping) else {}
+
+    @staticmethod
+    def _recorded_prompt_semantics(
+        manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        optional = manifest.get("optional_for_rerun") if isinstance(manifest, Mapping) else {}
+        extra = (optional or {}).get("extra") if isinstance(optional, Mapping) else {}
+        records = (extra or {}).get("prompt_semantic_pass_records") if isinstance(extra, Mapping) else {}
+        return dict(records) if isinstance(records, Mapping) else {}
+
+    @staticmethod
+    def _recorded_regions(
+        manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        optional = manifest.get("optional_for_rerun") if isinstance(manifest, Mapping) else {}
+        extra = (optional or {}).get("extra") if isinstance(optional, Mapping) else {}
+        records = (extra or {}).get("region_pass_records") if isinstance(extra, Mapping) else {}
+        return dict(records) if isinstance(records, Mapping) else {}
 
     @staticmethod
     def _recorded_hires_schedule(
@@ -532,6 +583,97 @@ class ReplayService:
             request.pop("hires_recorded_schedule_fingerprint", None)
             request["hires_schedule_replay_mode"] = "reconstruct"
 
+        prompt_cfg_sensitive_fields = {
+            "positive_prompt",
+            "steps",
+            "cfg_scale",
+            "prompt_parser_name",
+            "prompt_parser_kwargs",
+            "hires_positive_prompt",
+            "hires_steps",
+            "hires_cfg_scale",
+            "hires_prompt_parser_name",
+            "hires_prompt_parser_kwargs",
+        }
+        recorded_prompt_cfg_schedules = self._recorded_prompt_cfg_schedules(
+            details.manifest
+        )
+        use_recorded_prompt_cfg = bool(
+            mode == "exact"
+            and recorded_prompt_cfg_schedules
+            and not (replaced & prompt_cfg_sensitive_fields)
+        )
+        if use_recorded_prompt_cfg:
+            request["prompt_cfg_recorded_schedules"] = recorded_prompt_cfg_schedules
+            request["prompt_cfg_replay_mode"] = "recorded_exact"
+        else:
+            request.pop("prompt_cfg_recorded_schedules", None)
+            request["prompt_cfg_replay_mode"] = "reconstruct"
+
+        prompt_expansion_sensitive_fields = {
+            "positive_prompt",
+            "negative_prompt",
+            "seed",
+            "prompt_parser_name",
+            "prompt_parser_kwargs",
+            "hires_positive_prompt",
+            "hires_negative_prompt",
+            "hires_enabled",
+            "hires_prompt_parser_mode",
+            "hires_prompt_parser_name",
+            "hires_prompt_parser_kwargs",
+        }
+        recorded_prompt_expansions = self._recorded_prompt_expansions(details.manifest)
+        use_recorded_prompt_expansion = bool(
+            mode == "exact"
+            and recorded_prompt_expansions
+            and not (replaced & prompt_expansion_sensitive_fields)
+        )
+        if use_recorded_prompt_expansion:
+            request["prompt_expansion_recorded"] = recorded_prompt_expansions
+            request["prompt_expansion_replay_mode"] = "recorded_exact"
+        else:
+            request.pop("prompt_expansion_recorded", None)
+            request["prompt_expansion_replay_mode"] = "reconstruct"
+
+        recorded_prompt_semantics = self._recorded_prompt_semantics(details.manifest)
+        use_recorded_prompt_semantics = bool(
+            mode == "exact"
+            and recorded_prompt_semantics
+            and use_recorded_prompt_expansion
+            and not (replaced & prompt_expansion_sensitive_fields)
+        )
+        if use_recorded_prompt_semantics:
+            request["prompt_semantic_recorded"] = recorded_prompt_semantics
+            request["prompt_semantic_replay_mode"] = "recorded_exact"
+        else:
+            request.pop("prompt_semantic_recorded", None)
+            request["prompt_semantic_replay_mode"] = "reconstruct"
+
+        region_sensitive_fields = prompt_expansion_sensitive_fields | {
+            "width",
+            "height",
+            "steps",
+            "hires_size_mode",
+            "hires_scale",
+            "hires_width",
+            "hires_height",
+            "hires_steps",
+        }
+        recorded_regions = self._recorded_regions(details.manifest)
+        use_recorded_regions = bool(
+            mode == "exact"
+            and recorded_regions
+            and use_recorded_prompt_expansion
+            and not (replaced & region_sensitive_fields)
+        )
+        if use_recorded_regions:
+            request["region_recorded"] = recorded_regions
+            request["region_replay_mode"] = "recorded_exact"
+        else:
+            request.pop("region_recorded", None)
+            request["region_replay_mode"] = "reconstruct"
+
         self._remove_unsupported_paths(request, details.unsupported)
         request.setdefault("save_images", True)
         request.setdefault("batch_size", 1)
@@ -553,6 +695,12 @@ class ReplayService:
             "metadata_source": details.metadata_source,
             "schedule_replay_mode": request.get("hires_schedule_replay_mode", "reconstruct"),
             "recorded_schedule_available": bool(recorded_replay and recorded_fingerprint),
+            "prompt_cfg_replay_mode": request.get("prompt_cfg_replay_mode", "reconstruct"),
+            "recorded_prompt_cfg_available": bool(recorded_prompt_cfg_schedules),
+            "prompt_expansion_replay_mode": request.get("prompt_expansion_replay_mode", "reconstruct"),
+            "recorded_prompt_expansion_available": bool(recorded_prompt_expansions),
+            "region_replay_mode": request.get("region_replay_mode", "reconstruct"),
+            "recorded_region_available": bool(recorded_regions),
         }
         request["diagnostics"] = diagnostics
         return request, replaced
@@ -612,7 +760,7 @@ class ReplayService:
 
         from modules.prompt_shortcuts import PromptShortcutProfileDescriptor, default_prompt_shortcut_registry, validate_prompt_shortcut_profile
 
-        profile_name = raw_request.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else ("parser21_native" if requested_parser == "parser21" else "canonical"))
+        profile_name = raw_request.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else ("parser21_native" if requested_parser == "parser21" else ("superhybrid_native" if requested_parser == "superhybrid" else "canonical")))
         snapshot = raw_request.get("prompt_shortcut_profile_snapshot")
         if isinstance(snapshot, Mapping) and snapshot:
             profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))

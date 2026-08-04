@@ -5,7 +5,7 @@ import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./st
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.63";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.69";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
@@ -14,13 +14,13 @@ import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/m
 import { bindWorkspaceLayout } from "./features/layout.js?v=0.1.40";
 import { bindLightbox } from "./features/lightbox.js";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
-import { bindOutputDetails } from "./features/output-details.js?v=0.1.63";
+import { bindOutputDetails } from "./features/output-details.js?v=0.1.64";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js";
-import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.44";
+import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.45";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
-import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.63";
+import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.68";
 
 window.__IMAGE_GEN_BOOT_MODULE_LOADED__ = true;
 

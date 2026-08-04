@@ -213,6 +213,8 @@
             <section><h4>Negative: raw</h4><pre id="promptTranslationHiresNegativeRaw"></pre></section>
             <section><h4>Negative: parser input</h4><pre id="promptTranslationHiresNegativeExpanded"></pre></section>
             <section><h4>Negative: canonical</h4><pre id="promptTranslationHiresNegativeCanonical"></pre></section>
+            <section><h4>Per-image expansion and semantics</h4><pre id="promptTranslationHiresSlots"></pre></section>
+            <section class="region-preflight-card"><h4>REGION activation timeline</h4><div id="promptRegionHiresTimeline" class="region-timeline"></div><pre id="promptRegionHiresEstimate"></pre></section>
           </div>
         </details>
       </details>
@@ -244,6 +246,8 @@
           <section><h4>Negative: raw</h4><pre id="promptTranslationNegativeRaw"></pre></section>
           <section><h4>Negative: parser input</h4><pre id="promptTranslationNegativeExpanded"></pre></section>
           <section><h4>Negative: canonical</h4><pre id="promptTranslationNegativeCanonical"></pre></section>
+          <section><h4>Per-image expansion and semantics</h4><pre id="promptTranslationBaseSlots"></pre></section>
+          <section class="region-preflight-card"><h4>REGION activation timeline</h4><div id="promptRegionBaseTimeline" class="region-timeline"></div><pre id="promptRegionBaseEstimate"></pre></section>
         </div>
       </details>
     </section>
@@ -294,7 +298,25 @@
           </label>
           <button class="secondary-button compact-button" id="applyCfgPresetButton" type="button">Apply Preset</button>
           <button class="secondary-button compact-button" id="openCfgSweepButton" type="button">Open Seed-Locked CFG Sweep</button>
+          <label class="field-block cfg-prompt-policy-field">
+            <span>SuperHybrid prompt CFG</span>
+            <select id="promptCfgBehavior">
+              <option value="replace_ui">Replace UI CFG</option>
+              <option value="shape_ui">Use prompt curve shape with UI start</option>
+              <option value="disabled">Ignore prompt CFG directive</option>
+            </select>
+            <small>Controls how &lt;param[cfg]:...&gt; enters CFG Lab. Available when SuperHybrid is the active parser.</small>
+          </label>
         </div>
+
+        <section class="cfg-source-readout" id="cfgSourceReadout" aria-label="Resolved CFG Lab input">
+          <div><span>CFG source</span><strong id="cfgSourceValue">UI CFG</strong></div>
+          <div><span>Requested curve</span><strong id="cfgRequestedCurveValue">7.00 flat</strong></div>
+          <div><span>CFG Lab transform</span><strong id="cfgTransformValue">Legacy flat</strong></div>
+          <div><span>Guidance owner</span><strong id="cfgGuidanceOwnerValue">Pipeline</strong></div>
+          <div><span>Replay contract</span><strong id="cfgReplayValue">Reconstruct from prompt</strong></div>
+          <small id="cfgPromptDirectiveStatus" class="field-status subtle"></small>
+        </section>
 
         <div class="cfg-lab-grid">
           <label class="field-block">
@@ -463,6 +485,10 @@
       <button class="primary-button generate-button" id="generateButton" type="button">Generate</button>
       <button class="primary-button split-arrow" id="generateMenuButton" type="button" aria-label="Generation options">⌄</button>
       <button class="infinity-button" id="infinityButton" type="button">∞ Generate Forever</button>
+    </div>
+    <div class="region-builder-launch-row">
+      <button class="secondary-button" id="openRegionBuilderButton" type="button">Open REGION Builder</button>
+      <small class="field-status subtle">Parser-independent REGION addon for the active positive prompt target.</small>
     </div>
     <button class="danger-button is-hidden" id="cancelButton" type="button">Cancel Active Generation</button>
   </form>

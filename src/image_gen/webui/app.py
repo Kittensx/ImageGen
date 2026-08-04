@@ -45,7 +45,7 @@ from modules.prompt_parsers import (
 )
 
 
-WEBUI_VERSION = "0.1.63"
+WEBUI_VERSION = "0.1.69"
 
 
 class NamedPayload(BaseModel):
@@ -278,7 +278,7 @@ def create_app(
     @app.middleware("http")
     async def disable_webui_shell_caching(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+        if request.url.path in {"/", "/region-builder.html"} or request.url.path.startswith("/assets/"):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -1187,6 +1187,10 @@ def create_app(
             raise HTTPException(status_code=404, detail="Requested live preview step was not found.")
         headers = {"Cache-Control": "public, max-age=31536000, immutable"}
         return FileResponse(path, media_type=_preview_media_type(path), headers=headers)
+
+    @app.get("/region-builder.html", include_in_schema=False)
+    async def region_builder() -> FileResponse:
+        return FileResponse(static_root / "region-builder.html")
 
     @app.get("/")
     async def index() -> FileResponse:

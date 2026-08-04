@@ -35,6 +35,19 @@ GENERATION_REQUEST_KEYS = {
     "sampler_kwargs",
     "prompt_parser_name",
     "prompt_parser_kwargs",
+    "prompt_cfg_pass_schedules",
+    "prompt_cfg_recorded_schedules",
+    "prompt_cfg_replay_mode",
+    "prompt_expansion_record",
+    "prompt_expansion_pass_records",
+    "prompt_expansion_recorded",
+    "prompt_expansion_replay_mode",
+    "prompt_semantic_pass_records",
+    "prompt_semantic_recorded",
+    "prompt_semantic_replay_mode",
+    "region_pass_records",
+    "region_recorded",
+    "region_replay_mode",
     "prompt_shortcut_profile_name",
     "prompt_shortcut_profile_snapshot",
     "prompt_parser_preset_name",
@@ -198,7 +211,7 @@ def merge_cli_overrides(base: dict[str, Any], overrides: dict[str, Any] | None) 
     for key, value in override_values.items():
         if value is None:
             continue
-        if key in {"scheduler_kwargs", "sampler_kwargs", "prompt_parser_kwargs", "prompt_shortcut_profile_snapshot", "hires_prompt_parser_kwargs", "hires_shortcut_profile_snapshot", "hires_recorded_schedule_replay", "hires_recorded_schedule_fingerprint", "hires_schedule_conformance_source_replay", "hires_schedule_conformance_source_fingerprint", "prompt_preflight", "prompt_route_plan", "hires_prompt_route_plan", "parser_kwargs", "diagnostics"}:
+        if key in {"scheduler_kwargs", "sampler_kwargs", "prompt_parser_kwargs", "prompt_cfg_pass_schedules", "prompt_cfg_recorded_schedules", "prompt_expansion_record", "prompt_expansion_pass_records", "prompt_expansion_recorded", "prompt_semantic_pass_records", "prompt_semantic_recorded", "region_pass_records", "region_recorded", "prompt_shortcut_profile_snapshot", "hires_prompt_parser_kwargs", "hires_shortcut_profile_snapshot", "hires_recorded_schedule_replay", "hires_recorded_schedule_fingerprint", "hires_schedule_conformance_source_replay", "hires_schedule_conformance_source_fingerprint", "prompt_preflight", "prompt_route_plan", "hires_prompt_route_plan", "parser_kwargs", "diagnostics"}:
             current = dict(merged.get(key, {}) or {})
             current.update(dict(value or {}))
             merged[key] = current
@@ -224,6 +237,55 @@ def merge_cli_overrides(base: dict[str, Any], overrides: dict[str, Any] | None) 
         merged.pop("hires_recorded_schedule_replay", None)
         merged.pop("hires_recorded_schedule_fingerprint", None)
         merged["hires_schedule_replay_mode"] = "reconstruct"
+
+    prompt_cfg_sensitive = {
+        "positive_prompt",
+        "steps",
+        "cfg_scale",
+        "prompt_parser_name",
+        "prompt_parser_kwargs",
+        "hires_positive_prompt",
+        "hires_steps",
+        "hires_cfg_scale",
+        "hires_prompt_parser_name",
+        "hires_prompt_parser_kwargs",
+    }
+    if any(override_values.get(key) is not None for key in prompt_cfg_sensitive):
+        merged.pop("prompt_cfg_recorded_schedules", None)
+        merged["prompt_cfg_replay_mode"] = "reconstruct"
+
+    prompt_expansion_sensitive = {
+        "positive_prompt",
+        "negative_prompt",
+        "seed",
+        "prompt_parser_name",
+        "prompt_parser_kwargs",
+        "hires_positive_prompt",
+        "hires_negative_prompt",
+        "hires_enabled",
+        "hires_prompt_parser_mode",
+        "hires_prompt_parser_name",
+        "hires_prompt_parser_kwargs",
+    }
+    if any(override_values.get(key) is not None for key in prompt_expansion_sensitive):
+        merged.pop("prompt_expansion_recorded", None)
+        merged["prompt_expansion_replay_mode"] = "reconstruct"
+        merged.pop("prompt_semantic_recorded", None)
+        merged["prompt_semantic_replay_mode"] = "reconstruct"
+
+    region_sensitive = prompt_expansion_sensitive | {
+        "width",
+        "height",
+        "steps",
+        "hires_size_mode",
+        "hires_scale",
+        "hires_width",
+        "hires_height",
+        "hires_steps",
+    }
+    if any(override_values.get(key) is not None for key in region_sensitive):
+        merged.pop("region_recorded", None)
+        merged["region_replay_mode"] = "reconstruct"
     return merged
 
 
@@ -267,10 +329,10 @@ def payload_to_generation_request(payload: dict[str, Any]) -> tuple[GenerationRe
         if not validation.valid:
             raise ValueError("Embedded prompt shortcut profile is invalid: " + " | ".join(issue.message for issue in validation.errors))
     else:
-        fallback_profile = "legacy_default" if parser_id == "legacy" else ("parser21_native" if parser_id == "parser21" else "canonical")
+        fallback_profile = "legacy_default" if parser_id == "legacy" else ("parser21_native" if parser_id == "parser21" else ("superhybrid_native" if parser_id == "superhybrid" else "canonical"))
         shortcut_profile = default_prompt_shortcut_registry().get(request_kwargs.get("prompt_shortcut_profile_name") or fallback_profile)
     compatible = parser_id in shortcut_profile.compatible_parsers or (
-        parser_id == "combined" and any(item in shortcut_profile.compatible_parsers for item in ("legacy", "parser21"))
+        parser_id == "combined" and any(item in shortcut_profile.compatible_parsers for item in ("legacy", "parser21", "superhybrid"))
     )
     if not compatible:
         raise ValueError(f"Prompt shortcut profile {shortcut_profile.profile_id!r} is not compatible with parser {parser_id!r}.")
@@ -282,6 +344,53 @@ def payload_to_generation_request(payload: dict[str, Any]) -> tuple[GenerationRe
         messages = " | ".join(str(item.get("message") or "Prompt validation failed.") for item in report.get("blocking_errors") or [])
         raise ValueError(f"Prompt preflight failed: {messages}")
     request_kwargs.update(report.get("normalized_fields") or {})
+    request_kwargs["prompt_cfg_pass_schedules"] = dict(
+        request_kwargs.get("prompt_cfg_pass_schedules") or {}
+    )
+    request_kwargs["prompt_cfg_recorded_schedules"] = dict(
+        request_kwargs.get("prompt_cfg_recorded_schedules") or {}
+    )
+    request_kwargs["prompt_cfg_replay_mode"] = str(
+        request_kwargs.get("prompt_cfg_replay_mode") or "reconstruct"
+    ).strip().lower()
+    if request_kwargs["prompt_cfg_replay_mode"] not in {"reconstruct", "recorded_exact"}:
+        raise ValueError("prompt_cfg_replay_mode must be reconstruct or recorded_exact.")
+    request_kwargs["prompt_expansion_record"] = dict(
+        request_kwargs.get("prompt_expansion_record") or {}
+    )
+    request_kwargs["prompt_expansion_pass_records"] = dict(
+        request_kwargs.get("prompt_expansion_pass_records") or {}
+    )
+    request_kwargs["prompt_expansion_recorded"] = dict(
+        request_kwargs.get("prompt_expansion_recorded") or {}
+    )
+    request_kwargs["prompt_expansion_replay_mode"] = str(
+        request_kwargs.get("prompt_expansion_replay_mode") or "reconstruct"
+    ).strip().lower()
+    if request_kwargs["prompt_expansion_replay_mode"] not in {"reconstruct", "recorded_exact"}:
+        raise ValueError("prompt_expansion_replay_mode must be reconstruct or recorded_exact.")
+    request_kwargs["prompt_semantic_pass_records"] = dict(
+        request_kwargs.get("prompt_semantic_pass_records") or {}
+    )
+    request_kwargs["prompt_semantic_recorded"] = dict(
+        request_kwargs.get("prompt_semantic_recorded") or {}
+    )
+    request_kwargs["prompt_semantic_replay_mode"] = str(
+        request_kwargs.get("prompt_semantic_replay_mode") or "reconstruct"
+    ).strip().lower()
+    if request_kwargs["prompt_semantic_replay_mode"] not in {"reconstruct", "recorded_exact"}:
+        raise ValueError("prompt_semantic_replay_mode must be reconstruct or recorded_exact.")
+    request_kwargs["region_pass_records"] = dict(
+        request_kwargs.get("region_pass_records") or {}
+    )
+    request_kwargs["region_recorded"] = dict(
+        request_kwargs.get("region_recorded") or {}
+    )
+    request_kwargs["region_replay_mode"] = str(
+        request_kwargs.get("region_replay_mode") or "reconstruct"
+    ).strip().lower()
+    if request_kwargs["region_replay_mode"] not in {"reconstruct", "recorded_exact"}:
+        raise ValueError("region_replay_mode must be reconstruct or recorded_exact.")
     apply_hires_dimensions(request_kwargs)
     request_kwargs["prompt_preflight"] = report
     request = GenerationRequest(**request_kwargs)

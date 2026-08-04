@@ -49,7 +49,7 @@ class PromptShortcutProfileDescriptor:
     version: str
     aliases: dict[str, tuple[str, ...]]
     parser_emitters: dict[str, dict[str, str]]
-    compatible_parsers: tuple[str, ...] = ("legacy", "parser21")
+    compatible_parsers: tuple[str, ...] = ("legacy", "parser21", "superhybrid")
     escape_character: str = "\\"
     builtin: bool = True
     credit: str = ""
@@ -79,7 +79,7 @@ class PromptShortcutProfileDescriptor:
             version=str(payload.get("version") or "1"),
             aliases=aliases,
             parser_emitters=parser_emitters,
-            compatible_parsers=tuple(str(item).strip().lower() for item in (payload.get("compatible_parsers") or ("legacy", "parser21")) if str(item).strip()),
+            compatible_parsers=tuple(str(item).strip().lower() for item in (payload.get("compatible_parsers") or ("legacy", "parser21", "superhybrid")) if str(item).strip()),
             escape_character=str(payload.get("escape_character") or "\\"),
             builtin=resolved_builtin,
             credit=str(payload.get("credit") or ""),

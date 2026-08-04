@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/css/tokens.css?v=0.1.40">
   <link rel="stylesheet" href="/assets/css/base.css?v=0.1.40">
   <link rel="stylesheet" href="/assets/css/layout.css?v=0.1.40">
-  <link rel="stylesheet" href="/assets/css/components.css?v=0.1.63">
+  <link rel="stylesheet" href="/assets/css/components.css?v=0.1.68">
   <link rel="stylesheet" href="/assets/css/responsive.css?v=0.1.40">
 </head>
 <body>
@@ -38,7 +38,7 @@
     </header>
 
     <main class="workspace" id="workspace">
-      <div data-fragment="/assets/views/controls.html?v=0.1.63"></div>
+      <div data-fragment="/assets/views/controls.html?v=0.1.68"></div>
       <div class="workspace-splitter" id="leftColumnSplitter" role="separator" aria-label="Resize generation controls" aria-orientation="vertical" tabindex="0"></div>
       <div data-fragment="/assets/views/preview.html?v=0.1.40"></div>
       <div class="workspace-splitter" id="rightColumnSplitter" role="separator" aria-label="Resize live preview and utilities" aria-orientation="vertical" tabindex="0"></div>
@@ -58,7 +58,7 @@
     </footer>
   </div>
 
-  <div data-fragment="/assets/views/overlays.html?v=0.1.59"></div>
+  <div data-fragment="/assets/views/overlays.html?v=0.1.68"></div>
   <script>
     (() => {
       const showBootFailure = (message) => {
@@ -76,6 +76,11 @@ ${message || "Open the browser developer console and check the latest WebUI diag
 
 Try Reload UI after applying the latest stability patch.`;
       };
+
+      const reloadButton = document.getElementById("reloadWorkspaceButton");
+      reloadButton?.addEventListener("click", () => {
+        if (!window.__IMAGE_GEN_BOOT_READY__) window.location.reload();
+      });
 
       window.addEventListener("image-gen-boot-failed", (event) => {
         showBootFailure(event.detail?.message || "The startup module reported an error.");
@@ -100,6 +105,6 @@ Try Reload UI after applying the latest stability patch.`;
       }, 15000);
     })();
   </script>
-  <script type="module" src="/assets/js/main.js?v=0.1.63"></script>
+  <script type="module" src="/assets/js/main.js?v=0.1.69"></script>
 </body>
 </html>

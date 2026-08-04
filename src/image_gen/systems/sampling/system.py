@@ -113,13 +113,22 @@ class LatentPreparationSystem:
         request.dimension_plan = plan.to_serializable_dict()
         return plan
 
-    def prepare(self, request: GenerationRequest, schedule: SchedulerOutput) -> torch.Tensor:
-        plan = self.plan_dimensions(request)
+    def resolve_seeds(self, request: GenerationRequest) -> list[int]:
         if request.batch_size < 1:
             raise ValueError("batch_size must be at least 1.")
-        resolved_seeds = resolve_seed_sequence(request.seed, request.batch_size)
-        request.seed = resolved_seeds[0]
-        request.resolved_seeds = list(resolved_seeds)
+        existing = [int(value) for value in list(getattr(request, "resolved_seeds", []) or [])]
+        if len(existing) == int(request.batch_size) and all(value >= 0 for value in existing):
+            request.seed = existing[0]
+            request.resolved_seeds = list(existing)
+            return existing
+        resolved = resolve_seed_sequence(request.seed, request.batch_size)
+        request.seed = resolved[0]
+        request.resolved_seeds = list(resolved)
+        return list(resolved)
+
+    def prepare(self, request: GenerationRequest, schedule: SchedulerOutput) -> torch.Tensor:
+        plan = self.plan_dimensions(request)
+        resolved_seeds = self.resolve_seeds(request)
         single_shape = (
             1,
             self.latent_channels,

@@ -66,6 +66,9 @@ function setParserKwargs(values = {}) {
   state.promptConfiguration.parserKwargs = { ...(values || {}) };
   const input = $("#promptParserKwargs");
   if (input) input.value = JSON.stringify(state.promptConfiguration.parserKwargs);
+  document.dispatchEvent(new CustomEvent("prompt-parser-options-changed", {
+    detail: { parserId: currentParserId(), options: { ...state.promptConfiguration.parserKwargs } },
+  }));
 }
 
 function parserSettingsSchema(parserId) {
@@ -283,6 +286,7 @@ function compatibleProfiles(parserId) {
 function defaultProfileId(parserId) {
   const normalized = String(parserId || "legacy").toLowerCase();
   if (normalized === "parser21") return "parser21_native";
+  if (normalized === "superhybrid") return "superhybrid_native";
   if (normalized === "combined") return "canonical";
   return "legacy_default";
 }
@@ -461,6 +465,11 @@ function translationPayload(values = {}) {
     positive_prompt: values.positive_prompt ?? $("#positivePrompt")?.value ?? "",
     negative_prompt: values.negative_prompt ?? $("#negativePrompt")?.value ?? "",
     steps: values.steps ?? Number($("#steps")?.value || 20),
+    width: Number(values.generation_width ?? values.width ?? $("#width")?.value ?? 512),
+    height: Number(values.generation_height ?? values.height ?? $("#height")?.value ?? 512),
+    generation_width: Number(values.generation_width ?? values.width ?? $("#width")?.value ?? 512),
+    generation_height: Number(values.generation_height ?? values.height ?? $("#height")?.value ?? 512),
+    batch_size: values.batch_size ?? Number($("#batchSize")?.value || 1),
     seed: values.seed ?? ($("#seed")?.value === "" ? null : Number($("#seed")?.value)),
     prompt_parser_name: parserName,
     base_prompt_parser_name: parserName,
@@ -512,6 +521,300 @@ function conciseShadow(shadow) {
   return `${lines.join("\n")}\n\n${JSON.stringify(shadow, null, 2)}`;
 }
 
+function formatRegionBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let amount = bytes;
+  let index = 0;
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024;
+    index += 1;
+  }
+  return `${amount.toFixed(index ? 2 : 0)} ${units[index]}`;
+}
+
+function renderRegionTimeline(passData, timelineSelector, estimateSelector) {
+  const timeline = $(timelineSelector);
+  const estimateNode = $(estimateSelector);
+  const regional = passData?.regional_prompting || {};
+  const slots = regional.slots || [];
+  const regions = slots.flatMap((slot, slotIndex) => (slot.regions || []).map((region, regionIndex) => ({
+    slotIndex: Number(slot.slot_index ?? slotIndex),
+    regionIndex: Number(region.region_index ?? regionIndex),
+    prompt: String(region.prompt || "region"),
+    start: Math.max(0, Math.min(1, Number(region.start ?? 0))),
+    stop: Math.max(0, Math.min(1, Number(region.stop ?? 1))),
+    curve: String(region.curve || "linear"),
+  })));
+  if (timeline) {
+    timeline.replaceChildren();
+    if (!regions.length) {
+      const empty = document.createElement("div");
+      empty.className = "region-timeline-empty";
+      empty.textContent = "No native REGION branches detected.";
+      timeline.append(empty);
+    } else {
+      regions.forEach((region) => {
+        const row = document.createElement("div");
+        row.className = "region-timeline-row";
+        const label = document.createElement("div");
+        label.className = "region-timeline-label";
+        label.textContent = `S${region.slotIndex + 1} R${region.regionIndex + 1} · ${region.prompt}`;
+        label.title = `${region.prompt} · ${region.start.toFixed(2)}–${region.stop.toFixed(2)} · ${region.curve}`;
+        const track = document.createElement("div");
+        track.className = "region-timeline-track";
+        const windowNode = document.createElement("div");
+        windowNode.className = "region-timeline-window";
+        windowNode.style.left = `${region.start * 100}%`;
+        windowNode.style.width = `${Math.max(0.5, (region.stop - region.start) * 100)}%`;
+        windowNode.title = label.title;
+        track.append(windowNode);
+        row.append(label, track);
+        timeline.append(row);
+      });
+    }
+  }
+  if (estimateNode) {
+    const estimate = regional.runtime_estimate || {};
+    const peak = estimate.estimated_incremental_peak_bytes || {};
+    const masks = estimate.estimated_mask_cache_bytes || {};
+    estimateNode.textContent = regions.length ? [
+      `Backend: ${regional.backend || "image_gen_model_output"}`,
+      `Overlap: ${regional.overlap_policy || "additive"}`,
+      `Regions: ${estimate.region_count ?? regions.length}`,
+      `Estimated extra UNet calls: ${estimate.extra_unet_calls ?? "unknown"}`,
+      `Maximum active branches per step: ${estimate.max_active_regions_per_step ?? "unknown"}`,
+      `Estimated FP16 mask cache: ${formatRegionBytes(masks.fp16)}`,
+      `Estimated FP16 incremental peak: ${formatRegionBytes(peak.fp16)}`,
+      "Estimate excludes model residency and allocator overhead.",
+    ].join("\n") : "No REGION runtime overhead estimated.";
+  }
+}
+
+const REGION_BUILDER_TARGETS = {
+  positive: "#positivePrompt",
+  hires_positive: "#hiresPositivePrompt",
+};
+let regionBuilderDialog = null;
+let regionBuilderFrame = null;
+let regionBuilderTarget = "positive";
+let regionBuilderBound = false;
+let regionBuilderReady = false;
+
+function normalizedRegionBuilderTarget() {
+  let target = String($("#promptSymbolTarget")?.value || "auto");
+  // The REGION Builder defaults to the base positive prompt. The symbol
+  // palette's auto target may remain on a hires field after focus moves back
+  // to the base prompt, which can send the wrong pass dimensions.
+  if (target === "auto") target = "positive";
+  if (target === "negative") target = "positive";
+  if (target === "hires_negative") target = "hires_positive";
+  return REGION_BUILDER_TARGETS[target] ? target : "positive";
+}
+
+function regionBuilderDimensions(target = regionBuilderTarget) {
+  const baseWidth = Math.max(64, Math.round(Number($("#width")?.value || 512)));
+  const baseHeight = Math.max(64, Math.round(Number($("#height")?.value || 512)));
+  if (target !== "hires_positive") {
+    return { width: baseWidth, height: baseHeight, pass: "base" };
+  }
+
+  const hiresEnabled = Boolean($("#hiresEnabled")?.checked);
+  if (!hiresEnabled) {
+    return { width: baseWidth, height: baseHeight, pass: "base" };
+  }
+
+  const mode = String($("#hiresSizeMode")?.value || "scale_from_base");
+  if (mode === "explicit_dimensions") {
+    return {
+      width: Math.max(64, Math.round(Number($("#hiresWidth")?.value || baseWidth))),
+      height: Math.max(64, Math.round(Number($("#hiresHeight")?.value || baseHeight))),
+      pass: "hires",
+    };
+  }
+
+  const scale = Math.max(1.01, Number($("#hiresScale")?.value || 1.5));
+  return {
+    width: Math.max(64, Math.round(baseWidth * scale)),
+    height: Math.max(64, Math.round(baseHeight * scale)),
+    pass: "hires",
+  };
+}
+
+function findRegionBlockRange(text) {
+  const source = String(text || "");
+  const start = source.indexOf("REGION{");
+  if (start < 0) return null;
+  let depth = 1;
+  let index = start + "REGION{".length;
+  while (index < source.length && depth > 0) {
+    if (source[index] === "\\" && index + 1 < source.length) {
+      index += 2;
+      continue;
+    }
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    index += 1;
+  }
+  if (depth !== 0) return null;
+  let end = index;
+  let cursor = end;
+  while (cursor < source.length && /\s/.test(source[cursor])) cursor += 1;
+  if (source[cursor] === "[") {
+    let bracketDepth = 1;
+    cursor += 1;
+    while (cursor < source.length && bracketDepth > 0) {
+      if (source[cursor] === "\\" && cursor + 1 < source.length) {
+        cursor += 2;
+        continue;
+      }
+      if (source[cursor] === "[") bracketDepth += 1;
+      if (source[cursor] === "]") bracketDepth -= 1;
+      cursor += 1;
+    }
+    if (bracketDepth === 0) end = cursor;
+  } else if (source[cursor] === ":") {
+    cursor += 1;
+    while (cursor < source.length && !/\s/.test(source[cursor])) cursor += 1;
+    end = cursor;
+  }
+  return { start, end };
+}
+
+function applyRegionBuilderPrompt(prompt) {
+  const selector = REGION_BUILDER_TARGETS[regionBuilderTarget] || "#positivePrompt";
+  const field = $(selector);
+  if (!field) return;
+  const replacement = String(prompt || "").trim();
+  if (!replacement) return;
+  const existing = String(field.value || "");
+  const range = findRegionBlockRange(existing);
+  if (range) {
+    field.value = `${existing.slice(0, range.start)}${replacement}${existing.slice(range.end)}`.replace(/\s{2,}/g, " ").trim();
+  } else {
+    const start = Number.isInteger(field.selectionStart) ? field.selectionStart : existing.length;
+    const end = Number.isInteger(field.selectionEnd) ? field.selectionEnd : start;
+    const before = existing.slice(0, start).trimEnd();
+    const after = existing.slice(end).trimStart();
+    field.value = [before, replacement, after].filter(Boolean).join(" ");
+  }
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  field.focus();
+  saveSessionSoon();
+  notify("Applied the REGION plan to the prompt.");
+}
+
+function regionBuilderView() {
+  if (!regionBuilderDialog) regionBuilderDialog = $("#regionBuilderDialog");
+  if (!regionBuilderFrame) regionBuilderFrame = $("#regionBuilderFrame");
+  return {
+    dialog: regionBuilderDialog,
+    frame: regionBuilderFrame,
+    closeButton: $("#regionBuilderCloseButton"),
+    closeToolbar: $("#regionBuilderCloseToolbarButton"),
+  };
+}
+
+function closeRegionBuilder() {
+  const view = regionBuilderView();
+  if (view.dialog?.open) view.dialog.close();
+}
+
+function sendRegionBuilderInit({ reason = "open" } = {}) {
+  const view = regionBuilderView();
+  const hostWindow = view.frame?.contentWindow;
+  if (!hostWindow) return;
+  const selector = REGION_BUILDER_TARGETS[regionBuilderTarget] || "#positivePrompt";
+  const dimensions = regionBuilderDimensions(regionBuilderTarget);
+  hostWindow.postMessage({
+    type: "imagegen-region-builder-init",
+    target: regionBuilderTarget,
+    target_pass: dimensions.pass,
+    prompt: $(selector)?.value || "",
+    width: dimensions.width,
+    height: dimensions.height,
+    reason,
+  }, window.location.origin);
+}
+
+function openRegionBuilder() {
+  const view = regionBuilderView();
+  if (!view.dialog || !view.frame) {
+    notify("REGION Builder UI is unavailable in this build.", "error");
+    return;
+  }
+  regionBuilderTarget = normalizedRegionBuilderTarget();
+  const dimensions = regionBuilderDimensions(regionBuilderTarget);
+  const builderUrl = new URL("/region-builder.html", window.location.origin);
+  builderUrl.searchParams.set("v", "0.1.66");
+  builderUrl.searchParams.set("target", regionBuilderTarget);
+  builderUrl.searchParams.set("pass", dimensions.pass);
+  builderUrl.searchParams.set("width", String(dimensions.width));
+  builderUrl.searchParams.set("height", String(dimensions.height));
+  const nextUrl = builderUrl.toString();
+  if (view.frame.dataset.loadedSrc !== nextUrl) {
+    regionBuilderReady = false;
+    view.frame.dataset.loadedSrc = nextUrl;
+    view.frame.src = nextUrl;
+  } else {
+    window.setTimeout(() => sendRegionBuilderInit({ reason: "reopen" }), 80);
+  }
+  if (!view.dialog.open) view.dialog.showModal();
+  window.setTimeout(() => {
+    if (view.frame.contentWindow) sendRegionBuilderInit({ reason: regionBuilderReady ? "refresh" : "open" });
+  }, 140);
+}
+
+function bindRegionBuilderBridge() {
+  if (regionBuilderBound) return;
+  regionBuilderBound = true;
+  const view = regionBuilderView();
+  const close = () => closeRegionBuilder();
+  view.closeButton?.addEventListener("click", close);
+  view.closeToolbar?.addEventListener("click", close);
+  view.dialog?.addEventListener("click", (event) => {
+    if (event.target === view.dialog) closeRegionBuilder();
+  });
+  view.dialog?.addEventListener("close", () => {
+    regionBuilderReady = false;
+  });
+  view.frame?.addEventListener("load", () => {
+    regionBuilderReady = false;
+    window.setTimeout(() => sendRegionBuilderInit({ reason: "frame-load" }), 180);
+  });
+  window.addEventListener("message", (event) => {
+    if (event.origin !== window.location.origin) return;
+    const payload = event.data || {};
+    if (payload.type === "imagegen-region-builder-ready") {
+      regionBuilderReady = true;
+      sendRegionBuilderInit({ reason: "ready" });
+    } else if (payload.type === "imagegen-region-builder-apply") {
+      if (REGION_BUILDER_TARGETS[payload.target]) regionBuilderTarget = payload.target;
+      const dimensions = regionBuilderDimensions(regionBuilderTarget);
+      const builderWidth = Math.round(Number(payload.width || 0));
+      const builderHeight = Math.round(Number(payload.height || 0));
+      const usesPixels = Boolean(payload.pixel_coordinates);
+      if (usesPixels && (builderWidth !== dimensions.width || builderHeight !== dimensions.height)) {
+        view.frame?.contentWindow?.postMessage({
+          type: "imagegen-region-builder-resync",
+          target: regionBuilderTarget,
+          target_pass: dimensions.pass,
+          width: dimensions.width,
+          height: dimensions.height,
+        }, window.location.origin);
+        notify(
+          `REGION Builder resolution ${builderWidth}x${builderHeight} did not match ${dimensions.pass} generation ${dimensions.width}x${dimensions.height}. The builder was resynchronized; review the layout and click Apply again.`,
+          "warning",
+        );
+        return;
+      }
+      applyRegionBuilderPrompt(payload.prompt);
+    }
+  });
+}
+
 function renderTranslation(data, { revealPreview = false } = {}) {
   state.promptConfiguration.translationPreview = data;
   const set = (selector, value) => { const node = $(selector); if (node) node.textContent = value ?? ""; };
@@ -529,6 +832,16 @@ function renderTranslation(data, { revealPreview = false } = {}) {
   set("#promptTranslationHiresNegativeRaw", hires.negative?.raw_prompt);
   set("#promptTranslationHiresNegativeExpanded", hires.negative?.parser_input);
   set("#promptTranslationHiresNegativeCanonical", hires.negative?.parser_canonical_prompt || hires.negative?.canonical_prompt);
+  const renderSlots = (passData) => JSON.stringify({
+    scope: passData?.prompt_expansion_scope || passData?.expansion_scope || "per_batch",
+    positive: passData?.expanded_prompts_by_slot?.positive || [],
+    negative: passData?.expanded_prompts_by_slot?.negative || [],
+    semantic_fingerprints: passData?.semantic_fingerprints_by_slot || {},
+  }, null, 2);
+  set("#promptTranslationBaseSlots", renderSlots(base));
+  set("#promptTranslationHiresSlots", renderSlots(hires));
+  renderRegionTimeline(base, "#promptRegionBaseTimeline", "#promptRegionBaseEstimate");
+  renderRegionTimeline(hires, "#promptRegionHiresTimeline", "#promptRegionHiresEstimate");
   const routes = [base.positive?.route_plan, base.negative?.route_plan, hires.positive?.route_plan, hires.negative?.route_plan];
   const shadows = [base.positive?.shadow_comparison, base.negative?.shadow_comparison, hires.positive?.shadow_comparison, hires.negative?.shadow_comparison];
   set("#promptRouteBasePositive", conciseRoute(routes[0]));
@@ -655,10 +968,10 @@ function loadProfileEditor(profile) {
     profile_id: "custom_profile",
     label: "Custom Prompt Shortcuts",
     version: "1",
-    compatible_parsers: ["legacy", "parser21"],
+    compatible_parsers: ["legacy", "parser21", "superhybrid"],
     builtin: false,
     aliases: {},
-    parser_emitters: { legacy: {}, parser21: {} },
+    parser_emitters: { legacy: {}, parser21: {}, superhybrid: {} },
     escape_character: "\\",
     palette: [],
   };
@@ -974,6 +1287,8 @@ export async function preflightCurrentPrompt(values = {}) {
 export function bindPromptTools(options = {}) {
   saveSessionSoon = options.saveSessionSoon || saveSessionSoon;
   bindPromptFocus();
+  bindRegionBuilderBridge();
+  $("#openRegionBuilderButton")?.addEventListener("click", openRegionBuilder);
   $("#promptParserName")?.addEventListener("change", () => {
     populateProfiles(defaultProfileId(currentParserId()));
     $("#promptParserPresetName").value = "";

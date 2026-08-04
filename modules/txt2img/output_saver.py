@@ -11,6 +11,18 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
 from image_gen.systems.diagnostics.serialization import json_safe
+from image_gen.systems.prompt_expansion import (
+    SUPERHYBRID_EXPANSION_BATCH_CONTRACT_VERSION,
+    select_prompt_expansion_slot,
+)
+from image_gen.systems.regional_prompting import (
+    REGION_CONTRACT_VERSION,
+    select_region_record_slot,
+)
+from modules.prompt_parsers.semantic_replay import (
+    SUPERHYBRID_SEMANTIC_BATCH_CONTRACT_VERSION,
+    select_superhybrid_semantic_slot,
+)
 from modules.txt2img.generation_manifest import GenerationManifest
 from modules.txt2img.manifest_io import save_manifest_json, save_manifest_txt
 from modules.txt2img.png_metadata import build_pnginfo
@@ -155,6 +167,153 @@ class GenerationOutputSaver:
         # Rehydrate from JSON-safe data rather than deepcopying runtime objects
         # such as mappingproxy, torch.device, or plugin descriptors.
         return GenerationManifest.from_dict(json_safe(manifest.to_dict()))
+
+    @staticmethod
+    def _project_prompt_expansion_for_image(
+        manifest: GenerationManifest,
+        image_offset: int,
+    ) -> None:
+        extra = manifest.optional_for_rerun.extra
+        records_raw = extra.get("prompt_expansion_pass_records")
+        if not isinstance(records_raw, dict):
+            return
+
+        records = dict(records_raw)
+        projected: dict[str, Any] = {}
+        used_per_image_record = False
+        for pass_name, value in records.items():
+            if not isinstance(value, dict):
+                projected[str(pass_name)] = value
+                continue
+            if (
+                value.get("contract_version")
+                == SUPERHYBRID_EXPANSION_BATCH_CONTRACT_VERSION
+                and int(value.get("slot_count", 0) or 0) > 1
+            ):
+                projected[str(pass_name)] = select_prompt_expansion_slot(value, image_offset)
+                used_per_image_record = True
+            else:
+                projected[str(pass_name)] = value
+
+        if not used_per_image_record:
+            return
+
+        extra["batch_prompt_expansion_pass_records"] = records
+        extra["prompt_expansion_pass_records"] = projected
+
+        semantic_records_raw = extra.get("prompt_semantic_pass_records")
+        if isinstance(semantic_records_raw, dict):
+            semantic_records = dict(semantic_records_raw)
+            projected_semantics: dict[str, Any] = {}
+            projected_any_semantics = False
+            for pass_name, value in semantic_records.items():
+                if (
+                    isinstance(value, dict)
+                    and value.get("contract_version")
+                    == SUPERHYBRID_SEMANTIC_BATCH_CONTRACT_VERSION
+                    and int(value.get("slot_count", 0) or 0) > 1
+                ):
+                    projected_semantics[str(pass_name)] = select_superhybrid_semantic_slot(
+                        value, image_offset
+                    )
+                    projected_any_semantics = True
+                else:
+                    projected_semantics[str(pass_name)] = value
+            if projected_any_semantics:
+                extra["batch_prompt_semantic_pass_records"] = semantic_records
+                extra["prompt_semantic_pass_records"] = projected_semantics
+
+        for pass_name, record in projected.items():
+            if not isinstance(record, dict):
+                continue
+            selection_seeds = list(record.get("selection_seeds") or [])
+            if not selection_seeds:
+                continue
+            parser_kwargs_key = (
+                "prompt_parser_kwargs" if str(pass_name) == "base" else "hires_prompt_parser_kwargs"
+            )
+            parser_kwargs = dict(extra.get(parser_kwargs_key) or {})
+            parser_kwargs["seed"] = int(selection_seeds[0])
+            extra[parser_kwargs_key] = parser_kwargs
+        base_record = projected.get("base")
+        if isinstance(base_record, dict):
+            extra["prompt_expansion_record"] = base_record
+            extra["prompt_expansion_contract_version"] = str(
+                base_record.get("contract_version") or ""
+            )
+        extra["prompt_expansion_projected_image_slot"] = int(image_offset)
+        manifest.required_for_rerun.batch_size = 1
+        manifest.required_for_rerun.batch_count = 1
+
+    @staticmethod
+    def _project_region_runtime_record(record: dict[str, Any], image_offset: int) -> dict[str, Any]:
+        selected = dict(record or {})
+        regions = [
+            dict(item or {})
+            for item in list(selected.get("regions") or [])
+            if int((item or {}).get("slot_index", 0) or 0) == int(image_offset)
+        ]
+        for item in regions:
+            item["source_batch_slot_index"] = int(image_offset)
+            item["slot_index"] = 0
+        selected["regions"] = regions
+        selected["source_batch_slot_index"] = int(image_offset)
+        selected["regional_unet_calls"] = sum(int(item.get("unet_calls", 0) or 0) for item in regions)
+        selected["regional_host_elapsed_ms"] = round(
+            sum(float(item.get("host_elapsed_ms", item.get("duration_ms", 0.0)) or 0.0) for item in regions), 4
+        )
+        selected["regional_unet_duration_ms"] = selected["regional_host_elapsed_ms"]
+        selected["active_region_instances"] = sum(
+            int(item.get("active_step_count", 0) or 0) for item in regions
+        )
+        selected["steps_with_regions"] = sorted({
+            int(step)
+            for item in regions
+            for step in list(item.get("active_steps") or [])
+        })
+        return selected
+
+    @staticmethod
+    def _project_regions_for_image(
+        manifest: GenerationManifest,
+        image_offset: int,
+    ) -> None:
+        extra = manifest.optional_for_rerun.extra
+        records_raw = extra.get("region_pass_records")
+        if not isinstance(records_raw, dict):
+            return
+        records = dict(records_raw)
+        projected: dict[str, Any] = {}
+        projected_any = False
+        for pass_name, value in records.items():
+            if (
+                isinstance(value, dict)
+                and value.get("contract_version") == REGION_CONTRACT_VERSION
+                and int(value.get("slot_count", 0) or 0) > 1
+            ):
+                projected[str(pass_name)] = select_region_record_slot(value, image_offset)
+                projected_any = True
+            else:
+                projected[str(pass_name)] = value
+        if projected_any:
+            extra["batch_region_pass_records"] = records
+            extra["region_pass_records"] = projected
+            extra["region_projected_image_slot"] = int(image_offset)
+
+        runtime_raw = extra.get("regional_runtime_passes")
+        if isinstance(runtime_raw, dict):
+            runtime_records = dict(runtime_raw)
+            projected_runtime = {
+                str(pass_name): GenerationOutputSaver._project_region_runtime_record(
+                    dict(value or {}), image_offset
+                )
+                if isinstance(value, dict) else value
+                for pass_name, value in runtime_records.items()
+            }
+            extra["batch_regional_runtime_passes"] = runtime_records
+            extra["regional_runtime_passes"] = projected_runtime
+            preferred = projected_runtime.get("hires") or projected_runtime.get("base") or {}
+            extra["regional_runtime"] = preferred
 
     @staticmethod
     def _resolve_image_seeds(
@@ -317,6 +476,8 @@ class GenerationOutputSaver:
                 image_manifest.extra["batch_resolved_seeds"] = batch_seeds
                 image_manifest.extra["resolved_seeds"] = [int(image_seed)]
                 image_manifest.extra["image_seed"] = int(image_seed)
+                self._project_prompt_expansion_for_image(image_manifest, image_offset)
+                self._project_regions_for_image(image_manifest, image_offset)
 
             base_path = self._avoid_collision(
                 self.build_base_path(
