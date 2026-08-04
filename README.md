@@ -6,6 +6,38 @@ IMAGE_GEN is a local text-to-image application built around a custom, modular St
 >
 > This is an early public build intended for testing and feedback. Interfaces, configuration fields, metadata formats, and runtime behavior may change between alpha releases. Keep backups of important presets and generated metadata.
 
+## Project Update — August 4, 2026
+
+IMAGE_GEN remains in active alpha development. This dated update supplements the original alpha README below rather than replacing it. Where an older section conflicts with this update—particularly statements that LoRA support is unavailable or that setup must be completed manually—this August 4, 2026 update describes the current behavior.
+
+### Recent additions
+
+* **SuperHybrid Parse Prompter** — added the new SuperHybrid prompt-authoring and parsing workflow.
+* **Model and LoRA workspaces** — reorganized the WebUI with dedicated workspaces for browsing, inspecting, selecting, and managing checkpoint models and LoRAs.
+* **LoRA support** — added LoRA discovery, compatibility scanning, persistent scan results, visual selection, weighted application, multi-LoRA generation, and generation-manifest recording. Generated PNG metadata now records applied LoRA names, weights, and compatibility hashes for Automatic1111/CivitAI-style resource recognition.
+* **Hardware-aware setup** — added an installer that scans NVIDIA GPUs, the installed driver, and locally installed CUDA Toolkits; presents supported environment choices; creates or updates the project `.venv`; installs the matching PyTorch stack; installs the required custom MSLK and xFormers builds; installs the remaining IMAGE_GEN requirements; and validates the completed environment.
+* **Profile-driven compatibility** — the installer uses tested hardware profiles instead of guessing at package combinations. The bundled profile covers the currently validated Windows/NVIDIA SM120 environment. Additional GPU architectures can be added as corresponding MSLK/xFormers builds and compatibility profiles are tested and published.
+
+### Setup
+
+For a new installation or a clean environment setup, run:
+
+```bat
+install.bat
+```
+
+The installer will inspect the machine and guide the user through the compatible GPU, CUDA, and PyTorch environment choices available for that system. After setup completes, launch the local WebUI with:
+
+```bat
+run_webui.bat
+```
+
+Users must still provide their own legally obtained compatible Stable Diffusion checkpoint and any LoRA files they want to use. Models are not included with IMAGE_GEN.
+
+---
+
+
+
 ## Current Support at a Glance
 
 | Capability | Current status |
