@@ -1,6 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "%~dp0user_config\runtime_environment.bat" call "%~dp0user_config\runtime_environment.bat"
 title IMAGE_GEN - txt2img
 
 rem -----------------------------------------------------------------------------
@@ -11,7 +12,7 @@ rem   set "COMMANDLINE_ARGS=--xformers --medvram"
 rem   set "COMMANDLINE_ARGS=--attention-backend xformers --memory-policy low_vram"
 rem Explicit arguments passed to this BAT still override COMMANDLINE_ARGS.
 rem -----------------------------------------------------------------------------
-if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS="
+if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--xformers"
 
 call "%~dp0scripts\resolve_python.bat" "%~dp0"
 if errorlevel 1 (

@@ -111,9 +111,10 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Transactionally install the published SM120 MSLK and xFormers wheels."
+        description="Transactionally install a published IMAGE_GEN MSLK and xFormers wheel manifest."
     )
     parser.add_argument("--project-root", type=Path, default=_project_root())
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
     parser.add_argument("--wheel-dir", type=Path)
     parser.add_argument("--no-download", action="store_true")
@@ -126,7 +127,11 @@ def main() -> int:
     args = build_parser().parse_args()
     root = args.project_root.expanduser().resolve()
     python = args.python.expanduser().resolve()
-    manifest_path = root / "modules" / "attention_runtime" / "release_stack_manifest.json"
+    manifest_path = (
+        args.manifest.expanduser().resolve()
+        if args.manifest is not None
+        else root / "modules" / "attention_runtime" / "release_stack_manifest.json"
+    )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     packages = dict(manifest.get("packages") or {})
     if set(packages) != {"mslk", "xformers"}:
@@ -146,6 +151,7 @@ def main() -> int:
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "python": str(python),
         "project_root": str(root),
+        "manifest": str(manifest_path),
         "site_packages": None,
         "wheels": {},
         "backups": {},

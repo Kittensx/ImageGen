@@ -1,0 +1,37 @@
+IMAGE_GEN CUDA and PyTorch installation
+=======================================
+
+Run install.bat from the IMAGE_GEN project root.
+
+The installer detects:
+
+* NVIDIA GPUs and compute capability;
+* NVIDIA driver version and its reported CUDA compatibility ceiling;
+* CUDA toolkits installed through CUDA_PATH, the Windows registry, the normal
+  NVIDIA Toolkit folders, or nvcc on PATH;
+* Python 3.10 x64 and the Microsoft Visual C++ x64 Runtime.
+
+PyTorch wheels include their own CUDA runtime. A locally installed CUDA toolkit
+is therefore not required for the validated IMAGE_GEN environment. When more
+than one compatible toolkit/profile is installed, the installer presents a
+choice. It never selects an arbitrary Torch/CUDA/MSLK/xFormers combination.
+
+The current published custom attention profile is:
+
+* NVIDIA compute capability 12.0 / SM120;
+* PyTorch 2.11.0 + CUDA runtime 12.8;
+* Triton-Windows 3.7.1.post27;
+* custom MSLK v1.3.0;
+* custom xFormers v1.1.0.
+
+Other GPU families require their own tested entry in
+requirements/hardware_profiles.json and a published attention wheel manifest.
+The installer will stop instead of installing an unvalidated custom stack.
+
+Useful commands:
+
+  install.bat --scan-only
+  install.bat --non-interactive
+  install.bat --cuda bundled
+  install.bat --cuda 12.8
+  install.bat --gpu-index 0

@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
+if exist "%~dp0user_config\runtime_environment.bat" call "%~dp0user_config\runtime_environment.bat"
 title IMAGE_GEN WebUI Server
 
 rem -----------------------------------------------------------------------------

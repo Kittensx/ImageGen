@@ -1,3 +1,9 @@
+# IMAGE_GEN common Python dependencies.
+#
+# GPU-specific packages are intentionally not listed here. Run install.bat so
+# IMAGE_GEN can select a validated PyTorch/CUDA/custom-attention profile for the
+# detected NVIDIA GPU and driver.
+
 safetensors
 diffusers
 transformers
@@ -14,4 +20,4 @@ python-multipart>=0.0.9,<1
 uvicorn[standard]>=0.30,<1
 pytest
 psutil>=5.9,<8
-
+peft

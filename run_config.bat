@@ -1,6 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "%~dp0user_config\runtime_environment.bat" call "%~dp0user_config\runtime_environment.bat"
 set "PROJECT_ROOT=%CD%"
 title IMAGE_GEN - Config Run
 

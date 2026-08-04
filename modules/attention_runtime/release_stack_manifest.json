@@ -31,7 +31,10 @@
     "provider": "mslk_triton_splitk",
     "operator": "triton_splitKF",
     "dtype": "float16",
-    "compute_capability": [12, 0],
+    "compute_capability": [
+      12,
+      0
+    ],
     "policy": "blackwell_safe",
     "logical_tile_mappings": {
       "40": 64,
@@ -53,5 +56,28 @@
     "mslk_profile_and_critical_file_hashes_are_runtime_gates": true,
     "explicit_operator_execution_is_required": true,
     "automatic_mode_falls_back_to_sdpa_then_eager": true
+  },
+  "compatibility": {
+    "platform": "win32",
+    "machine": "AMD64",
+    "python_versions": [
+      "3.10"
+    ],
+    "gpu_vendor": "NVIDIA",
+    "compute_capabilities": [
+      "12.0"
+    ],
+    "torch_version": "2.11.0",
+    "torch_cuda_runtime": "12.8",
+    "torch_cuda_tag": "cu128",
+    "triton_requirement": "triton-windows==3.7.1.post27",
+    "validated_local_cuda_toolkits": [
+      "12.8"
+    ],
+    "bundled_cuda_runtime_supported": true
+  },
+  "installer_requirements": {
+    "hardware_profiles_path": "requirements/hardware_profiles.json",
+    "common_lock_path": "requirements/requirements-common-lock.txt"
   }
 }

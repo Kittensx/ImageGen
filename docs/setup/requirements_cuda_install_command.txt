@@ -1,0 +1,6 @@
+Validated SM120 manual PyTorch command (install.bat is preferred):
+
+python -m pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 torchaudio==2.11.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+
+This installs PyTorch's bundled CUDA 12.8 runtime. It does not require the CUDA
+12.8 toolkit to be installed system-wide.
