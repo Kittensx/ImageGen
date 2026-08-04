@@ -24,6 +24,8 @@ from image_gen.runtime_options import (
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import ActiveModelSelection, WebUIModelSelectionState
 from image_gen.webui.output_details import OutputMetadataDetails, load_output_details
+from image_gen.webui.prompt_assets import extract_inline_loras_from_prompts, merge_replay_loras
+from image_gen.runtime.lora_runtime import LoRAResolver
 from image_gen.webui.schema_utils import normalize_config_schema
 from modules.project_context import ProjectContext
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
@@ -272,6 +274,17 @@ def _manifest_prompt_assets(manifest: Mapping[str, Any]) -> dict[str, Any]:
         raw_loras = _from_references(payload.get("loras"), "lora")
     if not isinstance(raw_textual, list) or not raw_textual:
         raw_textual = _from_references(payload.get("embeddings"), "textual_inversion")
+
+    prompt_sources = [
+        dict(payload.get("required_for_rerun") or {}).get("prompt"),
+        extra.get("hires_positive_prompt"),
+    ]
+    canonical_contract = dict(extra.get("canonical_prompt_contract") or payload.get("extra", {}).get("prompt_contract") or {})
+    positive_structure = dict(canonical_contract.get("canonical_positive_structure") or {})
+    if positive_structure.get("lossless_source") is not None:
+        prompt_sources[0] = str(positive_structure.get("lossless_source") or "")
+    inline_loras = extract_inline_loras_from_prompts(*prompt_sources)
+    raw_loras = merge_replay_loras(raw_loras or [], inline_loras)
 
     def _replay(values: Any, asset_type: str) -> list[dict[str, Any]]:
         assets = normalize_prompt_asset_list(values or [], asset_type=asset_type, default_source="replay")
@@ -840,6 +853,7 @@ class ReplayService:
             or (authorized_model.architecture_summary if authorized_model is not None else "")
             or (authorized_model.checkpoint_kind if authorized_model is not None else "")
         )
+        lora_resolver = LoRAResolver(self.context)
         for asset_type, field_name in (("lora", "loras"), ("textual_inversion", "textual_inversions")):
             structured_assets = raw_request.get(field_name)
             if not isinstance(structured_assets, list):
@@ -864,6 +878,28 @@ class ReplayService:
                     or Path(resolved_path).stem
                     or f"{asset_type.replace('_', ' ').title()} {index + 1}"
                 )
+                if not resolved_path and asset_type == "lora":
+                    try:
+                        resolved_file = lora_resolver.resolve(display, resolved_path)
+                    except ValueError:
+                        resolved_file = None
+                    if resolved_file is not None:
+                        resolved_path = str(resolved_file)
+                        metadata = lora_resolver.metadata(resolved_file)
+                        compatibility = lora_resolver.compatibility_hash(resolved_file, sidecar_metadata=metadata)
+                        candidate["name"] = candidate.get("name") or resolved_file.stem
+                        candidate["path"] = resolved_path
+                        candidate["requested_path"] = candidate.get("requested_path") or resolved_path
+                        candidate["resolved_path"] = resolved_path
+                        candidate["requested_hash"] = candidate.get("requested_hash") or lora_resolver.file_hash(resolved_file)
+                        candidate["resolved_hash"] = candidate.get("resolved_hash") or lora_resolver.file_hash(resolved_file)
+                        candidate["model_family"] = candidate.get("model_family") or metadata.get("model_family") or ""
+                        candidate["activation_text"] = candidate.get("activation_text") or metadata.get("activation_text") or ""
+                        candidate["source_url"] = candidate.get("source_url") or metadata.get("source_url") or ""
+                        if compatibility.get("a1111_hash"):
+                            candidate.setdefault("metadata", {})
+                            candidate["metadata"]["a1111_hash"] = compatibility.get("a1111_hash")
+                            candidate["metadata"]["a1111_short_hash"] = compatibility.get("a1111_short_hash")
                 if not resolved_path:
                     reason = f"Recorded {asset_type.replace('_', ' ')} path is missing for {display!r}."
                     missing.append({"kind": asset_type, "field": f"{field_name}[{index}]", "requested": display, "reason": reason})
@@ -873,6 +909,24 @@ class ReplayService:
                     resolved_file = self.context.resolve_project_path(resolved_path).expanduser().resolve()
                 except Exception:
                     resolved_file = Path(resolved_path).expanduser()
+                if not resolved_file.is_file() and asset_type == "lora":
+                    try:
+                        resolved_retry = lora_resolver.resolve(display, resolved_path)
+                    except ValueError:
+                        resolved_retry = None
+                    if resolved_retry is not None:
+                        resolved_file = Path(resolved_retry)
+                        resolved_path = str(resolved_retry)
+                        metadata = lora_resolver.metadata(resolved_file)
+                        candidate["name"] = candidate.get("name") or resolved_file.stem
+                        candidate["path"] = resolved_path
+                        candidate["requested_path"] = candidate.get("requested_path") or resolved_path
+                        candidate["resolved_path"] = resolved_path
+                        candidate["requested_hash"] = candidate.get("requested_hash") or lora_resolver.file_hash(resolved_file)
+                        candidate["resolved_hash"] = candidate.get("resolved_hash") or lora_resolver.file_hash(resolved_file)
+                        candidate["model_family"] = candidate.get("model_family") or metadata.get("model_family") or ""
+                        candidate["activation_text"] = candidate.get("activation_text") or metadata.get("activation_text") or ""
+                        candidate["source_url"] = candidate.get("source_url") or metadata.get("source_url") or ""
                 if not resolved_file.is_file():
                     reason = f"Recorded {asset_type.replace('_', ' ')} is not installed: {display!r} ({resolved_path})."
                     missing.append({"kind": asset_type, "field": f"{field_name}[{index}]", "requested": resolved_path, "reason": reason})

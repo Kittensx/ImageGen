@@ -108,6 +108,26 @@ function valuesEqual(left, right) {
   return stableJson(left || {}) === stableJson(right || {});
 }
 
+function replayPromptAssets(values = {}) {
+  if (Array.isArray(values._webui_active_prompt_assets) && values._webui_active_prompt_assets.length) {
+    return values._webui_active_prompt_assets.map((item) => ({ ...item }));
+  }
+  return [
+    ...(Array.isArray(values.loras) ? values.loras.map((item) => ({
+      ...item,
+      asset_type: "lora",
+      source: promptAssetSource(item.source || "replay", "replay"),
+      source_scope: item.source_scope || "replay",
+    })) : []),
+    ...(Array.isArray(values.textual_inversions) ? values.textual_inversions.map((item) => ({
+      ...item,
+      asset_type: "textual_inversion",
+      source: promptAssetSource(item.source || "replay", "replay"),
+      source_scope: item.source_scope || "replay",
+    })) : []),
+  ];
+}
+
 function collectCurrentValues() {
   const activeAssets = Array.isArray(state.activePromptAssets) ? state.activePromptAssets : [];
   const activeLoras = activeAssets.filter((item) => item.asset_type === "lora" && item.enabled !== false).map((item) => ({
@@ -592,6 +612,16 @@ async function applyReplayValues(values = {}) {
   ensureSelectValue($("#samplerName"), values.sampler_name, `${values.sampler_name} (unavailable plugin)`);
   ensureSelectValue($("#schedulerName"), values.scheduler_name, `${values.scheduler_name} (unavailable plugin)`);
 
+  const restoredPromptAssets = replayPromptAssets(values);
+  state.activePromptAssets = restoredPromptAssets;
+  window.dispatchEvent(new CustomEvent("image-gen-active-prompt-assets-updated", {
+    detail: {
+      active_assets: [...restoredPromptAssets],
+      loras: restoredPromptAssets.filter((item) => item.asset_type === "lora"),
+      textual_inversions: restoredPromptAssets.filter((item) => item.asset_type === "textual_inversion"),
+    },
+  }));
+
   applyGenerationValues(values);
   applyVaeSelectionPolicy();
   initializePromptTools(values);
@@ -952,22 +982,7 @@ async function start() {
     schedulerPresetName = current._webui_scheduler_preset_name || "";
     schedulerPresetPluginId = current._webui_scheduler_preset_plugin_id || "";
     schedulerPresetSource = current._webui_scheduler_preset_source || "";
-    const restoredPromptAssets = Array.isArray(current._webui_active_prompt_assets)
-      ? current._webui_active_prompt_assets
-      : [
-          ...(Array.isArray(current.loras) ? current.loras.map((item) => ({
-            ...item,
-            asset_type: "lora",
-            source: promptAssetSource(item.source || "replay", "replay"),
-            source_scope: item.source_scope || "replay",
-          })) : []),
-          ...(Array.isArray(current.textual_inversions) ? current.textual_inversions.map((item) => ({
-            ...item,
-            asset_type: "textual_inversion",
-            source: promptAssetSource(item.source || "replay", "replay"),
-            source_scope: item.source_scope || "replay",
-          })) : []),
-        ];
+    const restoredPromptAssets = replayPromptAssets(current);
     state.activePromptAssets = restoredPromptAssets;
 
     $("#appVersion").textContent = `v${bootstrap.version}`;

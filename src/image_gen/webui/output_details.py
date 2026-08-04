@@ -15,6 +15,8 @@ from image_gen.runtime_options import (
     runtime_replay_request_values,
 )
 from image_gen.systems.registry import RuntimeRegistrySystem
+from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION
+from image_gen.webui.prompt_assets import extract_inline_loras_from_prompts, merge_replay_loras
 from image_gen.webui.schema_utils import normalize_config_schema
 from modules.checkpoint_inspector import build_architecture_contract
 from modules.project_context import ProjectContext
@@ -137,6 +139,7 @@ _BACKEND_REPLAY_EXTRA_FIELDS = {
     "prompt_asset_contract_version",
     "loras",
     "textual_inversions",
+    "_webui_active_prompt_assets",
     "vae_name",
     "vae_hash",
 }
@@ -696,6 +699,22 @@ def manifest_to_replay_payload(
                 value,
                 "The metadata value is preserved for inspection but has no current form control.",
             )
+
+    inline_loras = extract_inline_loras_from_prompts(
+        replay.get("positive_prompt"),
+        replay.get("hires_positive_prompt"),
+    )
+    merged_loras = merge_replay_loras(replay.get("loras") or [], inline_loras)
+    if merged_loras:
+        replay["prompt_asset_contract_version"] = str(
+            replay.get("prompt_asset_contract_version") or PROMPT_ASSET_CONTRACT_VERSION
+        )
+        replay["loras"] = merged_loras
+        replay["lora_paths"] = [
+            item.get("resolved_path") or item.get("path") or item.get("requested_path") or ""
+            for item in merged_loras
+            if item.get("resolved_path") or item.get("path") or item.get("requested_path")
+        ]
 
     if context is not None:
         _classify_plugin_support(context, replay, unsupported)
