@@ -35,3 +35,26 @@ Useful commands:
   install.bat --cuda bundled
   install.bat --cuda 12.8
   install.bat --gpu-index 0
+
+Requirements and lock-file policy
+---------------------------------
+
+Normal user installation resolves requirements/requirements.txt after the
+selected PyTorch and Triton profile is installed. It does not use the developer
+machine lock as a universal constraint.
+
+The exact developer environment is recorded separately in:
+
+  requirements/requirements-dev-lock.txt
+
+That file is for development reproduction and release validation only.
+
+After PyTorch, Triton, the common application requirements, custom MSLK, custom
+xFormers, and the final CUDA/attention validation all succeed, the installer
+runs pip freeze --all and atomically writes the installed machine environment to:
+
+  user_config/requirements-user-lock.txt
+
+The user lock is generated only after a successful validated installation. If
+installation fails, a previous user lock is restored, or a newly created partial
+lock is removed along with the failed environment rollback.

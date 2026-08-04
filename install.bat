@@ -9,6 +9,7 @@ echo ==================================
 echo This installer detects NVIDIA GPUs, installed CUDA toolkits, and the
 echo NVIDIA driver's supported CUDA level. It installs only a published,
 echo validated PyTorch + Triton + custom MSLK + custom xFormers profile.
+echo A machine-specific user lock is written only after validation succeeds.
 echo.
 
 set "PYTHON_EXE="

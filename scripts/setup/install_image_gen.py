@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import platform
@@ -329,7 +330,6 @@ def load_hardware_manifest(path: Path) -> dict[str, Any]:
 def validate_profile_contract(root: Path, profile: dict[str, Any]) -> dict[str, Any]:
     required_paths = {
         "base_requirements": root / str(profile.get("base_requirements") or ""),
-        "base_constraints": root / str(profile.get("base_constraints") or ""),
         "attention_manifest": root / str(profile.get("attention_manifest") or ""),
     }
     for field, path in required_paths.items():
@@ -653,11 +653,12 @@ def _install_profile(
         )
 
     requirements_path = root / str(profile.get("base_requirements"))
-    constraints_path = root / str(profile.get("base_constraints"))
-    command = [str(python), "-m", "pip", "install", "-r", str(requirements_path)]
-    if constraints_path.is_file():
-        command.extend(["-c", str(constraints_path)])
-    _run(command, cwd=root, env=env, dry_run=dry_run)
+    _run(
+        [str(python), "-m", "pip", "install", "-r", str(requirements_path)],
+        cwd=root,
+        env=env,
+        dry_run=dry_run,
+    )
 
     attention_manifest = root / str(profile.get("attention_manifest"))
     attention_command = [
@@ -716,6 +717,62 @@ def _install_profile(
     return verification
 
 
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def generate_user_lock(
+    path: Path,
+    python: Path,
+    env: dict[str, str],
+    profile: dict[str, Any],
+    choice: InstallChoice,
+    gpu: GPUInfo,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    command = [str(python), "-m", "pip", "freeze", "--all"]
+    print("+ " + subprocess.list2cmdline(command) + f" > {path}")
+    if dry_run:
+        return {
+            "path": str(path),
+            "generated": False,
+            "dry_run": True,
+            "profile_id": choice.profile_id,
+        }
+
+    frozen = _run_capture(command, env=env)
+    package_lines = [line for line in frozen.splitlines() if line.strip()]
+    header = [
+        "# IMAGE_GEN machine-specific user lock.",
+        "# Generated only after the full installation and validation completed successfully.",
+        "# Do not commit this file as a universal project or developer lock.",
+        f"# Generated UTC: {_utc_now()}",
+        f"# Hardware profile: {choice.profile_id}",
+        f"# Profile label: {profile.get('label') or choice.profile_label}",
+        f"# GPU: {gpu.name}",
+        f"# Compute capability: {gpu.compute_capability}",
+        f"# PyTorch CUDA runtime: {choice.cuda_runtime}",
+        "",
+    ]
+    payload = "\n".join(header + package_lines) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(payload, encoding="utf-8", newline="\n")
+    temporary.replace(path)
+    return {
+        "path": str(path),
+        "generated": True,
+        "sha256": _sha256_file(path),
+        "package_line_count": len(package_lines),
+        "profile_id": choice.profile_id,
+    }
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -763,6 +820,9 @@ def main() -> int:
     runtime_bat: Path | None = None
     runtime_bat_existed = False
     runtime_bat_previous: bytes | None = None
+    user_lock: Path | None = None
+    user_lock_existed = False
+    user_lock_previous: bytes | None = None
 
     try:
         _check_host_requirements()
@@ -870,6 +930,10 @@ def main() -> int:
         runtime_bat_existed = runtime_bat.is_file()
         if runtime_bat_existed:
             runtime_bat_previous = runtime_bat.read_bytes()
+        user_lock = root / "user_config" / "requirements-user-lock.txt"
+        user_lock_existed = user_lock.is_file()
+        if user_lock_existed:
+            user_lock_previous = user_lock.read_bytes()
         if not args.dry_run:
             write_runtime_environment(runtime_bat, selected_gpu, profile, choice)
         python, backup = _create_venv(root, dry_run=args.dry_run)
@@ -884,6 +948,16 @@ def main() -> int:
             dry_run=args.dry_run,
         )
         report["verification"] = verification
+        user_lock_record = generate_user_lock(
+            user_lock,
+            python,
+            _environment_for_choice(root, selected_gpu, profile, choice),
+            profile,
+            choice,
+            selected_gpu,
+            dry_run=args.dry_run,
+        )
+        report["user_lock"] = user_lock_record
         report["venv"] = str(root / ".venv")
         report["previous_venv_backup"] = str(backup) if backup else None
         report["runtime_environment"] = str(runtime_bat)
@@ -893,6 +967,8 @@ def main() -> int:
         print("\nPASS: IMAGE_GEN environment installed and validated.")
         print(f"Environment: {root / '.venv'}")
         print(f"Report:      {report_path}")
+        if not args.dry_run:
+            print(f"User lock:   {user_lock}")
         print("Start with:  run_webui.bat")
         return 0
     except Exception as exc:
@@ -905,6 +981,12 @@ def main() -> int:
                 runtime_bat.write_bytes(runtime_bat_previous)
             elif runtime_bat.exists():
                 runtime_bat.unlink()
+        if user_lock is not None and not args.dry_run:
+            if user_lock_existed and user_lock_previous is not None:
+                user_lock.parent.mkdir(parents=True, exist_ok=True)
+                user_lock.write_bytes(user_lock_previous)
+            elif user_lock.exists():
+                user_lock.unlink()
         report["error"] = f"{type(exc).__name__}: {exc}"
         report["completed_at_utc"] = _utc_now()
         _write_json(report_path, report)

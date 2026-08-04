@@ -4,3 +4,9 @@ python -m pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 torchaudio==
 
 This installs PyTorch's bundled CUDA 12.8 runtime. It does not require the CUDA
 12.8 toolkit to be installed system-wide.
+
+The normal installer does not constrain requirements.txt with the developer
+machine lock. After all packages and CUDA/attention validation succeed, it saves
+the actual installed environment to:
+
+  user_config/requirements-user-lock.txt

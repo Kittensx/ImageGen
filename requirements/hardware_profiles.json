@@ -1,7 +1,9 @@
 {
   "schema_version": 1,
   "project": "IMAGE_GEN",
-  "platforms": ["win32"],
+  "platforms": [
+    "win32"
+  ],
   "python": {
     "required_major_minor": "3.10",
     "require_64_bit": true
@@ -20,9 +22,13 @@
       "priority": 100,
       "platform": "win32",
       "machine": "AMD64",
-      "python_versions": ["3.10"],
+      "python_versions": [
+        "3.10"
+      ],
       "gpu_vendor": "NVIDIA",
-      "compute_capabilities": ["12.0"],
+      "compute_capabilities": [
+        "12.0"
+      ],
       "torch": {
         "version": "2.11.0",
         "cuda_runtime": "12.8",
@@ -37,9 +43,10 @@
       "triton_requirement": "triton-windows==3.7.1.post27",
       "attention_manifest": "modules/attention_runtime/release_stack_manifest.json",
       "base_requirements": "requirements/requirements.txt",
-      "base_constraints": "requirements/requirements-common-lock.txt",
       "allow_bundled_cuda_runtime": true,
-      "validated_local_cuda_toolkits": ["12.8"],
+      "validated_local_cuda_toolkits": [
+        "12.8"
+      ],
       "runtime_environment": {
         "MSLK_FMHA_POLICY": "blackwell_safe"
       },
@@ -47,7 +54,8 @@
         "The PyTorch wheel bundles the CUDA 12.8 runtime.",
         "A separately installed CUDA toolkit is optional for this profile.",
         "Only compute capability 12.0 is currently validated by the published custom MSLK/xFormers stack."
-      ]
+      ],
+      "developer_lock": "requirements/requirements-dev-lock.txt"
     }
   ]
 }

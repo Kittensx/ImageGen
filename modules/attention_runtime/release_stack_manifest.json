@@ -78,6 +78,9 @@
   },
   "installer_requirements": {
     "hardware_profiles_path": "requirements/hardware_profiles.json",
-    "common_lock_path": "requirements/requirements-common-lock.txt"
+    "base_requirements_path": "requirements/requirements.txt",
+    "developer_lock_path": "requirements/requirements-dev-lock.txt",
+    "user_lock_path": "user_config/requirements-user-lock.txt",
+    "user_lock_generation": "after_successful_install_and_validation"
   }
 }
