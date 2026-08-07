@@ -1,6 +1,6 @@
-# IMAGE_GEN v0.1.0 Alpha
+# ImageGen v0.1.0 Alpha
 
-IMAGE_GEN is a local text-to-image application built around a custom, modular Stable Diffusion pipeline. This first public alpha focuses on reproducible **SD 1.x text-to-image generation**, a responsive local WebUI, command-line generation, configurable samplers and schedulers, detailed output metadata, replay tools, and GPU-memory management.
+ImageGen is a local text-to-image application built around a custom, modular Stable Diffusion pipeline. This first public alpha focuses on reproducible **SD 1.x text-to-image generation**, a responsive local WebUI, command-line generation, configurable samplers and schedulers, detailed output metadata, replay tools, and GPU-memory management.
 
 > **Alpha notice**
 >
@@ -178,14 +178,14 @@ Unsupported or unqualified upscaler files are intentionally reported rather than
 
 ## Project Update — August 4, 2026
 
-IMAGE_GEN remains in active alpha development. This dated update supplements the original alpha README below rather than replacing it. Where an older section conflicts with this update—particularly statements that LoRA support is unavailable or that setup must be completed manually—this August 4, 2026 update describes the current behavior.
+ImageGen remains in active alpha development. This dated update supplements the original alpha README below rather than replacing it. Where an older section conflicts with this update—particularly statements that LoRA support is unavailable or that setup must be completed manually—this August 4, 2026 update describes the current behavior.
 
 ### Recent additions
 
 * **SuperHybrid Parse Prompter** — added the new SuperHybrid prompt-authoring and parsing workflow.
 * **Model and LoRA workspaces** — reorganized the WebUI with dedicated workspaces for browsing, inspecting, selecting, and managing checkpoint models and LoRAs.
 * **LoRA support** — added LoRA discovery, compatibility scanning, persistent scan results, visual selection, weighted application, multi-LoRA generation, and generation-manifest recording. Generated PNG metadata now records applied LoRA names, weights, and compatibility hashes for Automatic1111/CivitAI-style resource recognition.
-* **Hardware-aware setup** — added an installer that scans NVIDIA GPUs, the installed driver, and locally installed CUDA Toolkits; presents supported environment choices; creates or updates the project `.venv`; installs the matching PyTorch stack; installs the required custom MSLK and xFormers builds; installs the remaining IMAGE_GEN requirements; and validates the completed environment.
+* **Hardware-aware setup** — added an installer that scans NVIDIA GPUs, the installed driver, and locally installed CUDA Toolkits; presents supported environment choices; creates or updates the project `.venv`; installs the matching PyTorch stack; installs the required custom MSLK and xFormers builds; installs the remaining ImageGen requirements; and validates the completed environment.
 * **Profile-driven compatibility** — the installer uses tested hardware profiles instead of guessing at package combinations. The bundled profile covers the currently validated Windows/NVIDIA SM120 environment. Additional GPU architectures can be added as corresponding MSLK/xFormers builds and compatibility profiles are tested and published.
 
 ### Setup
@@ -202,7 +202,7 @@ The installer will inspect the machine and guide the user through the compatible
 run_webui.bat
 ```
 
-Users must still provide their own legally obtained compatible Stable Diffusion checkpoint and any LoRA files they want to use. Models are not included with IMAGE_GEN.
+Users must still provide their own legally obtained compatible Stable Diffusion checkpoint and any LoRA files they want to use. Models are not included with ImageGen.
 
 ---
 ---
@@ -238,7 +238,7 @@ Users must still provide their own legally obtained compatible Stable Diffusion 
 
 ### 1. Native SD 1.x Text-to-Image Pipeline
 
-IMAGE_GEN uses its own generation pipeline rather than launching another Stable Diffusion WebUI. The current pipeline performs the complete txt2img process:
+ImageGen uses its own generation pipeline rather than launching another Stable Diffusion WebUI. The current pipeline performs the complete txt2img process:
 
 * Inspects a full monolithic SD 1.x checkpoint before loading it.
 * Loads the checkpoint UNet, CLIP text encoder, and VAE.
@@ -257,7 +257,7 @@ The model browser may discover `.ckpt`, `.pt`, or `.pth` files, but the current 
 
 Users can request widths and heights that are not divisible by eight.
 
-IMAGE_GEN generates on the next model-compatible latent canvas and then center-crops the decoded image back to the exact requested dimensions. The original requested dimensions remain recorded in the generation metadata.
+ImageGen generates on the next model-compatible latent canvas and then center-crops the decoded image back to the exact requested dimensions. The original requested dimensions remain recorded in the generation metadata.
 
 This allows sizes such as `641 x 959` without forcing the user interface to an eight-pixel increment.
 
@@ -310,7 +310,7 @@ The WebUI is currently a local single-user interface. It does not provide public
 
 The WebUI uses a long-lived model runtime process.
 
-When a checkpoint is selected, IMAGE_GEN can preload it and keep reusable components available between generations according to the active memory policy. The selected model is not intentionally reloaded for every image. Changing the selected checkpoint causes the runtime to transition to the new model.
+When a checkpoint is selected, ImageGen can preload it and keep reusable components available between generations according to the active memory policy. The selected model is not intentionally reloaded for every image. Changing the selected checkpoint causes the runtime to transition to the new model.
 
 The runtime reports:
 
@@ -328,7 +328,7 @@ Retention is still governed by the chosen memory profile and available VRAM. A l
 
 The model catalog scans the configured checkpoint folder and any additional model roots listed in `user_config/user-config.yml`.
 
-For supported checkpoints, IMAGE_GEN records information such as:
+For supported checkpoints, ImageGen records information such as:
 
 * File path and filename.
 * File size.
@@ -348,7 +348,7 @@ The prompt system supports positive and negative prompt processing, validation, 
 
 The available parser paths are:
 
-* **IMAGE_GEN Legacy Prompt Parser** — the established and recommended alpha path.
+* **ImageGen Legacy Prompt Parser** — the established and recommended alpha path.
 * **Prompt Parser 21** — experimental.
 * **Combined / Auto Dispatch** — experimental.
 
@@ -442,7 +442,7 @@ Current gallery and inspector features include:
 * Queue composition from selected outputs.
 * Opening selected requests in the Variation Matrix.
 
-The gallery can inspect PNG, JPEG, JPG, and WebP files. IMAGE_GEN-generated final outputs currently use PNG by default.
+The gallery can inspect PNG, JPEG, JPG, and WebP files. ImageGen-generated final outputs currently use PNG by default.
 
 ### 13. Output Metadata and Reproducibility Records
 
@@ -453,7 +453,7 @@ Each saved generation can include:
 * A structured JSON generation manifest.
 * Embedded PNG metadata.
 
-The PNG contains an Automatic1111/CivitAI-style `parameters` text chunk so compatible sites and tools can detect the prompt and core settings. It also contains a richer IMAGE_GEN manifest for replay and diagnostics.
+The PNG contains an Automatic1111/CivitAI-style `parameters` text chunk so compatible sites and tools can detect the prompt and core settings. It also contains a richer ImageGen manifest for replay and diagnostics.
 
 Recorded data can include:
 
@@ -472,13 +472,13 @@ Output filename templates can use fields such as index, seed, date, time, model,
 
 ### 14. Replay, Queue Import, and Queue Export
 
-IMAGE_GEN can reconstruct generation requests from its output metadata and run a preflight before placing them back in the queue.
+ImageGen can reconstruct generation requests from its output metadata and run a preflight before placing them back in the queue.
 
 Replay preflight checks for missing models, VAEs, samplers, schedulers, prompt parsers, and other required request data. Missing assets are reported instead of being silently substituted.
 
 Batch request tools support:
 
-* Native IMAGE_GEN queue JSON.
+* Native ImageGen queue JSON.
 * JSON Lines.
 * CSV.
 * Automatic format detection from the filename.
@@ -527,7 +527,7 @@ run_webui.bat --sdpa
 
 ### 17. Runtime Memory Profiles
 
-IMAGE_GEN provides reusable process-start memory profiles:
+ImageGen provides reusable process-start memory profiles:
 
 * **Automatic** — lets the runtime select behavior from the environment.
 * **Balanced** — retains the UNet when possible while offloading less frequently used components.
@@ -541,7 +541,7 @@ Individual controls include:
 * UNet, VAE, and text-encoder retention policies.
 * Attention slicing.
 * VAE slicing.
-* IMAGE_GEN-owned tiled VAE processing.
+* ImageGen-owned tiled VAE processing.
 * VAE execution on automatic, CUDA, or CPU devices.
 * Preview suspension under memory pressure.
 * Pre-hires cleanup.
@@ -705,7 +705,7 @@ PyTorch is intentionally managed separately from the general Python dependency f
 
 ### Create a Virtual Environment
 
-From the IMAGE_GEN folder:
+From the ImageGen folder:
 
 ```bat
 py -3.10 -m venv .venv
@@ -815,7 +815,7 @@ When reporting a generation failure, include as much of the following as possibl
 * Windows version.
 * Python version.
 * PyTorch and CUDA versions.
-* IMAGE_GEN release version.
+* ImageGen release version.
 * Attention backend.
 * Runtime memory profile.
 * Model filename and architecture, without redistributing the model itself.
