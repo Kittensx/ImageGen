@@ -5,6 +5,100 @@ IMAGE_GEN is a local text-to-image application built around a custom, modular St
 > **Alpha notice**
 >
 > This is an early public build intended for testing and feedback. Interfaces, configuration fields, metadata formats, and runtime behavior may change between alpha releases. Keep backups of important presets and generated metadata.
+
+## Project Update — August 7, 2026
+
+IMAGE_GEN remains in active alpha development. This update summarizes the latest runtime-performance, hires-generation, canvas-expansion, and intermediate-image workflow improvements completed through August 7, 2026.
+
+
+### August 7 Updates
+
+* **Major generation-speed improvements observed in alpha testing** — recent runtime, hires, memory-lifecycle, and generation-pipeline work has produced a substantial reduction in end-to-end generation time on the currently tested system. Both standard txt2img generation and hires-generation workflows are completing dramatically faster than earlier builds under comparable local testing conditions.
+
+* **Hires runtime performance improvements** — the newer pixel-neural hires pipeline now benefits from cleaner stage transitions, more deliberate component residency, improved VAE/UNet handoff behavior, and reduced unnecessary intermediate work. These changes build on the stage-owned memory lifecycle introduced in the August 6 update.
+
+* **Faster normal txt2img workflow in current testing** — performance gains are not limited to hires. Recent pipeline and memory-management changes have also materially improved ordinary generation speed during local alpha testing.
+
+* **Substantially smaller PNG output files observed in testing** — generated PNGs that previously occupied multiple megabytes are now commonly measuring only a few hundred kilobytes in the current test workflow. Exact file size remains dependent on image dimensions, image complexity, metadata, and save configuration, but the current output path is producing significantly smaller files in practical testing.
+
+* **Canvas Expansion workflow added** — IMAGE_GEN now includes a Stable Diffusion-based canvas-expansion/outpaint workflow designed to convert an existing composition into a larger target shape without stretching the protected source image.
+
+* **Expand Existing Image** — users can load an existing image, choose a larger target canvas, select placement, provide extension prompts, and generate only the newly required image area while preserving the original composition. The source image does not need to have been created by IMAGE_GEN.
+
+* **Expand After Generation** — txt2img can now generate the smaller/base composition first and then expand that result inside the same generation workflow before the smaller image is treated as the primary final artifact. This allows the original Stable Diffusion generation to establish the subject, lighting, palette, and background before the canvas is enlarged.
+
+* **Live-generation source reuse qualification** — the in-pipeline expansion path can retain fresh generation state and, where latent-grid geometry permits, reuse the original sampled latent as the protected source state instead of reconstructing the protected area entirely through a pixel/VAE round trip. Non-aligned geometries continue to use an explicit pixel/VAE re-encode path rather than silently shifting image placement.
+
+* **Edge-based expansion initialization** — the current preferred canvas initialization extends real source-edge pixels into the provisional new area before diffusion refinement. A mirror/reflect initialization remains available as an advanced option, but it can duplicate edge-adjacent people, objects, vegetation, or architecture and is not the recommended default.
+
+* **Dedicated extension prompting** — canvas expansion supports a separate extension positive prompt and extension negative prompt so the user can describe what should appear in the newly generated space without replacing the original generation prompt or source provenance.
+
+* **Protected-source preservation** — expansion keeps the original image region protected while Stable Diffusion works on the newly exposed canvas. The current workflow is intended to preserve the useful original composition rather than resize or stretch it to the new aspect ratio.
+
+* **Structured-background testing** — testing has expanded beyond flat or solid-color backgrounds to scenes containing vegetation and other active visual structure. These tests confirm that scene complexity can require additional denoising freedom and that there is no single universal expansion-denoise value for every image.
+
+* **Outpaint results are now treated as intermediate images** — canvas expansion is intentionally positioned as a composition and aspect-ratio adaptation stage rather than a final beauty pass. Minor seams or imperfect background continuation can be acceptable when the expanded result provides a strong starting point for subsequent Img2Img refinement.
+
+* **Img2Img handoff direction established** — the intended workflow is now `Txt2Img → Canvas Expansion → Img2Img` or `Existing Image → Canvas Expansion → Img2Img`. The next Img2Img work should allow expanded images to move directly into the Img2Img workspace without requiring a manual filesystem save-and-reload cycle.
+
+* **Cleaner production-facing WebUI terminology** — development-phase names such as P-1, P-2, P-3, prototype labels, and internal strategy terminology have been removed from the normal user-facing canvas-expansion controls. The primary workflows are presented as **Expand Existing Image** and **Expand After Generation**, while internal phase and replay identifiers remain intact for compatibility.
+
+* **Improved expansion reliability at larger canvases** — a float16 mask-count overflow discovered during live P-3 testing was corrected so large expansion masks use integer-safe pixel counting rather than overflowing half-precision diagnostic accumulators.
+
+* **Replay and provenance remain first-class** — base-generation dimensions, expansion target dimensions, placement, extension prompts, context initialization, source-reuse behavior, sampler/scheduler information, and other relevant workflow metadata continue to be recorded so intermediate images remain inspectable and reproducible.
+
+### Current Canvas Expansion Status
+
+Canvas Expansion should still be considered an **alpha feature**, but it is now useful as an intermediate composition-expansion stage.
+
+The current intended workflows are:
+
+```text
+txt2img
+→ optional Expand After Generation
+→ expanded intermediate image
+→ Img2Img refinement
+```
+
+and:
+
+```text
+existing image
+→ Expand Existing Image
+→ expanded intermediate image
+→ Img2Img refinement
+```
+
+The current implementation is particularly useful for shape adaptation such as:
+
+```text
+portrait → square
+square → landscape
+square → taller portrait
+other larger target canvases
+```
+
+The protected source composition is preserved while Stable Diffusion generates the additional canvas area.
+
+### Performance Note
+
+The speed and file-size improvements described above are based on current local alpha testing and should not be interpreted as universal benchmarks.
+
+Generation time and output size can vary substantially with:
+
+* GPU and available VRAM,
+* model and VAE,
+* sampler and scheduler,
+* attention backend,
+* base and target dimensions,
+* hires upscaler,
+* denoising settings,
+* preview/diagnostic configuration,
+* image complexity,
+* PNG metadata and output settings.
+
+On the currently tested configuration, however, both normal generation and hires generation are completing substantially faster than earlier development builds, while generated PNG files are also materially smaller.
+
 ## Project Update — August 6, 2026
 
 ImageGen remains in active alpha development. This update summarizes the latest hires-generation, neural-upscaling, replay, asset-management, and runtime work completed through August 6, 2026.
