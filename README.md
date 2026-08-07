@@ -5,6 +5,81 @@ IMAGE_GEN is a local text-to-image application built around a custom, modular St
 > **Alpha notice**
 >
 > This is an early public build intended for testing and feedback. Interfaces, configuration fields, metadata formats, and runtime behavior may change between alpha releases. Keep backups of important presets and generated metadata.
+## Project Update — August 6, 2026
+
+ImageGen remains in active alpha development. This update summarizes the latest hires-generation, neural-upscaling, replay, asset-management, and runtime work completed through August 6, 2026.
+
+Where older sections of this README conflict with this update—particularly statements that hires generation is limited to latent interpolation or that neural `.pth` upscalers are not supported—this August 6 update describes the current implementation.
+
+### August 6 Updates
+
+* **Pixel-neural hires generation** — the active hires pipeline has been rebuilt around image-space neural upscaling. ImageGen now decodes the completed base generation to RGB, enlarges it with the selected neural upscaler, re-encodes the enlarged image through the effective VAE, and performs the second denoising/refinement pass from those new latents.
+
+* **Neural `.pth` upscaler support** — added native discovery, inspection, loading, and execution of supported ESRGAN/RealESRGAN-style `.pth` upscaler models through the qualified Spandrel backend.
+
+* **Retired legacy hires interpolation paths** — latent nearest, latent bilinear, latent bicubic, and the former pixel Lanczos hires methods have been removed from the active hires runtime. Enabled hires generation now requires a discovered supported neural upscaler.
+
+* **Upscaler discovery and catalog** — ImageGen recursively scans the configured ESRGAN and RealESRGAN directories, along with explicitly configured additional upscaler roots. Discovered models receive stable SHA-256-backed identities and are exposed through a reusable upscaler catalog.
+
+* **Upscaler classification and qualification** — initial architecture detection covers legacy ESRGAN RRDBNet, RealESRGAN/BasicSR RRDBNet, and RealESRGAN SRVGGNetCompact models. Initial support targets three-channel RGB upscalers with native 2x, 4x, or 8x scaling. Files outside the currently qualified contracts are retained as deferred or unavailable instead of being silently treated as compatible.
+
+* **Safer `.pth` inspection** — upscaler discovery uses tensor-only PyTorch inspection rather than executing arbitrary serialized model objects. Configured-root boundaries are enforced during discovery, including protection against paths or links resolving outside an authorized upscaler directory.
+
+* **Upscaler scan caching and duplicate handling** — inspection results are cached using file metadata, hashes, and loader-version information. Identical model content found in multiple configured locations is collapsed into a single catalog identity while retaining alias-location information.
+
+* **Tiled neural upscaling** — large hires operations can use deterministic tiled inference with configurable tile size, overlap, and tile batch size. Tile blending and exact target-size correction are handled by the upscaling system rather than the sampler.
+
+* **Bounded upscaler OOM recovery** — neural upscaling can perform a controlled smaller-tile retry after a qualifying out-of-memory failure. Recovery is bounded rather than repeatedly retrying an impossible request.
+
+* **Hires memory preflight** — pixel-neural hires jobs now have a dedicated admission/preflight path that estimates important VRAM, system-memory, intermediate-image, and disk requirements before committing to the complete pipeline.
+
+* **Stage-owned memory lifecycle** — the hires pipeline explicitly transitions between base denoising, VAE decode, neural upscale, VAE encode, second-pass denoising, and final decode stages so inactive GPU components can be released or offloaded when appropriate.
+
+* **Host-memory staging controls** — intermediate hires images can be staged through pageable or pinned CPU memory at controlled pipeline boundaries, reducing unnecessary simultaneous GPU residency during high-resolution jobs.
+
+* **Expanded hires WebUI** — hires controls now include neural upscaler selection and refresh, upscaler diagnostics, scale-based or explicit output dimensions, refinement steps, denoising strength, hires sampler/scheduler overrides, CFG overrides, tile controls, tile overlap, tile batch size, and exact-resize filtering.
+
+* **Independent hires prompt routing** — the second pass can inherit the base prompt-processing configuration or use its own prompt parser, shortcut profile, positive prompt, negative prompt, and parser settings.
+
+* **VAE image-to-latent encoding path** — added a dedicated deterministic VAE encoding system for converting the neural-upscaled RGB image back into sampling latents before the hires denoising pass.
+
+* **VAE provenance tracking** — hires generation records the identity and SHA-256 provenance of the effective VAE used during the pixel-to-latent transition. This supports stronger diagnostics and reproducibility for both embedded and externally selected VAE workflows.
+
+* **Hires diagnostic artifacts** — users can optionally preserve the exact neural-upscaled pre-denoise image and a deterministic VAE encode/decode round-trip image for troubleshooting quality changes introduced before the second denoising pass.
+
+* **Low-resolution source preservation** — the original base-generation image can continue to be saved beside the final hires output, allowing direct comparison between the initial generation, neural upscale, VAE transition, and refined result.
+
+* **Intermediate artifact hashing** — saved hires diagnostic and intermediate images can be assigned SHA-256 hashes and explicit artifact roles in generation metadata.
+
+* **Stronger hires manifests** — generation records now preserve the neural upscaler ID and hash, architecture and native scale, tile configuration, exact-resize settings, VAE identity, hires dimensions, second-pass settings, schedule information, memory behavior, and relevant intermediate-stage metadata.
+
+* **Exact pixel-neural replay validation** — replay now verifies that the recorded neural upscaler and VAE still match their original SHA-256 identities. Missing or changed assets are reported as replay errors rather than silently substituting another upscaler or VAE.
+
+* **Improved hires cancellation and progress reporting** — cancellation boundaries and stage reporting have been extended across decode, neural upscaling, VAE encoding, second-pass preparation, and other hires-specific runtime stages.
+
+* **LoRA library metadata improvements** — the LoRA workspace has expanded metadata support including display names, activation text, preferred weights, model-family information, categories, tags, descriptions, notes, source information, compatibility data, and ImageGen sidecar metadata.
+
+* **CivitAI LoRA metadata integration** — installed LoRAs can be matched against CivitAI using their hashes to retrieve available model/version metadata, trained-word activation text, source information, and preview imagery. API credentials are handled by the backend rather than exposed to browser-side JavaScript.
+
+* **LoRA preview management** — LoRA cards can use downloaded metadata previews, locally selected preview files, or compatible recent ImageGen outputs, providing a more visual model-library workflow.
+
+* **Output and replay UI updates** — Recent Outputs, image details, generation-form restoration, and replay processing have been extended to understand the newer hires, VAE, LoRA, upscaler, and intermediate-artifact metadata.
+
+* **CLI and request-schema updates** — command-line, interactive, saved-request, manifest, and runtime contracts now carry the expanded pixel-neural hires configuration so the WebUI and CLI continue to use the same underlying generation system.
+
+* **Dependency update** — Spandrel `0.4.2` is now included as the qualified neural-upscaler model backend.
+
+### Current Hires Status
+
+Hires generation should still be considered an **alpha/experimental feature**, but it is no longer limited to latent interpolation. The active implementation is now based on a real pixel-neural pipeline:
+
+`base denoise → VAE decode → neural .pth upscale → exact target resize → VAE encode → second denoise → final VAE decode`
+
+Supported results still depend on the selected upscaler architecture, available VRAM and system memory, requested output dimensions, tile settings, VAE behavior, sampler/scheduler combination, and the current hardware qualification level.
+
+Unsupported or unqualified upscaler files are intentionally reported rather than automatically executed, and exact replay intentionally fails when the required recorded upscaler or VAE identity no longer matches.
+
+---
 
 ## Project Update — August 4, 2026
 
