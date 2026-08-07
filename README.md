@@ -35,13 +35,9 @@ ImageGen remains in active alpha development. This update summarizes the latest 
 
 * **Protected-source preservation** — expansion keeps the original image region protected while Stable Diffusion works on the newly exposed canvas. The current workflow is intended to preserve the useful original composition rather than resize or stretch it to the new aspect ratio.
 
-* **Structured-background testing** — testing has expanded beyond flat or solid-color backgrounds to scenes containing vegetation and other active visual structure. These tests confirm that scene complexity can require additional denoising freedom and that there is no single universal expansion-denoise value for every image.
-
 * **Outpaint results are now treated as intermediate images** — canvas expansion is intentionally positioned as a composition and aspect-ratio adaptation stage rather than a final beauty pass. Minor seams or imperfect background continuation can be acceptable when the expanded result provides a strong starting point for subsequent Img2Img refinement.
 
 * **Img2Img handoff direction established** — the intended workflow is now `Txt2Img → Canvas Expansion → Img2Img` or `Existing Image → Canvas Expansion → Img2Img`. The next Img2Img work should allow expanded images to move directly into the Img2Img workspace without requiring a manual filesystem save-and-reload cycle.
-
-* **Cleaner production-facing WebUI terminology** — development-phase names such as P-1, P-2, P-3, prototype labels, and internal strategy terminology have been removed from the normal user-facing canvas-expansion controls. The primary workflows are presented as **Expand Existing Image** and **Expand After Generation**, while internal phase and replay identifiers remain intact for compatibility.
 
 * **Improved expansion reliability at larger canvases** — a float16 mask-count overflow discovered during live P-3 testing was corrected so large expansion masks use integer-safe pixel counting rather than overflowing half-precision diagnostic accumulators.
 
