@@ -195,20 +195,37 @@ function activeAssetRow(asset, onChange, onRemove) {
   remove.title = `Remove ${asset.name || "LoRA"}`;
   remove.textContent = "×";
 
+  const promptSync = window.imageGenPromptLoraSync;
+  const promptManaged = asset.asset_type === "lora" && ["inline_syntax", "visual_selection"].includes(contractSource(asset.source || asset.source_scope));
   const commitWeight = (value) => {
     const parsed = Math.max(-4, Math.min(4, Number(value) || 0));
     asset.weight = parsed;
     range.value = String(Math.max(-2, Math.min(2, parsed)));
     number.value = parsed.toFixed(2);
+    if (promptManaged && promptSync?.updateLoraWeight) {
+      promptSync.updateLoraWeight(asset, parsed);
+      return;
+    }
     onChange();
   };
   range.addEventListener("input", () => commitWeight(range.value));
   number.addEventListener("change", () => commitWeight(number.value));
   checkbox.addEventListener("change", () => {
     asset.enabled = checkbox.checked;
+    if (promptManaged && promptSync?.setEnabled) {
+      if (!checkbox.checked) promptSync.setEnabled(asset, false);
+      else promptSync.syncFromPrompts?.();
+      return;
+    }
     onChange();
   });
-  remove.addEventListener("click", () => onRemove());
+  remove.addEventListener("click", () => {
+    if (promptManaged && promptSync?.removeLora) {
+      promptSync.removeLora(asset);
+      return;
+    }
+    onRemove();
+  });
 
   row.append(avatar, name, enabled, weightWrap, remove);
   return row;
@@ -635,6 +652,13 @@ export function bindDefaultAssets(initialPayload = {}) {
     renderActiveAssets();
   };
 
+  const setActiveAssets = (assets = []) => {
+    activeAssets = Array.isArray(assets) ? assets.map(enrichActiveAsset) : [];
+    emitActiveAssets();
+    renderActiveAssets();
+    return clone(activeAssets);
+  };
+
   const setApplySavedDefaults = async (enabled) => {
     const next = clone(payload.profiles);
     next.apply_saved_defaults = Boolean(enabled);
@@ -800,6 +824,7 @@ export function bindDefaultAssets(initialPayload = {}) {
     updateActiveAsset,
     removeActiveAsset,
     clearActiveAssets,
+    setActiveAssets,
     setApplySavedDefaults,
     setAutoApplyOnModelLoad,
     saveActiveAssetsAsDefaults,

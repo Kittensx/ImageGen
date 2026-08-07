@@ -73,7 +73,15 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_scheduler_name: $("#hiresSchedulerName")?.value || "",
     hires_cfg_scale: numberValue($("#hiresCfgScale"), null),
     hires_cfg_rescale: numberValue($("#hiresCfgRescale"), null),
-    hires_upscaler: $("#hiresUpscaler")?.value || "latent_bicubic",
+    hires_strategy: "pixel_neural",
+    hires_upscaler: $("#hiresUpscaler")?.value || "",
+    hires_upscaler_id: $("#hiresUpscaler")?.value || "",
+    hires_tile_size: numberValue($("#hiresTileSize"), 0),
+    hires_tile_overlap: numberValue($("#hiresTileOverlap"), 16),
+    hires_tile_batch_size: numberValue($("#hiresTileBatchSize"), 1),
+    hires_exact_resize_filter: $("#hiresExactResizeFilter")?.value || "bicubic",
+    hires_save_upscaled_pre_denoise: Boolean($("#hiresSaveUpscaledPreDenoise")?.checked),
+    hires_save_vae_roundtrip: Boolean($("#hiresSaveVaeRoundtrip")?.checked),
     hires_save_lowres: Boolean($("#hiresSaveLowres")?.checked),
     output_dir: $("#outputDir").value,
     output_prefix: $("#outputPrefix").value || "{index:05d}-{seed}",
@@ -85,6 +93,7 @@ export function collectGenerationValues(selectionMetadata = {}) {
 export function applyGenerationValues(values = {}) {
   const normalizedValues = {
     ...values,
+    hires_upscaler: values.hires_upscaler_id || values.hires_upscaler,
     hires_size_mode: normalizedHiresSizeMode(
       values.hires_size_mode,
       Boolean(values.hires_enabled),
@@ -126,7 +135,12 @@ export function applyGenerationValues(values = {}) {
     hires_scheduler_name: "#hiresSchedulerName",
     hires_cfg_scale: "#hiresCfgScale",
     hires_cfg_rescale: "#hiresCfgRescale",
+    hires_strategy: "#hiresStrategy",
     hires_upscaler: "#hiresUpscaler",
+    hires_tile_size: "#hiresTileSize",
+    hires_tile_overlap: "#hiresTileOverlap",
+    hires_tile_batch_size: "#hiresTileBatchSize",
+    hires_exact_resize_filter: "#hiresExactResizeFilter",
     output_dir: "#outputDir",
     output_prefix: "#outputPrefix",
   };
@@ -146,6 +160,8 @@ export function applyGenerationValues(values = {}) {
     $("#hiresEnabled").dispatchEvent(new Event("change", { bubbles: true }));
   }
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = values.hires_save_lowres !== false;
+  if ($("#hiresSaveUpscaledPreDenoise")) $("#hiresSaveUpscaledPreDenoise").checked = Boolean(values.hires_save_upscaled_pre_denoise);
+  if ($("#hiresSaveVaeRoundtrip")) $("#hiresSaveVaeRoundtrip").checked = Boolean(values.hires_save_vae_roundtrip);
   if ($("#promptParserKwargs")) $("#promptParserKwargs").value = JSON.stringify(values.prompt_parser_kwargs || {});
   if ($("#promptShadowCompare")) $("#promptShadowCompare").checked = Boolean(values.prompt_shadow_compare);
   if ($("#promptShortcutProfileSnapshot")) $("#promptShortcutProfileSnapshot").value = JSON.stringify(values.prompt_shortcut_profile_snapshot || {});

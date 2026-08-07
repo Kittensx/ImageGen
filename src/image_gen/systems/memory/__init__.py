@@ -21,6 +21,17 @@ from .oom_recovery import (
     is_cuda_oom,
     normalize_oom_recovery_profile,
 )
+from .pixel_hires import (
+    HostStagingReport,
+    PixelHiresAdmissionError,
+    PixelHiresCancelled,
+    PixelHiresPreflightReport,
+    cancellation_requested,
+    compare_preflight_to_actual,
+    estimate_pixel_hires_preflight,
+    raise_if_pixel_hires_cancelled,
+    stage_tensor_to_host,
+)
 from .planner import MemoryEstimator, MemoryPlanner
 from .preview_policy import (
     PreviewStagePolicy,
@@ -58,5 +69,14 @@ __all__ = [
     "perform_pre_hires_cleanup",
     "resolve_hires_memory_behavior",
     "resolve_preview_stage_policy",
+    "HostStagingReport",
+    "PixelHiresAdmissionError",
+    "PixelHiresCancelled",
+    "PixelHiresPreflightReport",
+    "cancellation_requested",
+    "compare_preflight_to_actual",
+    "estimate_pixel_hires_preflight",
+    "raise_if_pixel_hires_cancelled",
+    "stage_tensor_to_host",
     "is_cuda_oom",
 ]

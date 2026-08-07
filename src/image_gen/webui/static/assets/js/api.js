@@ -60,6 +60,11 @@ export const api = {
   bootstrap: () => request("/api/bootstrap"),
   health: () => request("/api/health"),
   refreshModels: () => request("/api/models/refresh", { method: "POST" }),
+  upscalers: () => request("/api/upscalers"),
+  refreshUpscalers: (mode = "all", selectedFile = "") => request("/api/upscalers/refresh", {
+    method: "POST",
+    body: JSON.stringify({ mode, ...(selectedFile ? { selected_file: selectedFile } : {}) }),
+  }),
   modelRuntimeStatus: () => request("/api/models/runtime-status"),
   activateModel: (modelPath) => request("/api/models/activate", {
     method: "POST",
@@ -98,6 +103,14 @@ export const api = {
   scanLoras: (mode = "missing") => request("/api/assets/loras/scan", {
     method: "POST",
     body: JSON.stringify({ mode }),
+  }),
+  enrichLorasFromCivitai: (mode = "missing") => request("/api/assets/loras/civitai-metadata", {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  }),
+  enrichLoraFromCivitai: (assetId, overwrite = false) => request(`/api/assets/loras/${encodeURIComponent(assetId)}/civitai-metadata`, {
+    method: "POST",
+    body: JSON.stringify({ overwrite }),
   }),
   loraDetails: (assetId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`),
   saveLoraMetadata: (assetId, values) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`, {
@@ -250,6 +263,14 @@ export const api = {
     body: JSON.stringify(values),
   }),
   cancelJob: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+  }),
+  pauseQueueAfterCurrent: (jobId = "") => request("/api/queue/pause-after-current", {
+    method: "POST",
+    body: JSON.stringify(jobId ? { job_id: jobId } : {}),
+  }),
+  resumeQueue: () => request("/api/queue/resume", { method: "POST" }),
+  skipJobImage: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}/skip`, {
     method: "POST",
   }),
   promptParsers: () => request("/api/prompt-parsers"),

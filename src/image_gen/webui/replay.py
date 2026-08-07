@@ -83,7 +83,16 @@ _EDITABLE_FIELDS = {
     "hires_scheduler_name",
     "hires_cfg_scale",
     "hires_cfg_rescale",
+    "hires_strategy",
     "hires_upscaler",
+    "hires_upscaler_id",
+    "hires_tile_size",
+    "hires_tile_overlap",
+    "hires_tile_batch_size",
+    "hires_exact_resize_filter",
+    "hires_save_upscaled_pre_denoise",
+    "hires_save_vae_roundtrip",
+    "hires_diagnostic_vae_execution_fingerprint",
     "hires_save_lowres",
     "prompt_preflight",
     "prompt_shadow_compare",
@@ -159,7 +168,16 @@ _PRESERVABLE_BACKEND_FIELDS = {
     "hires_scheduler_name",
     "hires_cfg_scale",
     "hires_cfg_rescale",
+    "hires_strategy",
     "hires_upscaler",
+    "hires_upscaler_id",
+    "hires_tile_size",
+    "hires_tile_overlap",
+    "hires_tile_batch_size",
+    "hires_exact_resize_filter",
+    "hires_save_upscaled_pre_denoise",
+    "hires_save_vae_roundtrip",
+    "hires_diagnostic_vae_execution_fingerprint",
     "hires_save_lowres",
     "prompt_preflight",
     "prompt_shadow_compare",
@@ -336,16 +354,45 @@ class ReplayService:
         context: ProjectContext,
         jobs: GenerationJobManager,
         model_selection: WebUIModelSelectionState,
+        *,
+        upscaler_catalog: Any | None = None,
     ) -> None:
         self.context = context
         self.jobs = jobs
         self.model_selection = model_selection
+        self.upscaler_catalog = upscaler_catalog
         self._tokens: dict[str, _StoredPreflight] = {}
         self._lock = threading.RLock()
 
     @staticmethod
     def _mapping(value: Any) -> dict[str, Any]:
         return dict(value) if isinstance(value, Mapping) else {}
+
+    @staticmethod
+    def _restore_recorded_hires_base_dimensions(request: dict[str, Any]) -> None:
+        """Restore first-pass dimensions for exact replay of hires outputs."""
+
+        if not bool(request.get("hires_enabled", False)):
+            return
+        plan = request.get("hires_dimension_plan")
+        if not isinstance(plan, Mapping):
+            return
+        try:
+            base_width = int(plan.get("base_width") or 0)
+            base_height = int(plan.get("base_height") or 0)
+        except (TypeError, ValueError):
+            return
+        if base_width > 0 and base_height > 0:
+            request["width"] = base_width
+            request["height"] = base_height
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     @staticmethod
     def _recorded_prompt_cfg_schedules(
@@ -599,6 +646,9 @@ class ReplayService:
                 if name in current:
                     request[name] = copy.deepcopy(current[name])
 
+        if mode == "exact":
+            self._restore_recorded_hires_base_dimensions(request)
+
         # Phase 14K-11 runtime controls are not creative request fields. Restore
         # them for both exact and selected replay modes whenever the source
         # image recorded them, while still allowing explicit future replay UI
@@ -815,10 +865,115 @@ class ReplayService:
         request["diagnostics"] = diagnostics
         return request, replaced
 
+    @classmethod
+    def _recorded_hires_runtime_identity(
+        cls,
+        manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        extra = cls._mapping(manifest.get("extra"))
+        pipeline = cls._mapping(extra.get("pipeline_metadata"))
+        hires = cls._mapping(pipeline.get("hires_fix"))
+        source = cls._mapping(hires.get("pixel_source_preparation"))
+        upscale = cls._mapping(source.get("upscale_metadata"))
+        vae_encode = cls._mapping(source.get("vae_encode"))
+        vae = cls._mapping(vae_encode.get("vae"))
+        plan = cls._mapping(hires.get("upscale_plan"))
+        descriptor = cls._mapping(plan.get("descriptor"))
+        return {
+            "upscaler_id": str(
+                upscale.get("upscaler_id")
+                or plan.get("upscaler_id")
+                or descriptor.get("upscaler_id")
+                or ""
+            ),
+            "upscaler_sha256": str(
+                upscale.get("upscaler_sha256")
+                or descriptor.get("sha256")
+                or ""
+            ).casefold(),
+            "upscaler_display_name": str(
+                upscale.get("upscaler_display_name")
+                or descriptor.get("display_name")
+                or ""
+            ),
+            "vae_sha256": str(vae.get("sha256") or "").casefold(),
+            "vae_source_kind": str(vae.get("source_kind") or ""),
+        }
+
+    def _validate_hires_replay_identity(
+        self,
+        raw_request: dict[str, Any],
+        manifest: Mapping[str, Any],
+    ) -> list[str]:
+        if not bool(raw_request.get("hires_enabled", False)):
+            return []
+        selected = str(
+            raw_request.get("hires_upscaler_id")
+            or raw_request.get("hires_upscaler")
+            or ""
+        ).strip()
+        strategy = str(raw_request.get("hires_strategy") or "pixel_neural").strip().casefold()
+        if strategy != "pixel_neural":
+            return [
+                f"Recorded neural upscaler ID {selected!r} requires hires_strategy='pixel_neural'; replay will not fall back."
+            ]
+        if self.upscaler_catalog is None:
+            return [
+                "Exact pixel-neural replay cannot validate the current upscaler catalog."
+            ]
+        identity = self._recorded_hires_runtime_identity(manifest)
+        expected_id = str(identity.get("upscaler_id") or selected)
+        expected_hash = str(identity.get("upscaler_sha256") or "").casefold()
+        descriptor = self.upscaler_catalog.descriptor(expected_id)
+        if descriptor is None:
+            return [
+                f"Recorded neural upscaler {expected_id!r} is missing. Refresh the catalog or restore the exact model; replay will not substitute another file."
+            ]
+        if not descriptor.selectable:
+            return [
+                f"Recorded neural upscaler {expected_id!r} is present but not selectable: {descriptor.load_status}."
+            ]
+        if len(expected_hash) != 64:
+            return [
+                f"Recorded neural upscaler {expected_id!r} lacks the full SHA-256 required for exact replay."
+            ]
+        if descriptor.sha256.casefold() != expected_hash:
+            return [
+                f"Recorded neural upscaler hash mismatch for {expected_id!r}: expected {expected_hash}, found {descriptor.sha256.casefold()}. The same filename with different content is rejected."
+            ]
+        raw_request["hires_strategy"] = "pixel_neural"
+        raw_request["hires_upscaler"] = descriptor.upscaler_id
+        raw_request["hires_upscaler_id"] = descriptor.upscaler_id
+
+        expected_vae_hash = str(identity.get("vae_sha256") or "").casefold()
+        if len(expected_vae_hash) != 64:
+            return [
+                "Recorded pixel-neural job lacks the full VAE SHA-256 required for exact replay."
+            ]
+        vae_path = str(raw_request.get("vae_path") or "").strip()
+        source_kind = str(identity.get("vae_source_kind") or "").strip().casefold()
+        candidate_path = Path(vae_path) if vae_path else Path(str(raw_request.get("model_path") or ""))
+        if not candidate_path.is_file():
+            label = "external VAE" if vae_path else "checkpoint containing the embedded VAE"
+            return [f"The {label} required for exact VAE hash validation is unavailable: {candidate_path}."]
+        if not vae_path and source_kind not in {
+            "embedded", "embedded_checkpoint", "checkpoint_embedded"
+        }:
+            return [
+                "The recorded VAE was not checkpoint-embedded, but replay metadata does not resolve an external VAE path."
+            ]
+        actual_vae_hash = self._sha256_file(candidate_path)
+        if actual_vae_hash != expected_vae_hash:
+            return [
+                f"Recorded VAE hash mismatch: expected {expected_vae_hash}, found {actual_vae_hash}. Exact pixel-neural replay is blocked."
+            ]
+        return []
+
     def _validate_assets_and_plugins(
         self,
         raw_request: dict[str, Any],
         specification: Mapping[str, Any],
+        manifest: Mapping[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], list[str], ActiveModelSelection | None]:
         missing: list[dict[str, Any]] = []
         errors: list[str] = []
@@ -847,6 +1002,8 @@ class ReplayService:
             except (OSError, ValueError) as exc:
                 missing.append({"kind": "vae", "field": "vae_path", "requested": vae_path, "reason": str(exc)})
                 errors.append(f"VAE unavailable: {exc}")
+
+        errors.extend(self._validate_hires_replay_identity(raw_request, manifest or {}))
 
         checkpoint_family = _canonical_model_family(
             (authorized_model.architecture if authorized_model is not None else "")
@@ -1058,7 +1215,9 @@ class ReplayService:
         details = load_output_details(self.context, specification["output_id"])
         completeness = self._completeness(details)
         raw_request, replaced = self._build_raw_request(details, specification)
-        missing_assets, errors, _ = self._validate_assets_and_plugins(raw_request, specification)
+        missing_assets, errors, _ = self._validate_assets_and_plugins(
+            raw_request, specification, details.manifest
+        )
         warnings = list(details.warnings)
         enabled_textual_inversions = [
             item for item in raw_request.get("textual_inversions") or []

@@ -52,6 +52,32 @@ function familyLabel(value) {
   return value || "Unknown";
 }
 
+function civitaiLookupFor(model = {}) {
+  const metadata = model?.metadata || {};
+  const lookup = model?.civitai_lookup || metadata?._civitai_lookup || {};
+  return lookup && typeof lookup === "object" ? lookup : {};
+}
+
+function sourceUrlFor(model = {}) {
+  const metadata = model?.metadata || {};
+  const lookup = civitaiLookupFor(model);
+  return String(metadata.source_url || model.source_url || lookup.source_url || "").trim();
+}
+
+function previewUrlFor(model = {}) {
+  const url = String(model?.preview_url || "").trim();
+  if (!url) return "";
+  if (/[?&](?:v|r)=/.test(url)) return url;
+  const revision = String(
+    model?.preview_revision
+    || model?.preview_modified_ns
+    || model?.catalog_revision
+    || "",
+  ).trim();
+  if (!revision) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(revision)}`;
+}
+
 function selectedCheckpointPath() {
   const field = $("#modelPath");
   return normalizedPath(field?.value || state.activeModel?.resolved_path || "");
@@ -131,21 +157,25 @@ function addTag(container, text, className = "") {
 
 function setPreview(image, fallback, model) {
   if (!image || !fallback) return;
+  const url = previewUrlFor(model);
+  const requestToken = `${model?.asset_id || "detail"}|${url}`;
+  image.dataset.previewRequest = requestToken;
   image.classList.remove("has-image");
   image.removeAttribute("src");
   fallback.classList.remove("is-hidden");
   fallback.textContent = String(model?.name || "LORA").slice(0, 4).toUpperCase();
-  const url = String(model?.preview_url || "").trim();
   if (!url) return;
   image.onload = () => {
+    if (image.dataset.previewRequest !== requestToken) return;
     image.classList.add("has-image");
     fallback.classList.add("is-hidden");
   };
   image.onerror = () => {
+    if (image.dataset.previewRequest !== requestToken) return;
     image.classList.remove("has-image");
     fallback.classList.remove("is-hidden");
   };
-  image.src = `${url}${url.includes("?") ? "&" : "?"}v=${Number(model.modified_ns || Date.now())}`;
+  image.src = url;
 }
 
 async function copyText(value, label = "Text") {
@@ -252,12 +282,13 @@ function miniDefaultChip(asset) {
   row.className = `lora-default-chip is-${asset.polarity || "positive"}`;
   const avatar = document.createElement("span");
   avatar.className = "lora-default-avatar";
-  const preview = String(asset.preview_url || "").trim();
+  const preview = previewUrlFor(asset);
   if (preview) {
     const image = document.createElement("img");
     image.src = preview;
     image.alt = "";
-    image.loading = "lazy";
+    image.loading = "eager";
+    image.decoding = "async";
     avatar.append(image);
   } else {
     avatar.textContent = asset.asset_type === "textual_inversion" ? "TI" : String(asset.name || "L").slice(0, 2).toUpperCase();
@@ -280,6 +311,7 @@ export function bindLoraWorkspace({ defaultAssetsController, showGenerationWorks
   let sortMode = "recent";
   let page = 1;
   let pageSize = 16;
+  let detailsRequestSerial = 0;
 
   const workspace = $("#loraWorkspace");
   const detailsPanel = $(".lora-details-panel");
@@ -394,9 +426,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     });
     const status = $("#loraPromptIntegrationStatus");
     if (status) {
-      status.textContent = mode === "inline"
-        ? "Add writes A1111-compatible <lora:name:weight> syntax and activation text into the positive prompt while also showing a visual active row."
-        : "Add creates a structured visual selection. Inline syntax remains accepted for imported or shared prompts.";
+      status.textContent = "Prompt boxes are now the source of truth for LoRAs. Adding a LoRA writes A1111-compatible <lora:name:weight> syntax into the positive prompt, appends saved activation text when available, and the visual indicators update automatically from the prompt.";
     }
   };
 
@@ -441,7 +471,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const previewWrap = document.createElement("span");
     previewWrap.className = "lora-active-preview";
     const catalog = loras.find((model) => sameAsset(asset, model));
-    const previewUrl = asset.preview_url || catalog?.preview_url || "";
+    const previewUrl = previewUrlFor({ ...catalog, ...asset, preview_url: asset.preview_url || catalog?.preview_url || "" });
     if (previewUrl) {
       const image = document.createElement("img");
       image.src = previewUrl;
@@ -491,16 +521,35 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     remove.textContent = "×";
 
     const identityKey = assetIdentity(asset);
+    const promptSync = window.imageGenPromptLoraSync;
+    const promptManaged = ["inline", "inline_syntax", "visual", "visual_selection"].includes(String(asset.source || asset.source_scope || "").trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_"));
     const commitWeight = (value) => {
       const parsed = Math.max(-4, Math.min(4, Number(value) || 0));
       range.value = String(Math.max(-2, Math.min(2, parsed)));
       number.value = parsed.toFixed(2);
+      if (promptManaged && promptSync?.updateLoraWeight) {
+        promptSync.updateLoraWeight(asset, parsed);
+        return;
+      }
       defaultAssetsController?.updateActiveAsset?.(identityKey, { weight: parsed });
     };
     range.addEventListener("input", () => commitWeight(range.value));
     number.addEventListener("change", () => commitWeight(number.value));
-    checkbox.addEventListener("change", () => defaultAssetsController?.updateActiveAsset?.(identityKey, { enabled: checkbox.checked }));
-    remove.addEventListener("click", () => defaultAssetsController?.removeActiveAsset?.(identityKey));
+    checkbox.addEventListener("change", () => {
+      if (promptManaged && promptSync?.setEnabled) {
+        if (!checkbox.checked) promptSync.setEnabled(asset, false);
+        else promptSync.syncFromPrompts?.();
+        return;
+      }
+      defaultAssetsController?.updateActiveAsset?.(identityKey, { enabled: checkbox.checked });
+    });
+    remove.addEventListener("click", () => {
+      if (promptManaged && promptSync?.removeLora) {
+        promptSync.removeLora(asset);
+        return;
+      }
+      defaultAssetsController?.removeActiveAsset?.(identityKey);
+    });
     row.addEventListener("dblclick", () => catalog && openDetails(catalog));
 
     row.append(previewWrap, identity, enabled, weightWrap, remove);
@@ -557,12 +606,15 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       if (!prepared) return;
       const existing = activeRecordFor(prepared);
       const weight = Number(existing?.weight ?? prepared.preferred_weight ?? prepared.metadata?.preferred_weight ?? 1);
-      const mode = integrationMode();
-      if (mode === "inline") {
-        const syntax = `<lora:${prepared.name}:${weight.toFixed(2)}>`;
-        const insertion = prepared.activation_text ? `${syntax} ${prepared.activation_text}` : syntax;
-        insertAtPromptCaret(insertion);
+      const promptSync = window.imageGenPromptLoraSync;
+      if (promptSync?.insertLora) {
+        promptSync.insertLora({ ...prepared, weight }, { fieldId: "positivePrompt", includeActivationText: true });
+        notify(`${prepared.name} added to the positive prompt. Weight edits now sync both ways between the prompt and the active LoRA rows.`);
+        return;
       }
+      const syntax = `<lora:${prepared.name}:${weight.toFixed(2)}>`;
+      const insertion = prepared.activation_text ? `${syntax} ${prepared.activation_text}` : syntax;
+      insertAtPromptCaret(insertion);
       defaultAssetsController?.addActiveAsset?.({
         asset_id: prepared.asset_id,
         catalog_asset_id: prepared.asset_id,
@@ -578,8 +630,8 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
         preview_path: prepared.preview_path || "",
         preview_url: prepared.preview_url || "",
         notes: prepared.notes || "",
-      }, { sourceScope: mode === "inline" ? "inline" : "visual" });
-      notify(mode === "inline" ? `${prepared.name} added with inline syntax and staged visually.` : `${prepared.name} added to the active visual LoRA stack.`);
+      }, { sourceScope: "inline" });
+      notify(`${prepared.name} added with inline syntax to the positive prompt.`);
     } catch (error) {
       notify(`Unable to stage LoRA: ${error.message}`, "error");
     }
@@ -627,8 +679,8 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const image = document.createElement("img");
     image.className = "lora-card-preview";
     image.alt = `${model.name} preview`;
-    image.loading = "lazy";
-    setPreview(image, fallback, model);
+    image.loading = "eager";
+    image.decoding = "async";
     const badgeWrap = document.createElement("div");
     badgeWrap.className = "lora-card-badges";
     if (activeRecordFor(model)) {
@@ -725,6 +777,9 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     );
     card.append(previewWrap, body, actions);
     card.addEventListener("dblclick", () => openDetails(model));
+    queueMicrotask(() => {
+      if (image.isConnected) setPreview(image, fallback, model);
+    });
     return card;
   };
 
@@ -777,7 +832,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     $("#loraMetadataActivationText").value = metadata.activation_text || model.activation_text || "";
     $("#loraMetadataPreferredWeight").value = Number(metadata.preferred_weight ?? model.preferred_weight ?? 1).toFixed(2);
     $("#loraMetadataModelFamily").value = normalizeFamily(metadata.model_family || model.model_family || model.detected_model_family);
-    $("#loraMetadataSourceUrl").value = metadata.source_url || model.source_url || "";
+    $("#loraMetadataSourceUrl").value = metadata.source_url || model.source_url || civitaiLookupFor(model).source_url || "";
     $("#loraMetadataCategory").value = metadata.category || model.category || "";
     $("#loraMetadataTags").value = (metadata.tags || model.tags || []).join(", ");
     $("#loraMetadataDescription").value = metadata.description || model.description || "";
@@ -793,15 +848,23 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     setPreview($("#loraDetailPreview"), $("#loraDetailPreviewFallback"), model);
     const active = activeRecordFor(model);
     $("#loraDetailAddButton").textContent = active ? "Update Active LoRA" : "+ Add to Prompt";
-    $("#loraOpenSourceButton").disabled = !String(metadata.source_url || model.source_url || "").trim();
+    $("#loraOpenSourceButton").disabled = !sourceUrlFor(model);
     const compatibility = compatibilityFor(model);
+    const civitai = civitaiLookupFor(model);
+    let civitaiStatus = "";
+    if (civitai.status === "matched" && civitai.manual_activation_text_search_required) {
+      civitaiStatus = " Civitai matched the file but returned no trainedWords; open the Civitai page to check the description or comments for activation text.";
+    } else if (civitai.status === "matched" && civitai.activation_text) {
+      civitaiStatus = " Civitai metadata includes activation text from trainedWords.";
+    }
     $("#loraDetailStatus").textContent = model.inspection_error
-      ? `Technical inspection was unavailable: ${model.inspection_error}`
-      : `${compatibility.message} Editable metadata is stored in an .imagegen.json sidecar.`;
-    $("#loraDetailStatus").classList.toggle("warning", !compatibility.compatible);
+      ? `Technical inspection was unavailable: ${model.inspection_error}${civitaiStatus}`
+      : `${compatibility.message} Editable metadata is stored in an .imagegen.json sidecar.${civitaiStatus}`;
+    $("#loraDetailStatus").classList.toggle("warning", !compatibility.compatible || Boolean(civitai.manual_activation_text_search_required));
   };
 
   const openDetails = async (model, { focusEditor = false } = {}) => {
+    const requestId = ++detailsRequestSerial;
     selectedId = model.asset_id;
     state.selectedLoraAssetId = selectedId;
     renderCards();
@@ -810,18 +873,22 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     detailsPanel?.classList.add("is-open");
     $("#loraDetailStatus").textContent = "Inspecting LoRA metadata…";
     try {
-      selectedDetails = await api.loraDetails(model.asset_id);
-      selectedDetails = mergeCatalogRecord(selectedDetails) || selectedDetails;
+      const response = await api.loraDetails(model.asset_id);
+      const merged = mergeCatalogRecord(response) || response;
       renderCards();
+      if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
+      selectedDetails = merged;
       renderDetails();
       if (focusEditor) $("#loraMetadataDisplayName")?.focus();
     } catch (error) {
+      if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
       selectedDetails = { ...model, metadata: {}, inspection_error: error.message };
       renderDetails();
     }
   };
 
   const clearDetails = () => {
+    detailsRequestSerial += 1;
     selectedId = "";
     selectedDetails = null;
     state.selectedLoraAssetId = "";
@@ -875,6 +942,38 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     }
   };
 
+  const runCivitaiMetadataFetch = async (mode = "missing") => {
+    const button = $("#loraFetchCivitaiButton");
+    const previousLabel = button?.textContent || "Fetch Civitai Metadata";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Fetching…";
+    }
+    try {
+      const payload = await api.enrichLorasFromCivitai(mode);
+      applyCatalogPayload(payload);
+      renderCards();
+      renderDefaults();
+      renderActive();
+      if (selectedId) {
+        const selected = loras.find((item) => item.asset_id === selectedId);
+        if (selected) await openDetails(selected);
+        else clearDetails();
+      }
+      const summary = payload?.civitai || {};
+      const errors = Array.isArray(summary.errors) ? summary.errors.length : 0;
+      const previewErrors = Number(summary.preview_download_errors || 0);
+      notify(`Civitai metadata fetch complete: ${summary.matched || 0} matched, ${summary.activation_text_found || 0} with activation text, ${summary.previews_downloaded || 0} preview image(s) downloaded, ${summary.manual_search_required || 0} requiring manual page review, ${errors + previewErrors} error(s).`, errors || previewErrors ? "warning" : "success");
+    } catch (error) {
+      notify(`Unable to fetch Civitai metadata: ${error.message}`, "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = previousLabel;
+      }
+    }
+  };
+
   const bindSearch = (selector, counterpart) => {
     $(selector)?.addEventListener("input", (event) => {
       search = event.target.value;
@@ -913,6 +1012,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
   $("#loraNextPageButton")?.addEventListener("click", () => { page += 1; renderCards(); });
   $("#loraRefreshButton")?.addEventListener("click", () => refreshCatalog().catch((error) => notify(`Unable to refresh LoRAs: ${error.message}`, "error")));
   $("#loraScanUnknownButton")?.addEventListener("click", () => runCompatibilityScan("missing"));
+  $("#loraFetchCivitaiButton")?.addEventListener("click", () => runCivitaiMetadataFetch("missing"));
   if ($("#loraAutoScanUnknown")) $("#loraAutoScanUnknown").checked = state.settings.lora_auto_scan_unknown_on_startup !== false;
   $("#loraAutoScanUnknown")?.addEventListener("change", async (event) => {
     try {
@@ -980,7 +1080,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
   $("#loraApplyToPromptButton")?.addEventListener("click", () => {
     const count = activeAssets().filter((item) => item.asset_type === "lora" && item.enabled !== false).length;
     showGenerationWorkspace?.();
-    notify(`${count} active LoRA selection(s) are staged in the Generation workspace.`);
+    notify(`${count} active LoRA selection(s) are already being driven by the prompt boxes.`);
   });
 
   $("#closeLoraDetailsButton")?.addEventListener("click", clearDetails);
@@ -997,8 +1097,43 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     try { await copyText(syntax, "LoRA syntax"); notify("A1111 LoRA syntax copied."); }
     catch (error) { notify(error.message, "error"); }
   });
+  $("#loraFetchCivitaiDetailButton")?.addEventListener("click", async () => {
+    if (!selectedDetails) return;
+    const button = $("#loraFetchCivitaiDetailButton");
+    const previousLabel = button?.textContent || "Refresh from Civitai";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Fetching…";
+    }
+    $("#loraDetailStatus").textContent = "Calculating hashes and fetching Civitai metadata…";
+    try {
+      const updated = await api.enrichLoraFromCivitai(selectedDetails.asset_id, false);
+      selectedDetails = mergeCatalogRecord(updated) || updated;
+      renderCards();
+      renderDetails();
+      renderDefaults();
+      renderActive();
+      const lookup = civitaiLookupFor(selectedDetails);
+      if (lookup.manual_activation_text_search_required) {
+        const previewNote = lookup.preview_image_downloaded ? " A preview image was downloaded." : "";
+        notify(`Civitai matched this LoRA but returned no activation text. Use Open Civitai / Source Page to check the description or comments.${previewNote}`, "warning");
+      } else if (lookup.preview_image_downloaded) {
+        notify("Civitai metadata and a preview image were added to the LoRA sidecar.");
+      } else {
+        notify("Civitai metadata was added to the LoRA sidecar.");
+      }
+    } catch (error) {
+      renderDetails();
+      notify(`Unable to fetch Civitai metadata: ${error.message}`, "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = previousLabel;
+      }
+    }
+  });
   $("#loraOpenSourceButton")?.addEventListener("click", () => {
-    const url = String(selectedDetails?.metadata?.source_url || selectedDetails?.source_url || "").trim();
+    const url = sourceUrlFor(selectedDetails || {});
     if (url) window.open(url, "_blank", "noopener");
   });
   $("#loraOpenFolderButton")?.addEventListener("click", async () => {
@@ -1016,7 +1151,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
         loadCandidates: api.loadLoraPreviewCandidates,
         replaceFromOutput: api.replaceLoraPreviewFromOutput,
         onApplied: (updated) => {
-          selectedDetails = mergeCatalogRecord({ ...selectedDetails, ...updated, preview_url: `${updated.preview_url}?r=${Date.now()}` }) || updated;
+          selectedDetails = mergeCatalogRecord({ ...selectedDetails, ...updated }) || updated;
           renderCards();
           renderDetails();
           renderActive();
@@ -1033,7 +1168,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     if (!file || !selectedDetails) return;
     try {
       const updated = await api.replaceLoraPreview(selectedDetails.asset_id, file);
-      selectedDetails = mergeCatalogRecord({ ...selectedDetails, ...updated, preview_url: `${updated.preview_url}?r=${Date.now()}` }) || updated;
+      selectedDetails = mergeCatalogRecord({ ...selectedDetails, ...updated }) || updated;
       renderCards();
       renderDetails();
       renderActive();

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import replace
+import inspect
+import time
 from typing import Any
 
 import torch
@@ -18,23 +21,28 @@ from image_gen.contracts import (
     SchedulerAdapterProtocol,
     SchedulerOutput,
 )
+from image_gen.contracts.vae_provenance import read_vae_provenance
 from image_gen.runtime.composition import GenerationSystems, PipelineCompositionRoot
 from image_gen.runtime.performance_metrics import GenerationPerformanceRecorder
 from image_gen.runtime.hires_fix import (
     add_hires_noise,
     build_hires_request,
+    PixelNeuralHiresSourceResult,
     hires_schedule_baseline_metadata,
     resolve_hires_execution_plan,
-    upscale_latents,
+    validate_recorded_hires_vae_identity,
 )
 from image_gen.systems.image_conditioning import (
     build_image_conditioned_schedule,
+    build_vae_execution_fingerprint,
     build_schedule_fingerprint_record,
     build_schedule_replay_record,
     compare_schedule_conformance,
     noise_stream_metadata,
     rehydrate_schedule_replay_record,
     require_qualified_hires_pair,
+    vae_encode_for_sampling,
+    vae_round_trip_from_encoded_for_diagnostics,
 )
 from image_gen.runtime_options import (
     build_runtime_execution_record,
@@ -44,6 +52,7 @@ from image_gen.runtime_options import (
 from image_gen.systems.decoding import DecodingSystem
 from image_gen.systems.sampling import SamplingSystem
 from image_gen.systems.scheduling import SchedulingSystem
+from image_gen.systems.upscaling import StandaloneNeuralUpscaler, UpscaleRequest
 from image_gen.systems.diagnostics import DiagnosticSession, DiagnosticsSystem, PipelineStageError
 from image_gen.systems.diagnostics.output_quality import (
     classify_normalized_images,
@@ -53,14 +62,39 @@ from image_gen.systems.diagnostics.output_quality import (
 from image_gen.systems.memory import (
     AdaptiveComponentMemoryManager,
     StageRecoveryContract,
+    PixelHiresAdmissionError,
+    PixelHiresCancelled,
+    cancellation_requested,
+    compare_preflight_to_actual,
+    estimate_pixel_hires_preflight,
     perform_pre_hires_cleanup,
+    raise_if_pixel_hires_cancelled,
     resolve_hires_memory_behavior,
     resolve_preview_stage_policy,
+    stage_tensor_to_host,
 )
 from modules.pipeline.conditioning_utils import resolve_step_conditioning as resolve_step_conditioning_util
 from modules.pipeline.live_preview import build_live_preview_sink
 from modules.pipeline.live_preview_decode import create_live_preview_writer
 
+
+
+
+def _machine_preview_transport_enabled(values: dict[str, Any] | None) -> bool:
+    """Return whether preview telemetry should be printed to the console.
+
+    Human CLI runs keep preview generation available without writing the
+    machine-readable STEP_PREVIEW_JSON transport into the progress display.
+    WebUI workers opt in through ``progress_json``; verbose diagnostics may
+    also request the transport explicitly.
+    """
+
+    extra = dict(values or {})
+    return bool(
+        extra.get("progress_json", False)
+        or extra.get("_console_verbose", False)
+        or extra.get("_console_preview_json", False)
+    )
 
 
 
@@ -212,16 +246,18 @@ class GenerationPipeline:
 
         writer = extra.get("live_preview_frame_writer")
         if writer is None and not callable(extra.get("live_preview_callback")):
-            def _event_callback(payload: dict[str, Any]) -> None:
-                import json as _json
-                import sys as _sys
+            if _machine_preview_transport_enabled(extra):
+                def _event_callback(payload: dict[str, Any]) -> None:
+                    import json as _json
+                    import sys as _sys
 
-                message = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-                _sys.stdout.write(f"STEP_PREVIEW_JSON: {message}\n")
-                _sys.stdout.flush()
+                    message = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                    _sys.stdout.write(f"STEP_PREVIEW_JSON: {message}\n")
+                    _sys.stdout.flush()
+
+                extra.setdefault("live_preview_event_callback", _event_callback)
 
             extra.setdefault("live_preview_warning_callback", _warning_callback)
-            extra.setdefault("live_preview_event_callback", _event_callback)
             extra.setdefault("live_preview_memory_event_callback", self.memory_manager.capture)
             extra.setdefault("live_preview_async", True)
             writer = create_live_preview_writer(
@@ -299,6 +335,29 @@ class GenerationPipeline:
         self.prompt_adapter = getattr(systems.conditioning, "adapter", None)
         self.scheduler_adapter = getattr(systems.scheduling, "adapter", None)
         self.sampler_adapter = getattr(systems.sampling, "adapter", None)
+        state_extra = getattr(self.state, "extra", None)
+        self.neural_upscaler_registry = (
+            state_extra.get("hires_upscaler_registry")
+            if isinstance(state_extra, dict)
+            else None
+        )
+        self.neural_upscaler = (
+            state_extra.get("standalone_neural_upscaler")
+            if isinstance(state_extra, dict)
+            else None
+        )
+
+    def configure_neural_upscaling(
+        self,
+        *,
+        registry: Any,
+        runtime: StandaloneNeuralUpscaler | None = None,
+    ) -> None:
+        self.neural_upscaler_registry = registry
+        self.neural_upscaler = runtime or StandaloneNeuralUpscaler(registry)
+        if self.state is not None and isinstance(getattr(self.state, "extra", None), dict):
+            self.state.extra["hires_upscaler_registry"] = registry
+            self.state.extra["standalone_neural_upscaler"] = self.neural_upscaler
 
     def prepare_latents(
         self,
@@ -360,6 +419,73 @@ class GenerationPipeline:
             if not torch.isfinite(result.images).all():
                 raise ValueError("GenerationResult.images contains non-finite values.")
         return result
+
+    def _invoke_neural_upscaler(
+        self,
+        request: UpscaleRequest,
+        *,
+        cancellation_check: Any,
+    ) -> Any:
+        """Call the owned runtime without breaking compatible test/system overrides."""
+
+        method = self.neural_upscaler.upscale
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None and "cancellation_check" in signature.parameters:
+            return method(request, cancellation_check=cancellation_check)
+        return method(request)
+
+    @staticmethod
+    def _upscaler_snapshot_is_resident(snapshot: dict[str, Any]) -> bool:
+        if bool(snapshot.get("runtime_loaded", False)):
+            return True
+        if bool(snapshot.get("loaded_upscaler_id")):
+            return True
+        for item in list(snapshot.get("neural") or []):
+            if not isinstance(item, dict):
+                continue
+            if bool(item.get("runtime_loaded", False)):
+                return True
+            if int(item.get("active_leases", 0) or 0) > 0:
+                return True
+        active_leases = snapshot.get("active_leases")
+        if isinstance(active_leases, dict):
+            return any(int(value or 0) > 0 for value in active_leases.values())
+        return False
+
+    def _cleanup_pixel_hires_scoped_runtime(self, *, reason: str) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "schema_version": "phase14n6-cancellation-cleanup-v1",
+            "reason": str(reason),
+            "upscaler_unload_requested": False,
+            "upscaler_resident_after_cleanup": False,
+            "inactive_component_actions": [],
+        }
+        registry = self.neural_upscaler_registry
+        if registry is not None:
+            report["upscaler_unload_requested"] = True
+            with suppress(Exception):
+                registry.unload()
+            with suppress(Exception):
+                snapshot = dict(registry.snapshot() or {})
+                report["registry_snapshot"] = snapshot
+                report["upscaler_resident_after_cleanup"] = (
+                    self._upscaler_snapshot_is_resident(snapshot)
+                )
+        with suppress(Exception):
+            report["inactive_component_actions"] = self.memory_manager.offload_inactive_components(
+                {"upscaler"},
+                stage="pixel_hires_cleanup",
+                reason=str(reason),
+            )
+        with suppress(Exception):
+            self.memory_manager.release_cuda_cache(
+                stage="pixel_hires_cleanup",
+                reason=str(reason),
+            )
+        return report
 
     @torch.inference_mode()
     def generate(
@@ -435,6 +561,10 @@ class GenerationPipeline:
         self.systems.denoising.configure_request(
             cfg_rescale=float(getattr(request, "cfg_rescale", 0.0) or 0.0)
         )
+        pixel_hires_job = False
+        pixel_hires_preflight = None
+        pixel_hires_stage_timings: dict[str, float] = {}
+        pixel_hires_cancelled_stage = ""
 
         try:
             dimension_plan = diagnostics.run_stage(
@@ -446,6 +576,8 @@ class GenerationPipeline:
             base_dimension_plan = dimension_plan
             final_output_width = int(request.width)
             final_output_height = int(request.height)
+            if self.neural_upscaler_registry is not None:
+                setattr(request, "_hires_upscaler_registry", self.neural_upscaler_registry)
             hires_execution_plan = resolve_hires_execution_plan(request)
             request.hires_dimension_plan = hires_execution_plan.dimensions.to_dict()
             request.hires_steps = int(hires_execution_plan.steps)
@@ -453,8 +585,40 @@ class GenerationPipeline:
                 hires_execution_plan.denoising_strength
             )
             request.hires_step_policy = str(hires_execution_plan.step_policy)
-            request.hires_upscaler = str(hires_execution_plan.upscaler)
+            request.hires_strategy = str(hires_execution_plan.upscale_plan.strategy)
+            request.hires_upscaler = str(hires_execution_plan.upscale_plan.legacy_value or hires_execution_plan.upscaler)
+            request.hires_upscaler_id = str(hires_execution_plan.upscale_plan.upscaler_id or "")
             hires_metadata: dict[str, Any] = hires_execution_plan.to_dict()
+            pixel_hires_job = bool(
+                hires_execution_plan.enabled
+                and hires_execution_plan.upscale_plan.strategy == "pixel_neural"
+            )
+            if pixel_hires_job and bool(getattr(request, "hires_memory_preflight", True)):
+                descriptor = hires_execution_plan.upscale_plan.descriptor
+                if descriptor is None and self.neural_upscaler_registry is not None:
+                    descriptor = self.neural_upscaler_registry.resolve_neural(
+                        hires_execution_plan.upscale_plan.upscaler_id
+                    )
+                if descriptor is None:
+                    raise PixelHiresAdmissionError(
+                        "Pixel-neural hires preflight could not resolve the selected neural descriptor."
+                    )
+                pixel_hires_preflight = estimate_pixel_hires_preflight(
+                    request=request,
+                    base_width=int(request.width),
+                    base_height=int(request.height),
+                    target_width=int(hires_execution_plan.upscale_plan.target_width),
+                    target_height=int(hires_execution_plan.upscale_plan.target_height),
+                    native_scale=int(descriptor.native_scale),
+                    model_file_size_bytes=int(descriptor.file_size_bytes),
+                    memory_manager=self.memory_manager,
+                    output_dir=getattr(request, "output_dir", None),
+                )
+                hires_metadata["memory_preflight"] = pixel_hires_preflight.to_dict()
+                if not pixel_hires_preflight.admitted:
+                    raise PixelHiresAdmissionError(
+                        "; ".join(pixel_hires_preflight.rejection_reasons)
+                    )
             state_extra = getattr(self.state, "extra", {}) if self.state is not None else {}
             preview_mode = (
                 state_extra.get("live_preview_mode", "disabled")
@@ -829,6 +993,300 @@ class GenerationPipeline:
                     dimension_plan=hires_dimension_plan,
                     preview_mode=hires_preview_policy.effective_preview_mode,
                 )
+                pixel_source_result: PixelNeuralHiresSourceResult | None = None
+                hires_latents: torch.Tensor | None = None
+                if hires_execution_plan.upscale_plan.strategy == "pixel_neural":
+                    if self.neural_upscaler is None or self.neural_upscaler_registry is None:
+                        selected_id = str(hires_execution_plan.upscale_plan.upscaler_id or "")
+                        raise RuntimeError(
+                            f"Pixel-neural hires requested {selected_id!r}, but the owned standalone upscaler runtime is not configured."
+                        )
+                    descriptor = hires_execution_plan.upscale_plan.descriptor
+                    if descriptor is None:
+                        raise RuntimeError("Pixel-neural hires resolved without an exact descriptor.")
+
+                    raise_if_pixel_hires_cancelled(
+                        "base_decode", request=request, state=self.state
+                    )
+                    base_hires_latents = sample_output.latents
+                    stage_started = time.perf_counter()
+                    decoded_base = diagnostics.run_stage(
+                        session,
+                        "hires",
+                        "pixel_decode_base",
+                        lambda: self.memory_manager.run_stage(
+                            stage="hires_pixel_decode_base",
+                            required={"vae"},
+                            operation=lambda: performance.run(
+                                "hires_pixel_decode_base",
+                                lambda: self.systems.decoding.decode(base_hires_latents),
+                                operation_name="decoding.decode_pixel_hires_source",
+                            ),
+                            request=request,
+                        ),
+                    )
+                    pixel_hires_stage_timings["base_decode_ms"] = (
+                        time.perf_counter() - stage_started
+                    ) * 1000.0
+                    decoded_base = DecodingSystem.center_crop(
+                        decoded_base,
+                        width=int(request.width),
+                        height=int(request.height),
+                    )
+                    diagnostics_options = dict(getattr(request, "diagnostics", None) or {})
+                    host_staging_policy = str(
+                        getattr(request, "hires_host_staging_policy", "pageable") or "pageable"
+                    )
+                    host_staging_cap = max(0, int(
+                        getattr(request, "hires_host_staging_cap_mb", 1024) or 0
+                    )) * 1024 * 1024
+                    host_staging_benchmark = bool(
+                        diagnostics_options.get("benchmark_hires_host_staging", False)
+                    )
+                    pixel_source_cpu, base_staging_report = stage_tensor_to_host(
+                        decoded_base.detach().to(dtype=torch.float32),
+                        label="decoded_base",
+                        policy=host_staging_policy,
+                        cap_bytes=host_staging_cap,
+                        benchmark=host_staging_benchmark,
+                    )
+                    hires_metadata.setdefault("host_staging", {})["decoded_base"] = (
+                        base_staging_report.to_dict()
+                    )
+                    decoded_base = None
+                    base_hires_latents = None
+                    released_base_references = (
+                        "base_conditioning",
+                        "base_schedule",
+                        "initial_latents",
+                        "base_sampler_output",
+                        "base_hires_latents_after_decode",
+                    )
+                    conditioning = None
+                    schedule = None
+                    latents = None
+                    sample_output = None
+                    hires_cleanup_report = diagnostics.run_stage(
+                        session,
+                        "hires",
+                        "pre_hires_cleanup",
+                        lambda: perform_pre_hires_cleanup(
+                            self.memory_manager,
+                            behavior=hires_memory_behavior,
+                            preserved_tensors=(("pixel_source_cpu", pixel_source_cpu),),
+                            released_reference_names=released_base_references,
+                        ),
+                    )
+                    hires_metadata["pre_hires_cleanup"] = hires_cleanup_report.to_dict()
+
+                    raise_if_pixel_hires_cancelled(
+                        "neural_upscale", request=request, state=self.state
+                    )
+                    upscale_request = UpscaleRequest(
+                        source_images=pixel_source_cpu,
+                        upscaler_id=str(descriptor.upscaler_id),
+                        target_width=int(hires_execution_plan.upscale_plan.target_width),
+                        target_height=int(hires_execution_plan.upscale_plan.target_height),
+                        tile_size=int(hires_execution_plan.upscale_plan.tile_size),
+                        tile_overlap=int(hires_execution_plan.upscale_plan.tile_overlap),
+                        tile_batch_size=int(hires_execution_plan.upscale_plan.tile_batch_size),
+                        exact_resize_filter=str(hires_execution_plan.upscale_plan.exact_resize_filter),
+                        dtype_policy="auto",
+                        device_policy="auto",
+                        allow_tiling=True,
+                        allow_oom_retry=True,
+                        host_transfer_non_blocking=bool(pixel_source_cpu.is_pinned()),
+                    )
+                    stage_started = time.perf_counter()
+                    upscale_result = diagnostics.run_stage(
+                        session,
+                        "hires",
+                        "standalone_neural_upscale",
+                        lambda: performance.run(
+                            "hires_neural_upscale",
+                            lambda: self._invoke_neural_upscaler(
+                                upscale_request,
+                                cancellation_check=lambda: cancellation_requested(
+                                    request=request, state=self.state
+                                ),
+                            ),
+                            operation_name="standalone_neural_upscaler.upscale",
+                        ),
+                    )
+                    pixel_hires_stage_timings["neural_upscale_ms"] = (
+                        time.perf_counter() - stage_started
+                    ) * 1000.0
+                    upscale_metadata = dict(upscale_result.metadata or {})
+                    executed_id = str(upscale_metadata.get("upscaler_id") or "")
+                    executed_hash = str(upscale_metadata.get("upscaler_sha256") or "").casefold()
+                    if executed_id != descriptor.upscaler_id or executed_hash != descriptor.sha256.casefold():
+                        raise RuntimeError(
+                            "The executed neural upscaler identity/hash did not match the resolved hires plan."
+                        )
+                    exact_target_images, target_staging_report = stage_tensor_to_host(
+                        upscale_result.images.detach().to(dtype=torch.float32),
+                        label="exact_neural_target",
+                        policy=host_staging_policy,
+                        cap_bytes=host_staging_cap,
+                        benchmark=host_staging_benchmark,
+                    )
+                    hires_metadata.setdefault("host_staging", {})["exact_neural_target"] = (
+                        target_staging_report.to_dict()
+                    )
+                    registry_snapshot_method = getattr(
+                        self.neural_upscaler_registry, "snapshot", None
+                    )
+                    registry_snapshot = (
+                        dict(registry_snapshot_method() or {})
+                        if callable(registry_snapshot_method)
+                        else {
+                            "runtime_loaded": False,
+                            "verification": "snapshot_unavailable_on_compatible_override",
+                        }
+                    )
+                    hires_metadata["upscaler_residency_after_stage"] = registry_snapshot
+                    if self._upscaler_snapshot_is_resident(registry_snapshot):
+                        raise RuntimeError(
+                            "The neural upscaler remained resident after its scoped execution stage."
+                        )
+                    upscale_result = None
+                    pixel_source_cpu = None
+                    if bool(getattr(request, "hires_save_upscaled_pre_denoise", False)):
+                        auxiliary_images["hires_upscaled_pre_denoise"] = exact_target_images
+
+                    execution_vae = getattr(
+                        self.systems.decoding, "vae", self.components.vae
+                    )
+                    module_vae_provenance = read_vae_provenance(execution_vae)
+                    component_vae_provenance = dict(
+                        self.components.vae_provenance or {}
+                    )
+                    module_hash = str(
+                        module_vae_provenance.get("sha256") or ""
+                    ).casefold()
+                    component_hash = str(
+                        component_vae_provenance.get("sha256") or ""
+                    ).casefold()
+                    if module_hash and component_hash and module_hash != component_hash:
+                        raise RuntimeError(
+                            "The loader-owned VAE provenance does not match the VAE execution component."
+                        )
+                    vae_provenance = (
+                        module_vae_provenance if module_hash else component_vae_provenance
+                    )
+                    vae_sha256 = str(vae_provenance.get("sha256") or "").casefold()
+                    if len(vae_sha256) != 64 or any(
+                        character not in "0123456789abcdef" for character in vae_sha256
+                    ):
+                        raise RuntimeError(
+                            "Pixel-neural hires requires loader-owned VAE provenance with a complete SHA-256."
+                        )
+                    validate_recorded_hires_vae_identity(request, vae_provenance)
+
+                    raise_if_pixel_hires_cancelled(
+                        "vae_encode", request=request, state=self.state
+                    )
+                    stage_started = time.perf_counter()
+                    encoded = diagnostics.run_stage(
+                        session,
+                        "hires",
+                        "vae_encode_for_sampling",
+                        lambda: self.memory_manager.run_stage(
+                            stage="hires_vae_encode",
+                            required={"vae"},
+                            operation=lambda: performance.run(
+                                "hires_vae_encode",
+                                lambda: vae_encode_for_sampling(
+                                    image=exact_target_images,
+                                    vae=self.systems.decoding,
+                                    scaling_factor=self.vae_scaling_factor,
+                                    deterministic=True,
+                                    target_width=int(hires_execution_plan.upscale_plan.target_width),
+                                    target_height=int(hires_execution_plan.upscale_plan.target_height),
+                                    allow_center_crop=False,
+                                    latent_downsample_factor=self.latent_scale_factor,
+                                    vae_identity=vae_provenance,
+                                    upscale_metadata=upscale_metadata,
+                                ),
+                                operation_name="image_conditioning.vae_encode_for_sampling",
+                            ),
+                            request=hires_request,
+                        ),
+                    )
+                    pixel_hires_stage_timings["vae_encode_ms"] = (
+                        time.perf_counter() - stage_started
+                    ) * 1000.0
+                    raise_if_pixel_hires_cancelled(
+                        "vae_encode_complete", request=request, state=self.state
+                    )
+                    fingerprint_requested = bool(
+                        getattr(request, "hires_diagnostic_vae_execution_fingerprint", False)
+                        or (
+                            isinstance(getattr(request, "diagnostics", None), dict)
+                            and request.diagnostics.get(
+                                "capture_hires_vae_execution_fingerprint", False
+                            )
+                        )
+                    )
+                    diagnostic_artifacts: dict[str, Any] = {
+                        "vae_execution_fingerprint_requested": fingerprint_requested,
+                        "vae_execution_fingerprint": (
+                            build_vae_execution_fingerprint(encoded.metadata)
+                            if fingerprint_requested
+                            else None
+                        ),
+                    }
+                    round_trip = None
+                    if bool(getattr(request, "hires_save_vae_roundtrip", False)):
+                        raise_if_pixel_hires_cancelled(
+                            "vae_round_trip", request=request, state=self.state
+                        )
+                        stage_started = time.perf_counter()
+                        round_trip = diagnostics.run_stage(
+                            session,
+                            "hires",
+                            "vae_round_trip_diagnostic",
+                            lambda: self.memory_manager.run_stage(
+                                stage="hires_vae_round_trip",
+                                required={"vae"},
+                                operation=lambda: vae_round_trip_from_encoded_for_diagnostics(
+                                    image=exact_target_images,
+                                    encoded=encoded,
+                                    vae=self.systems.decoding,
+                                    scaling_factor=self.vae_scaling_factor,
+                                ),
+                                request=hires_request,
+                            ),
+                        )
+                        pixel_hires_stage_timings["vae_round_trip_ms"] = (
+                            time.perf_counter() - stage_started
+                        ) * 1000.0
+                        auxiliary_images["hires_vae_roundtrip"] = round_trip.image.detach().to("cpu")
+
+                    pixel_source_result = PixelNeuralHiresSourceResult(
+                        exact_target_images=exact_target_images,
+                        upscale_metadata=upscale_metadata,
+                        vae_encode_result=encoded,
+                        vae_round_trip=round_trip,
+                        diagnostic_artifacts=diagnostic_artifacts,
+                    )
+                    hires_metadata["pixel_source_preparation"] = pixel_source_result.to_dict()
+                    hires_metadata["intermediate_artifacts"] = {
+                        "upscaled_pre_denoise_requested": bool(
+                            getattr(request, "hires_save_upscaled_pre_denoise", False)
+                        ),
+                        "vae_roundtrip_requested": bool(
+                            getattr(request, "hires_save_vae_roundtrip", False)
+                        ),
+                        "content_hash_policy": "saved_file_hashes_are_owned_by_output_manifests; no normal-run tensor hash",
+                    }
+                    hires_latents = encoded.latents.to(
+                        device=self.device, dtype=self.dtype
+                    )
+                    pixel_source_result = None
+                    round_trip = None
+                    exact_target_images = None
+
                 hires_conditioning = diagnostics.run_stage(
                     session,
                     "hires",
@@ -906,6 +1364,7 @@ class GenerationPipeline:
                         "hires_schedule_replay_mode must be reconstruct or recorded_exact."
                     )
 
+                schedule_construction_started = time.perf_counter()
                 if replay_mode == "recorded_exact":
                     recorded_replay = dict(
                         getattr(request, "hires_recorded_schedule_replay", {}) or {}
@@ -991,6 +1450,10 @@ class GenerationPipeline:
                     )
                     hires_metadata["schedule_source"] = "reconstructed"
 
+                if pixel_hires_job:
+                    pixel_hires_stage_timings["schedule_construction_ms"] = (
+                        time.perf_counter() - schedule_construction_started
+                    ) * 1000.0
                 hires_schedule = image_conditioned_schedule.active_schedule
                 hires_schedule.metadata["hires_sampler_name"] = str(hires_request.sampler_name or "")
                 hires_schedule.metadata["hires_scheduler_name"] = str(hires_request.scheduler_name or "")
@@ -1060,52 +1523,11 @@ class GenerationPipeline:
                     steps=int(hires_execution_plan.steps),
                 )
 
-                # Preserve only the exact base latent required by latent hires.
-                # All other base-pass tensors are released before the larger
-                # hires latent is allocated. The cleanup helper performs
-                # component offload and allocator cleanup only after these
-                # references have been removed.
-                base_hires_latents = sample_output.latents
-                released_base_references = (
-                    "base_conditioning",
-                    "base_schedule",
-                    "initial_latents",
-                    "base_sampler_output",
-                )
-                conditioning = None
-                schedule = None
-                latents = None
-                sample_output = None
-                hires_cleanup_report = diagnostics.run_stage(
-                    session,
-                    "hires",
-                    "pre_hires_cleanup",
-                    lambda: perform_pre_hires_cleanup(
-                        self.memory_manager,
-                        behavior=hires_memory_behavior,
-                        preserved_tensors=(("base_hires_latents", base_hires_latents),),
-                        released_reference_names=released_base_references,
-                    ),
-                )
-                hires_metadata["pre_hires_cleanup"] = hires_cleanup_report.to_dict()
+                if hires_execution_plan.upscale_plan.strategy != "pixel_neural":
+                    raise RuntimeError("Only pixel-neural .pth hires is active.")
+                if hires_latents is None:
+                    raise RuntimeError("Pixel-neural hires did not produce sampling latents.")
 
-                hires_latents = diagnostics.run_stage(
-                    session,
-                    "hires",
-                    "upscale_latents",
-                    lambda: performance.run(
-                        "hires_upscale",
-                        lambda: upscale_latents(
-                            base_hires_latents,
-                            target_width=int(hires_dimension_plan.generation_width),
-                            target_height=int(hires_dimension_plan.generation_height),
-                            latent_scale_factor=self.latent_scale_factor,
-                            upscaler=hires_execution_plan.upscaler,
-                        ),
-                        operation_name="upscale_latents",
-                    ),
-                )
-                base_hires_latents = None
                 hires_metadata["noise_stream"] = noise_stream_metadata(
                     list(request.resolved_seeds),
                     hires_execution_plan.noise_policy,
@@ -1207,12 +1629,24 @@ class GenerationPipeline:
                     )
                     return result
 
+                if pixel_hires_job:
+                    raise_if_pixel_hires_cancelled(
+                        "hires_second_pass", request=request, state=self.state
+                    )
+                stage_started = time.perf_counter()
                 sample_output = diagnostics.run_stage(
                     session,
                     "hires",
                     "sample_second_pass",
                     _run_hires_second_pass,
                 )
+                if pixel_hires_job:
+                    pixel_hires_stage_timings["hires_second_pass_ms"] = (
+                        time.perf_counter() - stage_started
+                    ) * 1000.0
+                    raise_if_pixel_hires_cancelled(
+                        "hires_second_pass_complete", request=request, state=self.state
+                    )
                 schedule_guard_after = build_schedule_fingerprint_record(
                     image_conditioned_schedule,
                     replay_record=hires_metadata["schedule_replay"],
@@ -1275,6 +1709,95 @@ class GenerationPipeline:
                         "execution_scope": "runtime_shared_cli_webui",
                     }
                 )
+                source_contract = dict(hires_metadata.get("pixel_source_preparation") or {})
+                upscale_contract = dict(source_contract.get("upscale_metadata") or {})
+                vae_contract = dict(source_contract.get("vae_encode") or {})
+                vae_identity = dict(vae_contract.get("vae") or {})
+                upscale_plan_contract = dict(hires_metadata.get("upscale_plan") or {})
+                descriptor_contract = dict(upscale_plan_contract.get("descriptor") or {})
+                source_shape = list(upscale_contract.get("source_shape") or [])
+                hires_metadata["phase14n7_diagnostics"] = {
+                    "schema_version": "phase14n7-hires-diagnostics-v1",
+                    "algorithm_version": str(hires_metadata.get("algorithm_version") or ""),
+                    "strategy": str(hires_execution_plan.upscale_plan.strategy),
+                    "upscaler": {
+                        "id": str(
+                            upscale_contract.get("upscaler_id")
+                            or upscale_plan_contract.get("upscaler_id")
+                            or hires_execution_plan.upscaler
+                        ),
+                        "display_name": str(
+                            upscale_contract.get("upscaler_display_name")
+                            or descriptor_contract.get("display_name")
+                            or hires_execution_plan.upscaler
+                        ),
+                        "architecture": str(
+                            upscale_contract.get("upscaler_architecture")
+                            or descriptor_contract.get("architecture")
+                            or ("latent_interpolation" if hires_execution_plan.upscale_plan.strategy == "latent" else "")
+                        ),
+                        "native_scale": int(
+                            upscale_contract.get("upscaler_native_scale")
+                            or descriptor_contract.get("native_scale")
+                            or 0
+                        ),
+                        "sha256": str(
+                            upscale_contract.get("upscaler_sha256")
+                            or descriptor_contract.get("sha256")
+                            or ""
+                        ),
+                        "load_status": str(
+                            upscale_contract.get("upscaler_load_status")
+                            or descriptor_contract.get("load_status")
+                            or "built_in"
+                        ),
+                        "device": str(upscale_contract.get("runtime_device") or ""),
+                        "dtype": str(upscale_contract.get("runtime_dtype") or ""),
+                    },
+                    "tiling": {
+                        "tile_size": int(upscale_contract.get("tile_size") or upscale_plan_contract.get("tile_size") or 0),
+                        "tile_overlap": int(upscale_contract.get("tile_overlap") or upscale_plan_contract.get("tile_overlap") or 0),
+                        "tile_batch_size": int(upscale_contract.get("tile_batch_size") or upscale_plan_contract.get("tile_batch_size") or 1),
+                        "tile_count": int(upscale_contract.get("tile_count") or 0),
+                    },
+                    "dimensions": {
+                        "base_width": int(source_shape[-1]) if len(source_shape) >= 2 else int(base_dimension_plan.requested_width),
+                        "base_height": int(source_shape[-2]) if len(source_shape) >= 2 else int(base_dimension_plan.requested_height),
+                        "target_width": int(hires_execution_plan.upscale_plan.target_width),
+                        "target_height": int(hires_execution_plan.upscale_plan.target_height),
+                        "exact_resize_filter": str(hires_execution_plan.upscale_plan.exact_resize_filter),
+                    },
+                    "refinement": {
+                        "requested_steps": int(hires_execution_plan.steps),
+                        "internal_steps": int(hires_execution_plan.internal_steps),
+                        "effective_steps": int(hires_schedule.effective_steps),
+                        "denoising_strength": float(hires_execution_plan.denoising_strength),
+                        "step_policy": str(hires_execution_plan.step_policy),
+                        "noise_policy": str(hires_execution_plan.noise_policy),
+                        "sampler_name": str(hires_request.sampler_name or ""),
+                        "scheduler_name": str(hires_request.scheduler_name or ""),
+                        "cfg_scale": float(hires_request.cfg_scale),
+                        "cfg_rescale": float(hires_request.cfg_rescale),
+                    },
+                    "vae": {
+                        "identity": str(vae_identity.get("identity") or vae_identity.get("source") or ""),
+                        "source_kind": str(vae_identity.get("source_kind") or ""),
+                        "sha256": str(vae_identity.get("sha256") or ""),
+                        "encode_dtype": str(vae_contract.get("posterior", {}).get("dtype") or vae_contract.get("sampling_latent", {}).get("dtype") or ""),
+                        "scaling_factor": vae_contract.get("sampling_latent", {}).get("scaling_factor", vae_contract.get("scaling_factor")),
+                    },
+                    "intermediate_artifacts": {
+                        "save_base": bool(getattr(request, "hires_save_lowres", False)),
+                        "save_upscaled_pre_denoise": bool(getattr(request, "hires_save_upscaled_pre_denoise", False)),
+                        "save_vae_roundtrip": bool(getattr(request, "hires_save_vae_roundtrip", False)),
+                        "hashes": {},
+                    },
+                    "replay_policy": {
+                        "neural_requires_exact_sha256": True,
+                        "missing_model_fallback_allowed": False,
+                        "legacy_missing_step_policy": "proportional_tail_v1",
+                    },
+                }
 
             diagnostic_settings = (
                 dict(request.diagnostics)
@@ -1335,6 +1858,7 @@ class GenerationPipeline:
                 "classification": "not_decoded",
             }
             if not request.return_latents:
+                final_decode_started = time.perf_counter() if pixel_hires_job else None
                 decoded_images = diagnostics.run_stage(
                     session,
                     "decoding",
@@ -1350,6 +1874,10 @@ class GenerationPipeline:
                         request=request,
                     ),
                 )
+                if final_decode_started is not None:
+                    pixel_hires_stage_timings["final_decode_ms"] = float(
+                        (time.perf_counter() - final_decode_started) * 1000.0
+                    )
                 consume_decode_report = getattr(
                     self.systems.decoding, "consume_last_decode_diagnostics", None
                 )
@@ -1519,6 +2047,17 @@ class GenerationPipeline:
                 attention_execution_by_pass["hires_pass"]
             )
             memory_summary = self.memory_manager.summary()
+            if pixel_hires_preflight is not None:
+                hires_metadata["memory_forecast_vs_actual"] = compare_preflight_to_actual(
+                    pixel_hires_preflight, memory_summary
+                )
+            if pixel_hires_job:
+                hires_metadata["phase14n6_stage_timings_ms"] = dict(
+                    pixel_hires_stage_timings
+                )
+                hires_metadata["phase14n6_transfer_count"] = len(
+                    list(memory_summary.get("transfers") or [])
+                )
             vae_memory_report = (
                 self.systems.decoding.memory_control_report()
                 if callable(
@@ -1572,6 +2111,16 @@ class GenerationPipeline:
                 memory_management=memory_summary,
                 hires_enabled=hires_execution_plan.enabled,
             )
+            if pixel_hires_job:
+                performance_index = dict(performance_summary.get("stage_index") or {})
+                final_decode_metric = dict(performance_index.get("final_decode") or {})
+                if final_decode_metric.get("duration_ms") is not None:
+                    pixel_hires_stage_timings["final_decode_ms"] = float(
+                        final_decode_metric["duration_ms"]
+                    )
+                hires_metadata["phase14n6_stage_timings_ms"] = dict(
+                    pixel_hires_stage_timings
+                )
             result = GenerationResult(
                 request=request,
                 images=images,
@@ -1643,6 +2192,15 @@ class GenerationPipeline:
                     session, result=result
                 )
             return result
+        except PixelHiresCancelled as exc:
+            pixel_hires_cancelled_stage = exc.stage
+            cleanup = self._cleanup_pixel_hires_scoped_runtime(
+                reason=f"cancelled:{exc.stage}"
+            )
+            session.request_extras["pixel_hires_cancellation_cleanup"] = cleanup
+            raise diagnostics.fail_unassigned(
+                session, exc, system="runtime", operation="pixel_hires_cancelled"
+            ) from exc
         except PipelineStageError:
             if self.memory_manager.failure_bundle:
                 session.request_extras["memory_failure_bundle"] = self.memory_manager.failure_bundle
@@ -1658,6 +2216,21 @@ class GenerationPipeline:
             raise diagnostics.fail_unassigned(
                 session, exc, system="runtime", operation="generate"
             ) from exc
+        finally:
+            if pixel_hires_job:
+                cleanup_reason = (
+                    f"cancelled:{pixel_hires_cancelled_stage}"
+                    if pixel_hires_cancelled_stage
+                    else "pixel_hires_job_complete_or_failed"
+                )
+                cleanup = self._cleanup_pixel_hires_scoped_runtime(
+                    reason=cleanup_reason
+                )
+                with suppress(Exception):
+                    self.memory_manager.record_external_stage_telemetry(
+                        "pixel_hires_cleanup",
+                        {"event": "completed", **cleanup},
+                    )
 
 
 class CustomSDPipeline(GenerationPipeline):

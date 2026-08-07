@@ -17,13 +17,21 @@ from image_gen.runtime.lora_inspector import (
     inspect_lora_file,
     lora_scan_cache_is_current,
 )
+from image_gen.webui.civitai_lora_metadata import (
+    CivitaiCredentialError,
+    CivitaiLoraMetadataClient,
+    CivitaiMetadataError,
+    read_civitai_api_key,
+)
 from image_gen.webui.asset_metadata import (
     load_asset_metadata,
+    preview_file_payload,
     replace_asset_preview,
     resolve_preview_path,
     save_asset_metadata,
     save_asset_sidecar_fields,
     sidecar_path,
+    synchronize_asset_companions,
 )
 from image_gen.webui.image_refs import encode_external_image_ref, is_within_root
 from image_gen.webui.output_details import load_image_file_details, load_output_details
@@ -65,6 +73,7 @@ class WebUICatalog:
         self._checkpoint_detail_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._lora_detail_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._checkpoint_inspector = CheckpointInspector()
+        self._civitai_lora_client = CivitaiLoraMetadataClient(context)
         self._output_summary_cache: dict[tuple[str, int], dict[str, Any]] = {}
         self.refresh_models()
 
@@ -154,7 +163,15 @@ class WebUICatalog:
     def _catalog_entry(self, item: dict[str, Any], *, asset_type: str) -> dict[str, Any]:
         path = Path(str(item.get("path") or "")).expanduser().resolve()
         metadata = load_asset_metadata(path)
+        if asset_type == "lora":
+            metadata = synchronize_asset_companions(path, metadata)
         preview = resolve_preview_path(path, metadata)
+        preview_payload = preview_file_payload(preview)
+        preview_revision = str(preview_payload.get("preview_revision") or "")
+        preview_url = ""
+        if preview_payload.get("has_preview"):
+            plural = "checkpoints" if asset_type == "checkpoint" else ("loras" if asset_type == "lora" else "textual-inversions")
+            preview_url = f"/api/assets/{plural}/{self._asset_id(path, asset_type)}/preview?v={quote(preview_revision, safe='')}"
         name = str(metadata.get("display_name") or item.get("name") or path.stem).strip()
         tags = metadata.get("tags") if isinstance(metadata.get("tags"), list) else []
         try:
@@ -171,9 +188,8 @@ class WebUICatalog:
             "size_bytes": int(path.stat().st_size) if path.is_file() else int(float(item.get("size_mb") or 0) * 1024 * 1024),
             "modified_iso": self._iso_modified(int(item.get("modified_ns") or 0)),
             "metadata_path": str(sidecar_path(path)),
-            "preview_path": str(preview) if preview else "",
-            "preview_url": f"/api/assets/{'checkpoints' if asset_type == 'checkpoint' else ('loras' if asset_type == 'lora' else 'textual-inversions')}/{self._asset_id(path, asset_type)}/preview" if preview else "",
-            "has_preview": bool(preview),
+            **preview_payload,
+            "preview_url": preview_url,
             "source_url": str(metadata.get("source_url") or ""),
             "description": str(metadata.get("description") or ""),
             "notes": str(metadata.get("notes") or ""),
@@ -332,12 +348,14 @@ class WebUICatalog:
             self._checkpoint_detail_cache = {cache_key: dict(technical)}
         metadata = load_asset_metadata(path)
         preview = resolve_preview_path(path, metadata)
+        preview_payload = preview_file_payload(preview)
+        preview_revision = str(preview_payload.get("preview_revision") or "")
         merged = self._merge_technical_record("checkpoint", asset_id, technical)
         return self._catalog_entry_payload("checkpoint", {
             **merged,
             "metadata": metadata,
-            "preview_path": str(preview) if preview else "",
-            "preview_url": f"/api/assets/checkpoints/{asset_id}/preview" if preview else "",
+            **preview_payload,
+            "preview_url": f"/api/assets/checkpoints/{asset_id}/preview?v={quote(preview_revision, safe='')}" if preview_payload.get("has_preview") else "",
         })
 
     @staticmethod
@@ -611,8 +629,10 @@ class WebUICatalog:
         record = self._asset_record("lora", asset_id)
         path = Path(record["path"]).resolve()
         technical, _ = self._inspect_lora_record(record)
-        metadata = load_asset_metadata(path)
+        metadata = synchronize_asset_companions(path, load_asset_metadata(path))
         preview = resolve_preview_path(path, metadata)
+        preview_payload = preview_file_payload(preview)
+        preview_revision = str(preview_payload.get("preview_revision") or "")
         resolved_family = str(metadata.get("model_family") or record.get("model_family") or technical.get("detected_model_family") or "")
         merged = self._merge_technical_record("lora", asset_id, {
             **technical,
@@ -623,9 +643,157 @@ class WebUICatalog:
         return self._catalog_entry_payload("lora", {
             **merged,
             "metadata": metadata,
-            "preview_path": str(preview) if preview else "",
-            "preview_url": f"/api/assets/loras/{asset_id}/preview" if preview else "",
+            **preview_payload,
+            "preview_url": f"/api/assets/loras/{asset_id}/preview?v={quote(preview_revision, safe='')}" if preview_payload.get("has_preview") else "",
         })
+
+    @staticmethod
+    def _editable_family_from_civitai(value: Any) -> str:
+        family = canonical_model_family(value)
+        return {
+            "sd1": "sd1.x",
+            "sd2": "sd2.x",
+            "sdxl": "sdxl",
+            "sd3": "sd3",
+            "flux": "flux",
+        }.get(family, family)
+
+    def enrich_lora_from_civitai(self, asset_id: str, *, overwrite: bool = False) -> dict[str, Any]:
+        record = self._asset_record("lora", asset_id)
+        path = Path(record["path"]).resolve()
+        technical, _ = self._inspect_lora_record(record)
+        result = self._civitai_lora_client.lookup_by_hashes((
+            technical.get("sha256"),
+            technical.get("a1111_hash"),
+        ))
+
+        metadata = synchronize_asset_companions(path, load_asset_metadata(path))
+        updates: dict[str, Any] = {}
+        activation_text = str(result.get("activation_text") or "").strip()
+        current_activation = str(metadata.get("activation_text") or record.get("activation_text") or "").strip()
+        if activation_text and (overwrite or not current_activation):
+            updates["activation_text"] = activation_text
+
+        source_url = str(result.get("source_url") or "").strip()
+        current_source_url = str(metadata.get("source_url") or record.get("source_url") or "").strip()
+        if source_url and (overwrite or not current_source_url):
+            updates["source_url"] = source_url
+
+        model_family = self._editable_family_from_civitai(result.get("base_model"))
+        current_family = str(metadata.get("model_family") or record.get("model_family") or "").strip()
+        if model_family and (overwrite or not current_family):
+            updates["model_family"] = model_family
+
+        description = str(result.get("description") or "").strip()
+        current_description = str(metadata.get("description") or record.get("description") or "").strip()
+        if description and (overwrite or not current_description):
+            updates["description"] = description
+
+        local_preview = resolve_preview_path(path, metadata)
+        preview_downloaded = False
+        preview_download_error = ""
+        civitai_image_url = str(result.get("image_url") or "").strip()
+        if local_preview is None and civitai_image_url:
+            try:
+                filename, content = self._civitai_lora_client.download_preview_image(civitai_image_url)
+                local_preview, metadata = replace_asset_preview(path, filename=filename, content=content)
+                metadata = synchronize_asset_companions(path, metadata)
+                preview_downloaded = True
+            except (CivitaiMetadataError, OSError, ValueError) as exc:
+                preview_download_error = str(exc)
+
+        lookup_payload = {
+            **dict(result),
+            "activation_text_applied": bool(updates.get("activation_text")),
+            "source_url_applied": bool(updates.get("source_url")),
+            "model_family_applied": bool(updates.get("model_family")),
+            "description_applied": bool(updates.get("description")),
+            "preview_image_downloaded": preview_downloaded,
+            "preview_image_path": str(local_preview) if local_preview else "",
+            "preview_image_download_error": preview_download_error,
+        }
+        save_asset_sidecar_fields(path, {**updates, "_civitai_lookup": lookup_payload})
+        refreshed = self._catalog_entry(record, asset_type="lora")
+        self._replace_catalog_record("lora", refreshed)
+        self._bump_catalog_revision("lora")
+        details = self.lora_details(asset_id)
+        details["civitai_lookup"] = lookup_payload
+        return details
+
+    def enrich_loras_from_civitai(self, *, mode: str = "missing") -> dict[str, Any]:
+        normalized_mode = str(mode or "missing").strip().lower()
+        if normalized_mode not in {"missing", "all"}:
+            raise ValueError(f"Unsupported Civitai LoRA metadata mode: {mode}")
+
+        # Validate the private-key configuration once so a bulk request fails
+        # clearly instead of repeating the same credential error for every file.
+        read_civitai_api_key(self.context)
+
+        matched = 0
+        activation_text_found = 0
+        manual_search_required = 0
+        previews_downloaded = 0
+        preview_download_errors = 0
+        skipped = 0
+        errors: list[dict[str, str]] = []
+        for record in list(self._loras):
+            path = Path(str(record.get("path") or "")).expanduser().resolve()
+            if not path.is_file():
+                continue
+            metadata = synchronize_asset_companions(path, load_asset_metadata(path))
+            lookup = metadata.get("_civitai_lookup")
+            lookup = dict(lookup) if isinstance(lookup, dict) else {}
+            has_activation = bool(str(metadata.get("activation_text") or record.get("activation_text") or "").strip())
+            has_source = bool(str(metadata.get("source_url") or record.get("source_url") or lookup.get("source_url") or "").strip())
+            has_preview = resolve_preview_path(path, metadata) is not None
+            try:
+                lookup_schema = int(lookup.get("schema_version") or 0)
+            except (TypeError, ValueError):
+                lookup_schema = 0
+            preview_lookup_complete = (
+                lookup_schema >= 2
+                and str(lookup.get("status") or "").strip().lower() == "matched"
+                and not str(lookup.get("image_url") or "").strip()
+            )
+            if normalized_mode == "missing" and has_activation and has_source and (has_preview or preview_lookup_complete):
+                skipped += 1
+                continue
+            try:
+                details = self.enrich_lora_from_civitai(str(record.get("asset_id") or ""), overwrite=False)
+                civitai = details.get("civitai_lookup")
+                civitai = dict(civitai) if isinstance(civitai, dict) else {}
+                matched += 1
+                if civitai.get("activation_text"):
+                    activation_text_found += 1
+                if civitai.get("manual_activation_text_search_required"):
+                    manual_search_required += 1
+                if civitai.get("preview_image_downloaded"):
+                    previews_downloaded += 1
+                if civitai.get("preview_image_download_error"):
+                    preview_download_errors += 1
+            except CivitaiCredentialError:
+                raise
+            except CivitaiMetadataError as exc:
+                errors.append({
+                    "asset_id": str(record.get("asset_id") or ""),
+                    "filename": str(record.get("filename") or path.name),
+                    "error": str(exc),
+                })
+
+        return {
+            "catalog": self.catalog_status("lora")["catalogs"]["lora"],
+            "loras": self.asset_list("lora"),
+            "civitai": {
+                "mode": normalized_mode,
+                "matched": matched,
+                "activation_text_found": activation_text_found,
+                "manual_search_required": manual_search_required,
+                "previews_downloaded": previews_downloaded,
+                "preview_download_errors": preview_download_errors,
+                "skipped": skipped,
+                "errors": errors,
+            },
+        }
 
     def asset_list(self, asset_type: str) -> list[dict[str, Any]]:
         mapping = {
@@ -719,7 +887,10 @@ class WebUICatalog:
 
     def asset_preview_path(self, asset_type: str, asset_id: str) -> Path:
         record = self._asset_record(asset_type, asset_id)
-        preview = resolve_preview_path(record["path"], load_asset_metadata(record["path"]))
+        metadata = load_asset_metadata(record["path"])
+        if asset_type == "lora":
+            metadata = synchronize_asset_companions(record["path"], metadata)
+        preview = resolve_preview_path(record["path"], metadata)
         if preview is None:
             raise FileNotFoundError("No preview image is configured for this asset.")
         return preview

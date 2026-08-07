@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import json
+import os
+import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +25,82 @@ from modules.txt2img.output_saver import (
     SavedImageRecord,
     save_generation_batch,
 )
+
+
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _record_artifact_hash_sidecar(
+    record: SavedImageRecord,
+    *,
+    role: str,
+    sha256: str,
+) -> None:
+    if not record.json_path:
+        return
+    path = Path(record.json_path)
+    if not path.is_file():
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    extra = payload.setdefault("extra", {})
+    if not isinstance(extra, dict):
+        extra = {}
+        payload["extra"] = extra
+    extra["artifact_role"] = str(role)
+    extra["artifact_sha256"] = str(sha256)
+    extra["artifact_hash_type"] = "sha256"
+    temporary = path.with_name(f".{path.stem}.{uuid.uuid4().hex}.tmp{path.suffix}")
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _record_manifest_intermediate_hashes(
+    manifest: GenerationManifest,
+    hashes: dict[str, list[str]],
+) -> None:
+    if not hashes:
+        return
+    extra = manifest.extra
+    pipeline = extra.setdefault("pipeline_metadata", {})
+    if not isinstance(pipeline, dict):
+        pipeline = {}
+        extra["pipeline_metadata"] = pipeline
+    hires = pipeline.setdefault("hires_fix", {})
+    if not isinstance(hires, dict):
+        hires = {}
+        pipeline["hires_fix"] = hires
+    diagnostics = hires.setdefault("phase14n7_diagnostics", {})
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+        hires["phase14n7_diagnostics"] = diagnostics
+    artifacts = diagnostics.setdefault("intermediate_artifacts", {})
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+        diagnostics["intermediate_artifacts"] = artifacts
+    artifacts["hash_type"] = "sha256"
+    artifacts["hashes"] = {
+        str(role): list(values)
+        for role, values in sorted(hashes.items())
+    }
 
 
 def _build_prompt_asset_manifest_entries(
@@ -85,6 +166,14 @@ def _build_prompt_asset_manifest_entries(
 
 
 @dataclass
+class PreparedAuxiliaryImageBatch:
+    role: str
+    prefix: str
+    images: list[Image.Image] = field(default_factory=list)
+    manifest: Any | None = None
+
+
+@dataclass
 class PreparedOutputSaveRequest:
     output_dir: str
     final_prefix: str
@@ -95,7 +184,9 @@ class PreparedOutputSaveRequest:
     lowres_prefix: str | None = None
     lowres_images: list[Image.Image] = field(default_factory=list)
     lowres_manifest: Any | None = None
+    auxiliary_batches: list[PreparedAuxiliaryImageBatch] = field(default_factory=list)
     expected_count: int = 0
+    artifact_disk_budget_mb: int = 0
 
 
 class OutputSystem:
@@ -390,9 +481,37 @@ class OutputSystem:
         lowres.extra["hires_parent"] = {
             "enabled": True,
             "scale": float(getattr(request, "hires_scale", 1.5) or 1.5),
-            "upscaler": str(getattr(request, "hires_upscaler", "latent_bicubic") or "latent_bicubic"),
+            "upscaler": str(getattr(request, "hires_upscaler", "") or ""),
         }
         return lowres
+
+
+    @staticmethod
+    def _build_auxiliary_manifest(
+        manifest: Any | None,
+        *,
+        role: str,
+        images: list[Image.Image],
+        request: GenerationRequest,
+    ) -> GenerationManifest | None:
+        if manifest is None:
+            return None
+        source = manifest.to_dict() if hasattr(manifest, "to_dict") else dict(manifest)
+        auxiliary = GenerationManifest.from_dict(json_safe(source))
+        auxiliary.extra["artifact_role"] = str(role)
+        auxiliary.extra["artifact_source"] = "phase14n5_pixel_neural_hires"
+        if images:
+            auxiliary.extra["output_dimensions"] = {
+                "width": int(images[0].width),
+                "height": int(images[0].height),
+            }
+        auxiliary.extra["hires_parent"] = {
+            "enabled": bool(getattr(request, "hires_enabled", False)),
+            "strategy": str(getattr(request, "hires_strategy", "latent") or "latent"),
+            "upscaler_id": str(getattr(request, "hires_upscaler_id", "") or ""),
+            "legacy_upscaler": str(getattr(request, "hires_upscaler", "") or ""),
+        }
+        return auxiliary
 
 
     @staticmethod
@@ -423,6 +542,9 @@ class OutputSystem:
             save_txt=bool(save_txt),
             save_json=bool(save_json),
             expected_count=len(final_images),
+            artifact_disk_budget_mb=max(0, int(
+                getattr(request, "hires_artifact_disk_budget_mb", 0) or 0
+            )),
         )
         lowres_images = pipeline_result.auxiliary_images.get("hires_base_lowres")
         if (
@@ -434,31 +556,134 @@ class OutputSystem:
             prepared.lowres_images = GenerationOutputSaver._coerce_pil_images(lowres_images)
             prepared.lowres_manifest = self._build_lowres_manifest(manifest, request)
             prepared.expected_count += len(prepared.lowres_images)
+        for role, prefix in (
+            ("hires_upscaled_pre_denoise", f"upscaled-pre-denoise-{request.output_prefix}"),
+            ("hires_vae_roundtrip", f"vae-roundtrip-{request.output_prefix}"),
+        ):
+            values = pipeline_result.auxiliary_images.get(role)
+            if values is None:
+                continue
+            images = GenerationOutputSaver._coerce_pil_images(values)
+            prepared.auxiliary_batches.append(
+                PreparedAuxiliaryImageBatch(
+                    role=role,
+                    prefix=prefix,
+                    images=images,
+                    manifest=self._build_auxiliary_manifest(
+                        manifest, role=role, images=images, request=request
+                    ),
+                )
+            )
+            prepared.expected_count += len(images)
         return prepared
 
+    @staticmethod
+    def _estimate_prepared_disk_bytes(prepared: PreparedOutputSaveRequest) -> int:
+        images = list(prepared.images) + list(prepared.lowres_images)
+        for batch in prepared.auxiliary_batches:
+            images.extend(batch.images)
+        raw_rgb = sum(int(image.width) * int(image.height) * 3 for image in images)
+        sidecar_count = len(images) * int(bool(prepared.save_txt) + bool(prepared.save_json))
+        # Reserve space for atomic temporary files and noisy PNGs that compress poorly.
+        return int(raw_rgb * 2.20 + sidecar_count * 1024 * 1024)
+
+    @classmethod
+    def _enforce_prepared_disk_budget(cls, prepared: PreparedOutputSaveRequest) -> dict[str, Any]:
+        output_dir = Path(prepared.output_dir).expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        estimated = cls._estimate_prepared_disk_bytes(prepared)
+        available = int(shutil.disk_usage(output_dir).free)
+        configured_mb = int(
+            getattr(prepared, "artifact_disk_budget_mb", 0) or 0
+        )
+        configured = configured_mb * 1024 * 1024 if configured_mb > 0 else None
+        if estimated > available:
+            raise OSError(
+                f"Atomic output save requires approximately {estimated} bytes, but only {available} bytes are free."
+            )
+        if configured is not None and estimated > configured:
+            raise OSError(
+                f"Atomic output save estimate {estimated} exceeds the configured artifact budget {configured}."
+            )
+        return {
+            "schema_version": "phase14n6-output-disk-budget-v1",
+            "estimated_bytes": estimated,
+            "available_bytes": available,
+            "configured_budget_bytes": configured,
+            "admitted": True,
+            "atomic_commit": True,
+        }
+
     def save_prepared(self, prepared: PreparedOutputSaveRequest) -> list[SavedImageRecord]:
+        self._enforce_prepared_disk_budget(prepared)
         records: list[SavedImageRecord] = []
-        if prepared.lowres_images:
-            lowres_records = save_generation_batch(
-                images=prepared.lowres_images,
+        intermediate_hashes: dict[str, list[str]] = {}
+        try:
+            if prepared.lowres_images:
+                lowres_records = save_generation_batch(
+                    images=prepared.lowres_images,
+                    output_dir=prepared.output_dir,
+                    prefix=str(prepared.lowres_prefix or "lowres"),
+                    manifest=self._copy_manifest(prepared.lowres_manifest),
+                    save_txt=prepared.save_txt,
+                    save_json=prepared.save_json,
+                )
+                records.extend(lowres_records)
+                for record in lowres_records:
+                    artifact_sha256 = _sha256_file(record.image_path)
+                    intermediate_hashes.setdefault("hires_base_lowres", []).append(artifact_sha256)
+                    _record_artifact_hash_sidecar(
+                        record,
+                        role="hires_base_lowres",
+                        sha256=artifact_sha256,
+                    )
+
+            for batch in prepared.auxiliary_batches:
+                batch_records = save_generation_batch(
+                    images=batch.images,
+                    output_dir=prepared.output_dir,
+                    prefix=batch.prefix,
+                    manifest=self._copy_manifest(batch.manifest),
+                    save_txt=prepared.save_txt,
+                    save_json=prepared.save_json,
+                )
+                # Register the committed batch before post-commit sidecar hashing
+                # so a hash/sidecar failure rolls back every file in this batch.
+                records.extend(batch_records)
+                for record in batch_records:
+                    artifact_sha256 = _sha256_file(record.image_path)
+                    intermediate_hashes.setdefault(batch.role, []).append(artifact_sha256)
+                    _record_artifact_hash_sidecar(
+                        record,
+                        role=batch.role,
+                        sha256=artifact_sha256,
+                    )
+
+            _record_manifest_intermediate_hashes(prepared.manifest, intermediate_hashes)
+            final_records = save_generation_batch(
+                images=prepared.images,
                 output_dir=prepared.output_dir,
-                prefix=str(prepared.lowres_prefix or "lowres"),
-                manifest=self._copy_manifest(prepared.lowres_manifest),
+                prefix=prepared.final_prefix,
+                manifest=self._copy_manifest(prepared.manifest),
                 save_txt=prepared.save_txt,
                 save_json=prepared.save_json,
             )
-            records.extend(lowres_records)
-
-        final_records = save_generation_batch(
-            images=prepared.images,
-            output_dir=prepared.output_dir,
-            prefix=prepared.final_prefix,
-            manifest=self._copy_manifest(prepared.manifest),
-            save_txt=prepared.save_txt,
-            save_json=prepared.save_json,
-        )
-        records.extend(final_records)
-        return records
+            records.extend(final_records)
+            return records
+        except Exception:
+            # The complete prepared save is one transaction. Remove already
+            # committed low-res/diagnostic/final artifacts from this request so
+            # cancellation or a later-batch failure cannot leave a misleading
+            # partial diagnostic set behind.
+            for record in reversed(records):
+                for raw_path in (record.image_path, record.txt_path, record.json_path):
+                    if not raw_path:
+                        continue
+                    try:
+                        Path(raw_path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            raise
 
     def save(
         self,
@@ -486,5 +711,28 @@ class OutputSystem:
                 record.image_path for record in records[: len(prepared.lowres_images)]
             ]
 
+        if prepared.auxiliary_batches:
+            hires_metadata = pipeline_result.metadata.setdefault("hires_fix", {})
+            offset = len(prepared.lowres_images)
+            for batch in prepared.auxiliary_batches:
+                count = len(batch.images)
+                batch_records = records[offset : offset + count]
+                artifact_records = [
+                    {
+                        "image_path": record.image_path,
+                        "sha256": _sha256_file(record.image_path),
+                        "hash_type": "sha256",
+                    }
+                    for record in batch_records
+                ]
+                artifact_metadata = hires_metadata.setdefault(
+                    "intermediate_artifacts", {}
+                ).setdefault(batch.role, {})
+                artifact_metadata["saved_paths"] = [
+                    item["image_path"] for item in artifact_records
+                ]
+                artifact_metadata["saved_artifacts"] = artifact_records
+                artifact_metadata["hashes_recorded_after_persistence"] = True
+                offset += count
         pipeline_result.saved_paths = [record.image_path for record in records]
         return records

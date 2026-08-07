@@ -84,7 +84,7 @@
           <input id="hiresEnabled" name="hires_enabled" type="checkbox">
           <span>Enable hires / second-pass generation</span>
         </label>
-        <small class="field-status subtle">The base image is sampled first, its latent is enlarged, and a second denoising pass refines the selected hires dimensions.</small>
+        <small class="field-status subtle">The base image is decoded, enlarged by the selected neural .pth upscaler, re-encoded, and refined by the second denoising pass.</small>
         <div class="prompt-parser-grid" id="hiresRoutingControls">
           <label class="field-block" id="hiresParserModeField">
             <span>Hires parser mode</span>
@@ -150,14 +150,49 @@
             </select>
           </label>
           <label class="field-block">
-            <span>Latent upscaler</span>
+            <span>Hires strategy</span>
+            <select id="hiresStrategy" name="hires_strategy">
+              <option value="pixel_neural" selected>Pixel neural (.pth)</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Upscaler</span>
             <select id="hiresUpscaler" name="hires_upscaler">
-              <option value="latent_bicubic" selected>Latent bicubic</option>
-              <option value="latent_bilinear">Latent bilinear</option>
-              <option value="latent_nearest">Latent nearest</option>
+              <option value="" selected disabled>Refresh to discover supported .pth upscalers</option>
             </select>
           </label>
         </div>
+        <div class="prompt-parser-grid hires-upscaler-runtime-grid">
+          <label class="field-block">
+            <span>Neural tile size</span>
+            <input id="hiresTileSize" name="hires_tile_size" type="number" min="0" max="4096" step="8" value="0" placeholder="Auto">
+          </label>
+          <label class="field-block">
+            <span>Tile overlap</span>
+            <input id="hiresTileOverlap" name="hires_tile_overlap" type="number" min="0" max="512" step="1" value="16">
+          </label>
+          <label class="field-block">
+            <span>Tile batch size</span>
+            <input id="hiresTileBatchSize" name="hires_tile_batch_size" type="number" min="1" max="64" step="1" value="1">
+          </label>
+          <label class="field-block">
+            <span>Exact resize filter</span>
+            <select id="hiresExactResizeFilter" name="hires_exact_resize_filter">
+              <option value="bicubic" selected>Bicubic</option>
+              <option value="bilinear">Bilinear</option>
+              <option value="nearest">Nearest</option>
+              <option value="area">Area</option>
+            </select>
+          </label>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary-button" id="refreshUpscalersButton" type="button">Refresh upscalers</button>
+          <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
+        </div>
+        <details id="hiresUpscalerDiagnostics">
+          <summary>Upscaler discovery diagnostics</summary>
+          <pre id="hiresUpscalerDiagnosticsText" class="metadata-pre">No unsupported upscaler files were reported.</pre>
+        </details>
         <small class="field-status subtle">Denoising strength controls how much freedom the second pass has to change the upscaled image. Refinement steps control how many denoising transitions are executed.</small>
         <small id="hiresStepSummary" class="field-status hires-schedule-summary">Fixed executed steps: 20 requested · 50 internal schedule transitions · 20 executed.</small>
         <div class="prompt-parser-grid hires-runtime-grid">
@@ -187,7 +222,15 @@
           <input id="hiresSaveLowres" name="hires_save_lowres" type="checkbox" checked>
           <span>Save the exact low-resolution base artifact</span>
         </label>
-        <small class="field-status subtle">The low-resolution artifact is decoded from the exact in-memory base latent used by the hires pass; it is not generated a second time.</small>
+        <label class="checkbox-row">
+          <input id="hiresSaveUpscaledPreDenoise" name="hires_save_upscaled_pre_denoise" type="checkbox">
+          <span>Save the pixel-upscaled pre-denoise artifact</span>
+        </label>
+        <label class="checkbox-row">
+          <input id="hiresSaveVaeRoundtrip" name="hires_save_vae_roundtrip" type="checkbox">
+          <span>Save the deterministic VAE round-trip artifact</span>
+        </label>
+        <small class="field-status subtle">Diagnostic artifacts preserve the exact neural source and VAE round-trip used by the second pass. They are opt-in because they consume additional disk space.</small>
         <input id="hiresPromptParserKwargs" type="hidden" value="{}">
         <input id="hiresShortcutProfileSnapshot" type="hidden" value="{}">
         <div class="prompt-parser-settings-grid" id="hiresPromptParserAdvancedContent"></div>
@@ -496,6 +539,10 @@
     <div class="region-builder-launch-row">
       <button class="secondary-button" id="openRegionBuilderButton" type="button">Open REGION Builder</button>
       <small class="field-status subtle">Parser-independent REGION addon for the active positive prompt target.</small>
+    </div>
+    <div class="generation-interrupt-row">
+      <button class="secondary-button is-hidden" id="pauseGenerationButton" type="button">Pause After Current Image</button>
+      <button class="secondary-button is-hidden" id="skipGenerationButton" type="button">Skip Current Image</button>
     </div>
     <button class="danger-button is-hidden" id="cancelButton" type="button">Cancel Active Generation</button>
   </form>

@@ -29,6 +29,15 @@ from image_gen.webui.batch_replay import BatchReplayService
 from image_gen.webui.diagnostics import write_webui_failure_bundle
 from image_gen.webui.default_assets import resolve_default_assets
 from image_gen.webui.catalog import ASSET_CATALOG_CONTRACT_VERSION, WebUICatalog
+from image_gen.webui.upscaler_catalog import (
+    UPSCALER_CATALOG_CONTRACT_VERSION,
+    WebUIUpscalerCatalog,
+)
+from image_gen.webui.civitai_lora_metadata import (
+    CivitaiCredentialError,
+    CivitaiMetadataNotFound,
+    CivitaiRequestError,
+)
 from image_gen.webui.image_refs import decode_external_image_ref, is_within_root
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import WebUIModelSelectionState
@@ -96,6 +105,7 @@ def create_app(
     server_instance_id = uuid.uuid4().hex
     server_started_at_unix = time.time()
     catalog = WebUICatalog(context)
+    upscaler_catalog = WebUIUpscalerCatalog(context)
     store = WebUIStore(context.data_root / "webui")
     application_settings = store.load_application_settings()
     if isinstance(runtime_startup_options, RuntimeStartupOptions):
@@ -120,7 +130,7 @@ def create_app(
     jobs.runtime_startup_options = resolved_runtime_startup.to_dict()
     model_selection = WebUIModelSelectionState(context)
     selections = WebUISelectionResolver(jobs.registry)
-    replay = ReplayService(context, jobs, model_selection)
+    replay = ReplayService(context, jobs, model_selection, upscaler_catalog=upscaler_catalog)
     batch_replay = BatchReplayService(replay, jobs, model_selection)
     batch_io = BatchIOService(context, jobs, model_selection)
     variations = VariationMatrixService(context, jobs, model_selection, batch_io)
@@ -511,6 +521,7 @@ def create_app(
             "api_contract": {
                 "asset_catalog_contract_version": ASSET_CATALOG_CONTRACT_VERSION,
                 "prompt_asset_contract_version": PROMPT_ASSET_CONTRACT_VERSION,
+                "upscaler_catalog_contract_version": UPSCALER_CATALOG_CONTRACT_VERSION,
                 "model_activation_routes": [
                     "/api/models/activate",
                     "/api/model/activate",
@@ -543,6 +554,10 @@ def create_app(
                 "default_asset_routes": [
                     "/api/default-assets",
                 ],
+                "upscaler_catalog_routes": [
+                    "/api/upscalers",
+                    "/api/upscalers/refresh",
+                ],
                 "asset_catalog_routes": [
                     "/api/assets/catalog",
                     "/api/assets/refresh",
@@ -573,6 +588,7 @@ def create_app(
             "default_assets": _default_asset_payload(),
             "runtime_startup_status": _runtime_startup_status(),
             "plugins": catalog.plugins(),
+            "upscalers": upscaler_catalog.payload(),
             **prompt_configuration.bootstrap_payload(),
             "models": catalog.model_payload(),
             "active_model": model_selection.current_payload(),
@@ -582,6 +598,24 @@ def create_app(
             "generation_profiles": store.list_profiles("generation"),
             "worker": jobs.status(),
         }
+
+    @app.get("/api/upscalers")
+    async def upscaler_catalog_status() -> dict[str, Any]:
+        return upscaler_catalog.payload()
+
+    @app.post("/api/upscalers/refresh")
+    async def refresh_upscaler_catalog(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        values = payload or {}
+        mode = str(values.get("mode") or "all").strip().casefold()
+        selected_file = str(values.get("selected_file") or "").strip() or None
+        try:
+            return await asyncio.to_thread(
+                upscaler_catalog.refresh,
+                mode=mode,
+                selected_file=selected_file,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/models/refresh")
     async def refresh_models() -> dict[str, Any]:
@@ -709,6 +743,43 @@ def create_app(
         try:
             return await asyncio.to_thread(catalog.scan_loras, mode=mode)
         except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/assets/loras/civitai-metadata")
+    async def enrich_lora_assets_from_civitai(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        mode = str((payload or {}).get("mode") or "missing").strip().lower()
+        try:
+            return await asyncio.to_thread(catalog.enrich_loras_from_civitai, mode=mode)
+        except CivitaiCredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CivitaiRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/assets/loras/{asset_id}/civitai-metadata")
+    async def enrich_lora_asset_from_civitai(
+        asset_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        overwrite = bool((payload or {}).get("overwrite", False))
+        try:
+            return await asyncio.to_thread(
+                catalog.enrich_lora_from_civitai,
+                asset_id,
+                overwrite=overwrite,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CivitaiMetadataNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CivitaiCredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CivitaiRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/assets/loras/{asset_id}")
@@ -968,6 +1039,7 @@ def create_app(
         catalog.refresh_models()
         return {
             "plugins": catalog.plugins(),
+            "upscalers": upscaler_catalog.payload(),
             **prompt_configuration.bootstrap_payload(),
             "models": catalog.model_payload(),
             "recent_outputs": _visible_recent_outputs(),
@@ -1488,6 +1560,27 @@ def create_app(
             "worker": jobs.status(),
         }
 
+    @app.post("/api/queue/pause-after-current")
+    async def pause_queue_after_current(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            worker = await jobs.pause_after_current(
+                str((payload or {}).get("job_id") or "").strip() or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "jobs": jobs.list_jobs(),
+            "worker": worker,
+        }
+
+    @app.post("/api/queue/resume")
+    async def resume_generation_queue() -> dict[str, Any]:
+        worker = await jobs.resume_queue()
+        return {
+            "jobs": jobs.list_jobs(),
+            "worker": worker,
+        }
+
     @app.post("/api/schedulers/validate")
     async def validate_scheduler(payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -1524,6 +1617,7 @@ def create_app(
                 status_code=409,
             ) from exc
         try:
+            authoritative_payload = upscaler_catalog.validate_request(authoritative_payload)
             job = await jobs.submit(
                 authoritative_payload,
                 model_selection=selected_model.to_dict(),
@@ -1577,6 +1671,16 @@ def create_app(
                 detail="Generation is complete and output saving is in progress. The save operation will continue.",
             )
         job = await jobs.cancel(job_id)
+        return job.to_dict()
+
+    @app.post("/api/jobs/{job_id}/skip")
+    async def skip_job_image(job_id: str) -> dict[str, Any]:
+        try:
+            job = await jobs.skip_current(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Generation job not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return job.to_dict()
 
     @app.get("/api/jobs/{job_id}/events")

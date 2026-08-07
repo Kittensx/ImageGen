@@ -1,4 +1,4 @@
-import { api } from "../api.js";
+import { api } from "../api.js?v=0.1.75";
 import { state } from "../state.js";
 import { $, shortText, formatTime, notify } from "../utils.js";
 import {
@@ -23,17 +23,7 @@ let eventStream = null;
 let eventStreamJobId = null;
 let eventStreamFailures = 0;
 let eventStreamDisabledUntil = 0;
-
-function requestUsesRegion(values = {}) {
-  const prompts = [values.positive_prompt, values.hires_positive_prompt];
-  return prompts.some((prompt) => String(prompt || "").includes("REGION{"));
-}
-
-const REGION_FOREVER_BLOCK_MESSAGE =
-  "Generate Forever is temporarily disabled while REGION prompting is active. " +
-  "REGION performs extra UNet evaluations for every active branch and has not yet " +
-  "passed sustained-run thermal and memory qualification. Use a finite batch count " +
-  "with batch size 1 while REGION is enabled.";
+let workerState = {};
 
 function setSubmissionBusy(active, stage = "") {
   ["#generateButton", "#topGenerateButton"].forEach((selector) => {
@@ -74,8 +64,8 @@ function scheduleRecentOutputsPolling() {
   }, delay);
 }
 
-const ACTIVE_JOB_STATUSES = new Set(["preparing_model", "warming_model", "running", "finalizing", "cancelling"]);
-const CANCELLABLE_JOB_STATUSES = new Set(["preparing_model", "warming_model", "running"]);
+const ACTIVE_JOB_STATUSES = new Set(["preparing_model", "warming_model", "running", "paused", "finalizing", "cancelling"]);
+const CANCELLABLE_JOB_STATUSES = new Set(["preparing_model", "warming_model", "running", "paused"]);
 
 function isTerminalStatus(status) {
   return ["completed", "cancelled", "failed"].includes(String(status || ""));
@@ -83,7 +73,7 @@ function isTerminalStatus(status) {
 
 function queueFilterStatus(job) {
   const status = String(job?.status || "");
-  return ["preparing_model", "warming_model", "finalizing"].includes(status) ? "running" : status;
+  return ["preparing_model", "warming_model", "paused", "finalizing"].includes(status) ? "running" : status;
 }
 
 function humanizeStage(value) {
@@ -273,11 +263,19 @@ function renderWarmWorkerStatus(warm = {}) {
 }
 
 function renderWorker(worker) {
+  workerState = worker || {};
   const online = Boolean(worker?.online);
+  const pauseLabel = worker?.queue_paused
+    ? "Paused"
+    : worker?.queue_pause_requested
+      ? "Pause pending"
+      : "";
   $("#workerText").textContent = online
-    ? worker.active_job_id ? `Active · ${worker.queued} queued` : `Online · ${worker.queued} queued`
+    ? pauseLabel
+      ? `${pauseLabel} · ${worker.queued} queued`
+      : worker.active_job_id ? `Active · ${worker.queued} queued` : `Online · ${worker.queued} queued`
     : "Offline";
-  $("#footerWorkerStatus").textContent = `Worker: ${online ? "online" : "offline"}`;
+  $("#footerWorkerStatus").textContent = `Worker: ${online ? (pauseLabel || "online").toLowerCase() : "offline"}`;
   $("#workerPill").classList.toggle("is-offline", !online);
   renderWarmWorkerStatus(worker?.warm_worker || {});
 }
@@ -356,6 +354,20 @@ function renderQueue(jobs) {
       if (failedSaves > 0) saveParts.push(`${failedSaves} failed`);
       saveStatus.textContent = `Output save queue: ${saveParts.join(" · ")}`;
       card.append(saveStatus);
+    }
+    if (job.pause_after_current_requested || job.status === "paused") {
+      const pauseStatus = document.createElement("small");
+      pauseStatus.className = "queue-diagnostic-path";
+      pauseStatus.textContent = job.status === "paused"
+        ? "Queue paused between images."
+        : "Queue will pause after the current image finishes.";
+      card.append(pauseStatus);
+    }
+    if (Number(job.skipped_images || 0) > 0) {
+      const skipStatus = document.createElement("small");
+      skipStatus.className = "queue-diagnostic-path";
+      skipStatus.textContent = `${job.skipped_images} image${Number(job.skipped_images) === 1 ? "" : "s"} skipped.`;
+      card.append(skipStatus);
     }
     const outputQuality = job.output_quality_diagnostics || {};
     if (outputQuality.suspect) {
@@ -487,9 +499,41 @@ function updateActiveState() {
   }
   const job = monitoredJob();
   const forever = Boolean(running?.request?.unlimited);
+  const queuePauseRequested = Boolean(workerState?.queue_pause_requested);
+  const canRequestPause = Boolean(
+    running
+    && !["finalizing", "cancelling"].includes(String(running.status || "")),
+  );
+  const pauseControlAvailable = queuePauseRequested || canRequestPause || Number(workerState?.queued || 0) > 0;
+  const pauseLabel = queuePauseRequested
+    ? "▶ Resume Queue"
+    : running?.status === "paused"
+      ? "▶ Resume Queue"
+      : "⏸ Pause After Current Image";
+  const canSkip = Boolean(
+    running
+    && running.status === "running"
+    && !running.skip_current_requested
+    && String(workerState?.model_runtime?.current_job_id || "") === String(running.job_id || ""),
+  );
   $("#cancelButton").classList.toggle("is-hidden", !jobCanBeCancelled(running));
   $("#topCancelButton")?.classList.toggle("is-disabled", !jobCanBeCancelled(running));
   if ($("#topCancelButton")) $("#topCancelButton").disabled = !jobCanBeCancelled(running);
+  ["#pauseGenerationButton", "#topPauseButton"].forEach((selector) => {
+    const button = $(selector);
+    if (!button) return;
+    button.textContent = pauseLabel;
+    button.disabled = !pauseControlAvailable;
+    button.classList.toggle("is-hidden", selector === "#pauseGenerationButton" && !pauseControlAvailable);
+    button.classList.toggle("is-active", queuePauseRequested);
+  });
+  ["#skipGenerationButton", "#topSkipButton"].forEach((selector) => {
+    const button = $(selector);
+    if (!button) return;
+    button.textContent = running?.skip_current_requested ? "Skipping…" : "⏭ Skip Current Image";
+    button.disabled = !canSkip;
+    button.classList.toggle("is-hidden", selector === "#skipGenerationButton" && !running);
+  });
   $("#infinityButton").classList.toggle("is-active", forever);
   $("#infinityButton").textContent = forever ? "[ ∞ Generating ]" : "∞ Generate Forever";
   renderLivePreviewJob(job);
@@ -613,6 +657,8 @@ function connectEventStream(job) {
 
   bindEvent("job-started", applyEventPayload);
   bindEvent("job-progress", applyEventPayload);
+  bindEvent("job-paused", applyEventPayload);
+  bindEvent("job-image-skipped", applyEventPayload);
   bindEvent("step-preview", applyEventPayload);
   bindEvent("job-output-produced", async (payload) => {
     applyEventPayload(payload);
@@ -719,9 +765,6 @@ async function submit(unlimited) {
   setSubmissionBusy(true, "Validating…");
   try {
     const values = { ...collectValues(), unlimited: Boolean(unlimited) };
-    if (values.unlimited && requestUsesRegion(values)) {
-      throw new Error(REGION_FOREVER_BLOCK_MESSAGE);
-    }
     setSubmissionBusy(true, "Validating prompt…");
     const promptPreflight = await preflightCurrentPrompt(values);
     const promptErrors = promptPreflight.blocking_errors || [];
@@ -801,6 +844,42 @@ async function cancelActive() {
   }
 }
 
+async function togglePauseQueue() {
+  const active = activeJob();
+  try {
+    if (workerState?.queue_pause_requested) {
+      const response = await api.resumeQueue();
+      renderWorker(response.worker || {});
+      renderQueue(response.jobs || state.jobs);
+      notify("Generation queue resumed.");
+    } else {
+      const response = await api.pauseQueueAfterCurrent(active?.job_id || "");
+      renderWorker(response.worker || {});
+      renderQueue(response.jobs || state.jobs);
+      notify(active ? "Queue will pause after the current image finishes." : "Generation queue paused.");
+    }
+    updateActiveState();
+    await pollJobs();
+  } catch (error) {
+    notify(error.message, "error");
+  }
+}
+
+async function skipCurrentImage() {
+  const active = activeJob();
+  if (!active || active.status !== "running") {
+    notify("There is no actively sampling image to skip.", "warning");
+    return;
+  }
+  try {
+    await api.skipJobImage(active.job_id);
+    notify("Skipping the current image. The remaining queue will continue.");
+    await pollJobs();
+  } catch (error) {
+    notify(error.message, "error");
+  }
+}
+
 export function bindGeneration(options) {
   collectValues = options.collectValues;
   refreshOutputs = options.refreshOutputs;
@@ -823,12 +902,16 @@ export function bindGeneration(options) {
     else submit(true);
   });
   $("#topCancelButton")?.addEventListener("click", cancelActive);
+  $("#topPauseButton")?.addEventListener("click", togglePauseQueue);
+  $("#topSkipButton")?.addEventListener("click", skipCurrentImage);
   $("#infinityButton").addEventListener("click", () => {
     const job = activeJob();
     if (job?.request?.unlimited) cancelActive();
     else submit(true);
   });
   $("#cancelButton").addEventListener("click", cancelActive);
+  $("#pauseGenerationButton")?.addEventListener("click", togglePauseQueue);
+  $("#skipGenerationButton")?.addEventListener("click", skipCurrentImage);
 
   const menu = $("#generateMenu");
   $("#generateMenuButton").addEventListener("click", (event) => {

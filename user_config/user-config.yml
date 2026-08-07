@@ -68,6 +68,11 @@ model_library:
 
   additional_scan_roots: []
 
+upscaling:
+  # Additional neural-upscaler roots must be declared explicitly. Discovery
+  # never searches arbitrary model or working directories.
+  additional_roots: []
+
 loader:
   strict_component_loading: false
   allow_unknown_architecture: false

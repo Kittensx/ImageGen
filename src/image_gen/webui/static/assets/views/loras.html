@@ -37,11 +37,11 @@
     </section>
 
     <section class="panel lora-control-panel">
-      <div class="panel-heading"><h2>Prompt Integration</h2><span class="info-dot" title="Inline syntax remains supported for imported and shared prompts.">i</span></div>
+      <div class="panel-heading"><h2>Prompt Integration</h2><span class="info-dot" title="Inline syntax import compatible remains supported for imported and shared prompts.">i</span></div>
       <p class="field-status subtle">Choose what happens when Add is clicked on a LoRA card.</p>
       <fieldset class="lora-radio-group">
-        <label><input type="radio" name="loraPromptIntegrationMode" value="visual"> Visual tags <span class="recommended-badge">Recommended</span></label>
-        <label><input type="radio" name="loraPromptIntegrationMode" value="inline"> Inline syntax</label>
+        <label><input type="radio" name="loraPromptIntegrationMode" value="visual"> Prompt boxes are source of truth <span class="recommended-badge">Recommended</span></label>
+        <label><input type="radio" name="loraPromptIntegrationMode" value="inline"> Inline syntax import compatible</label>
       </fieldset>
       <small class="field-status subtle" id="loraPromptIntegrationStatus">Visual tags stage structured LoRA selections without placing system syntax in the CLIP-visible prompt.</small>
     </section>
@@ -74,6 +74,7 @@
       </label>
       <div class="lora-library-toolbar-actions">
         <button class="secondary-button compact-button" id="loraScanUnknownButton" type="button">Scan Unknown</button>
+        <button class="secondary-button compact-button" id="loraFetchCivitaiButton" type="button">Fetch Civitai Metadata</button>
         <button class="secondary-button compact-button" id="loraRefreshButton" type="button">↻ Refresh</button>
       </div>
     </div>
@@ -89,18 +90,18 @@
 
   <aside class="lora-right-column" aria-label="Active LoRAs and LoRA details">
     <section class="panel lora-active-panel">
-      <div class="panel-heading"><h2>Active LoRAs for Current Prompt</h2><span class="status-badge" id="loraWorkspaceActiveCount">0</span></div>
+      <div class="panel-heading"><h2>Active LoRAs From Current Prompt</h2><span class="status-badge" id="loraWorkspaceActiveCount">0</span></div>
       <div class="lora-active-list" id="loraWorkspaceActiveList"></div>
       <div class="lora-active-ti-heading"><h3>Active Textual Inversions</h3><span class="status-badge" id="loraWorkspaceTiCount">0</span></div>
       <div class="lora-active-ti-list" id="loraWorkspaceTiList"></div>
       <div class="lora-active-actions">
-        <button class="primary-button" id="loraApplyToPromptButton" type="button">Apply to Prompt</button>
+        <button class="primary-button" id="loraApplyToPromptButton" type="button">Prompt Is Source of Truth</button>
         <button class="secondary-button" id="loraClearActiveButton" type="button">Clear All</button>
         <label class="lora-save-default-scope"><span class="visually-hidden">Default profile scope</span><select id="loraSaveDefaultScope"><option value="model">Current model defaults</option><option value="global">Global defaults</option></select></label>
         <button class="secondary-button" id="loraSaveActiveDefaultsButton" type="button">Save Current as Defaults</button>
         <button class="secondary-button" id="loraManageDefaultsButton" type="button">⚙ Manage Saved Defaults</button>
       </div>
-      <small class="field-status subtle" id="loraActiveStatus">Visual selections are shared with the Generation tab. Runtime tensor application is added in the LoRA runtime phase.</small>
+      <small class="field-status subtle" id="loraActiveStatus">These rows mirror the LoRAs found in your prompt boxes. Adjusting a synced weight here updates the prompt token, and editing the prompt token updates these rows.</small>
     </section>
 
     <section class="panel lora-details-panel" aria-label="LoRA details">
@@ -148,7 +149,8 @@
           <button class="primary-button" id="loraDetailAddButton" type="button">+ Add to Prompt</button>
           <button class="secondary-button" id="loraCopyPathButton" type="button">Copy Path</button>
           <button class="secondary-button" id="loraCopySyntaxButton" type="button">Copy A1111 Syntax</button>
-          <button class="secondary-button" id="loraOpenSourceButton" type="button">Open Source</button>
+          <button class="secondary-button" id="loraFetchCivitaiDetailButton" type="button">Refresh from Civitai</button>
+          <button class="secondary-button" id="loraOpenSourceButton" type="button">Open Civitai / Source Page</button>
           <button class="secondary-button" id="loraOpenFolderButton" type="button">Open Folder</button>
           <button class="secondary-button" id="loraReplacePreviewButton" type="button">Replace Preview</button>
           <button class="secondary-button" id="loraChooseRecentPreviewButton" type="button">Choose from Recent Outputs</button>

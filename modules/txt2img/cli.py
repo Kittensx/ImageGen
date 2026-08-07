@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="hires_enabled",
         action="store_true",
         default=None,
-        help="Enable the shared latent hires second pass used by CLI and WebUI.",
+        help="Enable the shared neural .pth hires second pass used by CLI and WebUI.",
     )
     hires_group.add_argument(
         "--no-hires-fix",
@@ -170,8 +170,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional second-pass CFG rescale. Omit to inherit the base CFG rescale.",
     )
     run_parser.add_argument(
+        "--hires-strategy",
+        choices=("pixel_neural",),
+        help="Use a discovered pixel-neural .pth upscaler.",
+    )
+    run_parser.add_argument(
         "--hires-upscaler",
-        choices=("latent_nearest", "latent_bilinear", "latent_bicubic"),
+        help="Stable neural upscaler ID from the discovery catalog.",
+    )
+    run_parser.add_argument("--hires-tile-size", type=int)
+    run_parser.add_argument("--hires-tile-overlap", type=int)
+    run_parser.add_argument("--hires-tile-batch-size", type=int)
+    run_parser.add_argument(
+        "--hires-exact-resize-filter",
+        choices=("nearest", "bilinear", "bicubic", "area"),
+    )
+    hires_pre_denoise_group = run_parser.add_mutually_exclusive_group()
+    hires_pre_denoise_group.add_argument(
+        "--hires-save-upscaled-pre-denoise",
+        dest="hires_save_upscaled_pre_denoise",
+        action="store_true",
+        default=None,
+        help="Save the exact post-upscale, pre-denoise image artifact.",
+    )
+    hires_pre_denoise_group.add_argument(
+        "--no-hires-save-upscaled-pre-denoise",
+        dest="hires_save_upscaled_pre_denoise",
+        action="store_false",
+    )
+    hires_vae_roundtrip_group = run_parser.add_mutually_exclusive_group()
+    hires_vae_roundtrip_group.add_argument(
+        "--hires-save-vae-roundtrip",
+        dest="hires_save_vae_roundtrip",
+        action="store_true",
+        default=None,
+        help="Save the deterministic VAE encode/decode round-trip diagnostic artifact.",
+    )
+    hires_vae_roundtrip_group.add_argument(
+        "--no-hires-save-vae-roundtrip",
+        dest="hires_save_vae_roundtrip",
+        action="store_false",
     )
     hires_lowres_group = run_parser.add_mutually_exclusive_group()
     hires_lowres_group.add_argument(
@@ -197,10 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     interactive_group.add_argument(
         "--interactive-hires",
         action="store_true",
-        help=(
-            "Prompt for the standard txt2img settings plus the existing latent "
-            "hires second-pass controls used by hires_run.bat."
-        ),
+        help="Prompt for standard txt2img settings plus neural .pth hires controls.",
     )
     save_group = run_parser.add_mutually_exclusive_group()
     save_group.add_argument(
@@ -225,6 +260,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Print full structured runtime, seed, memory, preview, prompt, "
             "quality, and model diagnostic JSON to the console. Normal CLI "
             "runs keep these payloads in saved artifacts without flooding stdout."
+        ),
+    )
+
+    run_parser.add_argument(
+        "--console-memory",
+        choices=("off", "compact", "json"),
+        default=None,
+        help=(
+            "Choose memory output for human CLI runs: compact adds used/requested/"
+            "available VRAM to the sampling line, off hides it, and json restores "
+            "the machine-readable MEMORY_STATUS_JSON stream."
         ),
     )
 
@@ -345,7 +391,14 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "hires_scheduler_name": args.hires_scheduler_name,
         "hires_cfg_scale": args.hires_cfg_scale,
         "hires_cfg_rescale": args.hires_cfg_rescale,
+        "hires_strategy": args.hires_strategy,
         "hires_upscaler": args.hires_upscaler,
+        "hires_tile_size": args.hires_tile_size,
+        "hires_tile_overlap": args.hires_tile_overlap,
+        "hires_tile_batch_size": args.hires_tile_batch_size,
+        "hires_exact_resize_filter": args.hires_exact_resize_filter,
+        "hires_save_upscaled_pre_denoise": args.hires_save_upscaled_pre_denoise,
+        "hires_save_vae_roundtrip": args.hires_save_vae_roundtrip,
         "hires_save_lowres": args.hires_save_lowres,
         "parser_kwargs": args.parser_kwargs,
         "diagnostics": diagnostic_overrides or None,
@@ -616,7 +669,7 @@ def _run_generation(args: argparse.Namespace) -> int:
 
     if args.interactive or args.interactive_hires:
         interactive_overrides = (
-            build_hires_interactive_overrides()
+            build_hires_interactive_overrides(context)
             if args.interactive_hires
             else build_interactive_overrides()
         )
@@ -678,7 +731,17 @@ def _run_generation(args: argparse.Namespace) -> int:
         print(f"EFFECTIVE_REQUEST_JSON: {effective_request_path.resolve()}")
     request, payload_extras = payload_to_generation_request(payload)
     console_verbose = _console_verbose_enabled(args)
+    console_memory_mode = str(
+        getattr(args, "console_memory", None)
+        or os.environ.get("IMAGE_GEN_CONSOLE_MEMORY", "")
+        or "compact"
+    ).strip().lower()
+    if console_memory_mode not in {"off", "compact", "json"}:
+        console_memory_mode = "compact"
+    if console_verbose:
+        console_memory_mode = "json"
     payload_extras["_console_verbose"] = console_verbose
+    payload_extras["_console_memory_mode"] = console_memory_mode
     payload_extras.update(runtime_request_settings(runtime_startup_options))
     payload_extras["runtime_startup_status"] = build_runtime_startup_status(
         runtime_startup_options,

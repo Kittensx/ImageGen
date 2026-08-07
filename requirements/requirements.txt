@@ -5,6 +5,7 @@
 # detected NVIDIA GPU and driver.
 
 safetensors
+spandrel==0.4.2
 diffusers
 transformers
 accelerate

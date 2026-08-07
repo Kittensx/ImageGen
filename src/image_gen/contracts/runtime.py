@@ -326,8 +326,24 @@ class GenerationRequest:
     hires_schedule_conformance_source_replay: dict[str, Any] = field(default_factory=dict)
     hires_schedule_conformance_source_fingerprint: dict[str, Any] = field(default_factory=dict)
     hires_schedule_replay_mode: str = "reconstruct"
-    hires_upscaler: str = "latent_bilinear"
+    hires_strategy: str = "pixel_neural"
+    hires_upscaler: str = ""
+    hires_upscaler_id: str = ""
+    hires_expected_upscaler_sha256: str = ""
+    hires_expected_vae_sha256: str = ""
+    hires_expected_vae_source_kind: str = ""
+    hires_tile_size: int = 0
+    hires_tile_overlap: int = 16
+    hires_tile_batch_size: int = 1
+    hires_exact_resize_filter: str = "bicubic"
+    hires_save_upscaled_pre_denoise: bool = False
+    hires_save_vae_roundtrip: bool = False
+    hires_diagnostic_vae_execution_fingerprint: bool = False
     hires_save_lowres: bool = False
+    hires_memory_preflight: bool = True
+    hires_host_staging_policy: str = "pageable"
+    hires_host_staging_cap_mb: int = 1024
+    hires_artifact_disk_budget_mb: int = 0
     prompt_preflight: dict[str, Any] = field(default_factory=dict)
     prompt_shadow_compare: bool = False
     prompt_route_plan: dict[str, Any] = field(default_factory=dict)
@@ -428,8 +444,30 @@ class GenerationRequest:
             "hires_schedule_replay_mode": str(
                 self.hires_schedule_replay_mode or "reconstruct"
             ),
-            "hires_upscaler": str(self.hires_upscaler or "latent_bilinear"),
+            "hires_strategy": str(self.hires_strategy or "pixel_neural"),
+            "hires_upscaler": str(self.hires_upscaler or ""),
+            "hires_upscaler_id": str(self.hires_upscaler_id or ""),
+            "hires_expected_upscaler_sha256": str(
+                self.hires_expected_upscaler_sha256 or ""
+            ),
+            "hires_expected_vae_sha256": str(self.hires_expected_vae_sha256 or ""),
+            "hires_expected_vae_source_kind": str(
+                self.hires_expected_vae_source_kind or ""
+            ),
+            "hires_tile_size": int(self.hires_tile_size or 0),
+            "hires_tile_overlap": int(self.hires_tile_overlap or 0),
+            "hires_tile_batch_size": int(self.hires_tile_batch_size or 1),
+            "hires_exact_resize_filter": str(self.hires_exact_resize_filter or "bicubic"),
+            "hires_save_upscaled_pre_denoise": bool(self.hires_save_upscaled_pre_denoise),
+            "hires_save_vae_roundtrip": bool(self.hires_save_vae_roundtrip),
+            "hires_diagnostic_vae_execution_fingerprint": bool(
+                self.hires_diagnostic_vae_execution_fingerprint
+            ),
             "hires_save_lowres": bool(self.hires_save_lowres),
+            "hires_memory_preflight": bool(self.hires_memory_preflight),
+            "hires_host_staging_policy": str(self.hires_host_staging_policy or "pageable"),
+            "hires_host_staging_cap_mb": int(self.hires_host_staging_cap_mb or 0),
+            "hires_artifact_disk_budget_mb": int(self.hires_artifact_disk_budget_mb or 0),
             "prompt_preflight": _json_safe(self.prompt_preflight),
             "prompt_shadow_compare": bool(self.prompt_shadow_compare),
             "prompt_route_plan": _json_safe(self.prompt_route_plan),
@@ -463,6 +501,7 @@ class PipelineComponents:
     prediction_type_source: str = "pipeline_components"
     model_identity: str = ""
     model_hash: str = ""
+    vae_provenance: dict[str, Any] = field(default_factory=dict)
 
     def placement_metadata(self) -> dict[str, dict[str, Any]]:
         return {
@@ -480,6 +519,7 @@ class PipelineComponents:
             "prediction_type_source": self.prediction_type_source,
             "model_identity": self.model_identity,
             "model_hash": self.model_hash,
+            "vae_provenance": _json_safe(self.vae_provenance),
             "component_placement": self.placement_metadata(),
             "tokenizer": (
                 f"{type(self.tokenizer).__module__}.{type(self.tokenizer).__qualname__}"

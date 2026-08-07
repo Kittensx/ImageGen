@@ -61,8 +61,15 @@ _MEMORY_STATUS_LINE = re.compile(r"MEMORY_STATUS_JSON:\s*(\{.*\})\s*$")
 _MODEL_RUNTIME_STATUS_LINE = re.compile(r"^MODEL_RUNTIME_STATUS_JSON:\s*(\{.*\})\s*$")
 _ASYNC_OUTPUT_SAVE_STATUS_LINE = re.compile(r"^ASYNC_OUTPUT_SAVE_STATUS_JSON:\s*(\{.*\})\s*$")
 _ASYNC_OUTPUT_SAVE_ERROR_LINE = re.compile(r"^ASYNC_OUTPUT_SAVE_ERROR_JSON:\s*(\{.*\})\s*$")
-_ACTIVE_JOB_STATUSES = {"preparing_model", "warming_model", "running", "finalizing", "cancelling"}
-_CANCELLABLE_JOB_STATUSES = {"preparing_model", "warming_model", "running"}
+_ACTIVE_JOB_STATUSES = {
+    "preparing_model",
+    "warming_model",
+    "running",
+    "paused",
+    "finalizing",
+    "cancelling",
+}
+_CANCELLABLE_JOB_STATUSES = {"preparing_model", "warming_model", "running", "paused"}
 _MISSING = object()
 _SUBPROCESS_STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -231,7 +238,46 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
         raise ValueError(
             "hires_schedule_replay_mode must be reconstruct or recorded_exact."
         )
-    normalized["hires_upscaler"] = str(normalized.get("hires_upscaler") or "latent_bicubic")
+    normalized["hires_strategy"] = str(
+        normalized.get("hires_strategy") or "pixel_neural"
+    ).strip().casefold()
+    normalized["hires_upscaler"] = str(normalized.get("hires_upscaler") or "").strip()
+    normalized["hires_upscaler_id"] = str(
+        normalized.get("hires_upscaler_id") or normalized["hires_upscaler"]
+    ).strip()
+    if normalized["hires_strategy"] != "pixel_neural":
+        if not normalized["hires_enabled"]:
+            normalized["hires_strategy"] = "pixel_neural"
+            normalized["hires_upscaler"] = ""
+            normalized["hires_upscaler_id"] = ""
+        else:
+            raise ValueError("hires_strategy must be pixel_neural.")
+    normalized["hires_tile_size"] = _coerce_top_level_number(
+        normalized.get("hires_tile_size"), integer=True, default=0
+    )
+    normalized["hires_tile_overlap"] = _coerce_top_level_number(
+        normalized.get("hires_tile_overlap"), integer=True, default=16
+    )
+    normalized["hires_tile_batch_size"] = _coerce_top_level_number(
+        normalized.get("hires_tile_batch_size"), integer=True, default=1
+    )
+    if normalized["hires_tile_size"] < 0:
+        raise ValueError("hires_tile_size cannot be negative.")
+    if normalized["hires_tile_overlap"] < 0:
+        raise ValueError("hires_tile_overlap cannot be negative.")
+    if normalized["hires_tile_batch_size"] < 1:
+        raise ValueError("hires_tile_batch_size must be at least 1.")
+    normalized["hires_exact_resize_filter"] = str(
+        normalized.get("hires_exact_resize_filter") or "bicubic"
+    ).strip().casefold()
+    if normalized["hires_exact_resize_filter"] not in {"nearest", "bilinear", "bicubic", "area"}:
+        raise ValueError("hires_exact_resize_filter must be nearest, bilinear, bicubic, or area.")
+    normalized["hires_save_upscaled_pre_denoise"] = _coerce_boolean(
+        normalized.get("hires_save_upscaled_pre_denoise", False), default=False
+    )
+    normalized["hires_save_vae_roundtrip"] = _coerce_boolean(
+        normalized.get("hires_save_vae_roundtrip", False), default=False
+    )
     normalized["hires_save_lowres"] = _coerce_boolean(
         normalized.get("hires_save_lowres", False), default=False
     )
@@ -404,6 +450,16 @@ class GenerationJob:
     pending_save_batches: int = 0
     completed_save_batches: int = 0
     failed_save_batches: int = 0
+    pause_after_current_requested: bool = False
+    pause_requested_at: str | None = None
+    paused_at: str | None = None
+    resumed_at: str | None = None
+    resume_count: int = 0
+    skip_current_requested: bool = False
+    skip_requested_at: str | None = None
+    skipped_images: int = 0
+    skipped_image_seeds: list[int] = field(default_factory=list)
+    skip_events: list[dict[str, Any]] = field(default_factory=list)
     process: asyncio.subprocess.Process | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -469,6 +525,16 @@ class GenerationJob:
             "pending_save_batches": int(self.pending_save_batches),
             "completed_save_batches": int(self.completed_save_batches),
             "failed_save_batches": int(self.failed_save_batches),
+            "pause_after_current_requested": bool(self.pause_after_current_requested),
+            "pause_requested_at": self.pause_requested_at,
+            "paused_at": self.paused_at,
+            "resumed_at": self.resumed_at,
+            "resume_count": int(self.resume_count),
+            "skip_current_requested": bool(self.skip_current_requested),
+            "skip_requested_at": self.skip_requested_at,
+            "skipped_images": int(self.skipped_images),
+            "skipped_image_seeds": list(self.skipped_image_seeds),
+            "skip_events": list(self.skip_events[-32:]),
             "model_selection": dict(self.model_selection),
             "model_diagnostics": dict(self.model_diagnostics),
         }
@@ -497,6 +563,11 @@ class GenerationJobManager:
         self._event_subscribers: dict[str, set[asyncio.Queue[dict[str, Any] | None]]] = {}
         self._live_preview_history_limit = 64
         self._terminal_events_emitted: set[str] = set()
+        self._queue_resume_event = asyncio.Event()
+        self._queue_resume_event.set()
+        self._job_resume_events: dict[str, asyncio.Event] = {}
+        self._queue_pause_requested_at: str | None = None
+        self._queue_pause_owner_job_id: str | None = None
         self.runtime_startup_options: dict[str, Any] = {}
         self._last_cleanup_report: dict[str, Any] = {}
         self._last_job_cache_report: dict[str, Any] = {}
@@ -1054,7 +1125,7 @@ class GenerationJobManager:
         runtime_status: Mapping[str, Any] | None,
         settings: Mapping[str, Any],
     ) -> str | None:
-        if job.status not in _ACTIVE_JOB_STATUSES:
+        if job.status not in _ACTIVE_JOB_STATUSES or job.status == "paused":
             return None
         if job.status == "running":
             timeout = float(settings.get("running_stall_timeout_seconds"))
@@ -1260,6 +1331,9 @@ class GenerationJobManager:
     async def stop(self) -> None:
         self._started = False
         self._stopping = True
+        self._queue_resume_event.set()
+        for resume_event in self._job_resume_events.values():
+            resume_event.set()
         if self._watchdog_task is not None:
             self._watchdog_task.cancel()
         active_resident_job = next(
@@ -1494,12 +1568,116 @@ class GenerationJobManager:
             self._persist_job(job)
             self._publish_terminal_once(job, "job-cancelled")
         elif job.status in _CANCELLABLE_JOB_STATUSES:
+            was_paused = job.status == "paused"
             self._transition_job(job, status="cancelling", worker_stage="cancelling")
-            if job.execution_mode == "resident_model":
+            job.pause_after_current_requested = False
+            job.skip_current_requested = False
+            resume_event = self._job_resume_events.get(job.job_id)
+            if resume_event is not None:
+                resume_event.set()
+            if job.execution_mode == "resident_model" and not was_paused:
                 await self.model_runtime.cancel_active(job.job_id)
             elif job.process is not None:
                 job.process.terminate()
+            self._persist_job(job)
             self._publish_event(job, "job-progress")
+        return job
+
+    def _active_generation_job(self) -> GenerationJob | None:
+        return next(
+            (job for job in self.jobs.values() if job.status in _ACTIVE_JOB_STATUSES),
+            None,
+        )
+
+    def _resume_event_for_job(self, job_id: str) -> asyncio.Event:
+        event = self._job_resume_events.get(job_id)
+        if event is None:
+            event = asyncio.Event()
+            event.set()
+            self._job_resume_events[job_id] = event
+        return event
+
+    async def pause_after_current(self, job_id: str | None = None) -> dict[str, Any]:
+        active = self._active_generation_job()
+        if job_id and (active is None or active.job_id != str(job_id)):
+            raise ValueError("The requested generation is not the active queue item.")
+        if active is not None and active.status in {"finalizing", "cancelling"}:
+            raise ValueError("The active generation can no longer be paused between images.")
+
+        requested_at = _utc_now()
+        self._queue_pause_requested_at = requested_at
+        self._queue_pause_owner_job_id = active.job_id if active is not None else None
+        self._queue_resume_event.clear()
+
+        if active is not None:
+            active.pause_after_current_requested = True
+            active.pause_requested_at = requested_at
+            active.resumed_at = None
+            self._resume_event_for_job(active.job_id).clear()
+            if active.status != "paused":
+                self._transition_job(
+                    active,
+                    worker_stage="pause_after_current_requested",
+                )
+            self._persist_job(active)
+            self._publish_event(
+                active,
+                "job-progress",
+                pause_after_current_requested=True,
+                queue_pause_requested=True,
+            )
+
+        return self.status()
+
+    async def resume_queue(self) -> dict[str, Any]:
+        resumed_at = _utc_now()
+        active = self._active_generation_job()
+        if active is not None:
+            active.pause_after_current_requested = False
+            active.pause_requested_at = None
+            active.resumed_at = resumed_at
+            active.resume_count += 1
+            resume_event = self._resume_event_for_job(active.job_id)
+            resume_event.set()
+            if active.status == "paused":
+                self._transition_job(active, status="running", worker_stage="resuming_queue")
+            self._persist_job(active)
+            self._publish_event(
+                active,
+                "job-progress",
+                queue_pause_requested=False,
+                resumed_at=resumed_at,
+            )
+        for resume_event in self._job_resume_events.values():
+            resume_event.set()
+        self._queue_pause_requested_at = None
+        self._queue_pause_owner_job_id = None
+        self._queue_resume_event.set()
+        return self.status()
+
+    async def skip_current(self, job_id: str) -> GenerationJob:
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.status != "running":
+            raise ValueError("Skip is only available while an image is actively generating.")
+        runtime_status = self.model_runtime.status()
+        if str(runtime_status.get("current_job_id") or "") != job.job_id:
+            raise ValueError("The resident runtime is not currently sampling this generation.")
+        if job.skip_current_requested:
+            return job
+
+        job.skip_current_requested = True
+        job.skip_requested_at = _utc_now()
+        self._transition_job(job, worker_stage="skipping_current_image")
+        self._persist_job(job)
+        self._publish_event(
+            job,
+            "job-progress",
+            skip_current_requested=True,
+            skip_requested_at=job.skip_requested_at,
+        )
+        await self.model_runtime.cancel_active(job.job_id)
         return job
 
     def get_job(self, job_id: str) -> GenerationJob | None:
@@ -1534,15 +1712,21 @@ class GenerationJobManager:
         return [item.to_dict() for item in values]
 
     def status(self) -> dict[str, Any]:
-        active = next(
-            (job.job_id for job in self.jobs.values() if job.status in _ACTIVE_JOB_STATUSES),
-            None,
-        )
+        active_job = self._active_generation_job()
+        active = active_job.job_id if active_job is not None else None
         queued = sum(1 for job in self.jobs.values() if job.status == "queued")
+        queue_pause_requested = not self._queue_resume_event.is_set()
         return {
             "online": self._worker_task is not None and not self._worker_task.done(),
             "active_job_id": active,
             "queued": queued,
+            "queue_pause_requested": queue_pause_requested,
+            "queue_paused": bool(
+                queue_pause_requested
+                and (active_job is None or active_job.status == "paused")
+            ),
+            "queue_pause_requested_at": self._queue_pause_requested_at,
+            "queue_pause_owner_job_id": self._queue_pause_owner_job_id,
             "sse_clients_connected": sum(job.sse_clients_connected for job in self.jobs.values()),
             "preview_cleanup": dict(self._last_cleanup_report),
             "job_cache_cleanup": dict(self._last_job_cache_report),
@@ -1627,7 +1811,9 @@ class GenerationJobManager:
 
     async def _worker_loop(self) -> None:
         while not self._stopping:
+            await self._queue_resume_event.wait()
             job_id = await self._queue.get()
+            await self._queue_resume_event.wait()
             job = self.jobs.get(job_id)
             if job is None or job.status != "queued":
                 self._queue.task_done()
@@ -2460,7 +2646,11 @@ class GenerationJobManager:
                 self._transition_job(job, status="cancelled", worker_stage="cancelled")
                 self._finalize_resident_job(job)
                 return
-            safe_to_retry = not job.output_paths and int(job.current_step or 0) == 0
+            safe_to_retry = (
+                not job.output_paths
+                and int(job.current_step or 0) == 0
+                and not job.skip_events
+            )
             if safe_to_retry:
                 job.model_runtime_diagnostics.setdefault("recovery_actions", []).append({
                     "timestamp": _utc_now(),
@@ -2565,13 +2755,78 @@ class GenerationJobManager:
         )
         return request_path, console_path, preview_values
 
-    async def _run_job_resident(self, job: GenerationJob) -> None:
-        """Run WebUI batch-count and generate-forever modes as repeated runtime commands.
+    async def _restore_resident_runtime_after_skip(self, job: GenerationJob) -> None:
+        model_path = str(
+            job.model_selection.get("resolved_path")
+            or job.request.get("model_path")
+            or ""
+        ).strip()
+        if not model_path:
+            raise ModelRuntimeUnavailable(
+                "The current image was skipped, but no checkpoint path was available to restore the resident runtime."
+            )
+        self._transition_job(job, status="preparing_model", worker_stage="restoring_after_skip")
+        self._persist_job(job)
+        self._publish_event(job, "job-progress", worker_stage=job.worker_stage)
+        await self.activate_model(model_path, selection=job.model_selection)
+        if job.status not in {"cancelling", "cancelled"}:
+            self._transition_job(job, status="running", worker_stage="skip_recovery_complete")
+            self._touch_job_runtime(job, progress=True)
+            self._persist_job(job)
+            self._publish_event(job, "job-progress", worker_stage=job.worker_stage)
 
-        The resident model process stays alive and retains the selected checkpoint, but
-        each batch iteration receives its own request file and command boundary. This
-        prevents one completed image from leaving request-scoped pipeline, preview, or
-        diagnostic state attached to the next image.
+    async def _pause_between_images_if_requested(
+        self,
+        job: GenerationJob,
+        *,
+        has_more_images: bool,
+    ) -> None:
+        if self._queue_resume_event.is_set():
+            return
+        job.pause_after_current_requested = False
+        if not has_more_images:
+            self._persist_job(job)
+            self._publish_event(
+                job,
+                "job-progress",
+                queue_pause_requested=True,
+                queue_paused_after_job=True,
+            )
+            return
+
+        paused_at = _utc_now()
+        job.paused_at = paused_at
+        self._transition_job(job, status="paused", worker_stage="paused_between_images")
+        self._touch_job_runtime(job, progress=True)
+        self._persist_job(job)
+        self._publish_event(
+            job,
+            "job-paused",
+            paused_at=paused_at,
+            queue_pause_requested=True,
+        )
+        resume_event = self._resume_event_for_job(job.job_id)
+        await resume_event.wait()
+        if job.status in {"cancelling", "cancelled"}:
+            return
+        if job.status == "paused":
+            self._transition_job(job, status="running", worker_stage="resuming_queue")
+        self._touch_job_runtime(job, progress=True)
+        self._persist_job(job)
+        self._publish_event(
+            job,
+            "job-progress",
+            resumed_at=job.resumed_at,
+            queue_pause_requested=not self._queue_resume_event.is_set(),
+        )
+
+    async def _run_job_resident(self, job: GenerationJob) -> None:
+        """Run WebUI requests as one resident-runtime command per image.
+
+        Splitting a user batch into image-scoped commands preserves the requested seed
+        sequence while creating safe control boundaries for pause-after-current and
+        skip-current-image. The checkpoint remains resident unless skip requires the
+        active worker process to be restarted.
         """
 
         self._transition_job(job, status="preparing_model", worker_stage="preparing_model")
@@ -2583,13 +2838,19 @@ class GenerationJobManager:
             1,
             int(_coerce_top_level_number(base_request.get("batch_count"), integer=True, default=1) or 1),
         )
-        batch_size = max(
+        requested_batch_size = max(
             1,
             int(_coerce_top_level_number(base_request.get("batch_size"), integer=True, default=1) or 1),
         )
+        requested_image_count = requested_batch_count * requested_batch_size
         unlimited = _coerce_boolean(base_request.get("unlimited", False), default=False)
         base_seed = base_request.get("seed")
-        seed_iterator = iter_batch_base_seeds(base_seed, batch_size=batch_size)
+        seed_iterator = iter_batch_base_seeds(base_seed, batch_size=1)
+        job_resume_event = self._resume_event_for_job(job.job_id)
+        if self._queue_resume_event.is_set():
+            job_resume_event.set()
+        else:
+            job_resume_event.clear()
 
         job.model_diagnostics["pipeline_parity"] = {
             "shares_canonical_runner_with_run_bat": True,
@@ -2605,26 +2866,33 @@ class GenerationJobManager:
             "request_contains_live_preview_overlay": True,
             "live_preview_overlay_keys": sorted(preview_values.keys()),
             "selected_model_resident_until_replaced": True,
-            "webui_batch_orchestration": "one resident-runtime command per batch iteration",
+            "webui_batch_orchestration": "one resident-runtime command per image slot",
         }
         orchestration = {
             "mode": "unlimited" if unlimited else "batch_count",
             "requested_batch_count": requested_batch_count,
-            "batch_size": batch_size,
+            "requested_batch_size": requested_batch_size,
+            "requested_image_count": None if unlimited else requested_image_count,
+            "attempted_images": 0,
+            "completed_images": 0,
+            "skipped_images": int(job.skipped_images),
             "completed_batches": 0,
             "current_batch": 0,
+            "current_image": 0,
+            "current_image_in_batch": 0,
             "command_completions": [],
         }
         job.model_runtime_diagnostics["batch_orchestration"] = orchestration
         (job_root / "command.txt").write_text(
-            "resident model runtime: WebUI-managed batch iteration commands\n"
+            "resident model runtime: WebUI-managed image iteration commands\n"
             + json.dumps(
                 {
                     "job_id": job.job_id,
                     "base_request_path": str(request_path),
                     "mode": orchestration["mode"],
                     "requested_batch_count": requested_batch_count,
-                    "batch_size": batch_size,
+                    "requested_batch_size": requested_batch_size,
+                    "requested_image_count": orchestration["requested_image_count"],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -2638,11 +2906,15 @@ class GenerationJobManager:
             worker_stage=job.worker_stage,
             batch_number=0,
             batch_count=requested_batch_count,
-            completed_batches=0,
+            batch_size=requested_batch_size,
+            image_number=0,
+            image_count=orchestration["requested_image_count"],
+            completed_images=0,
             unlimited=unlimited,
         )
 
-        completed_batches = 0
+        attempted_images = 0
+        completed_images = 0
         last_completion: dict[str, Any] = {}
         with console_path.open("w", encoding="utf-8", newline="\n") as console:
             async def on_line(line: str) -> None:
@@ -2651,30 +2923,36 @@ class GenerationJobManager:
                 console.flush()
                 self._apply_runtime_line(job, line)
 
-            while unlimited or completed_batches < requested_batch_count:
+            while unlimited or attempted_images < requested_image_count:
                 if job.status in {"cancelling", "cancelled"}:
                     break
 
-                batch_number = completed_batches + 1
+                image_number = attempted_images + 1
+                parent_batch_number = ((image_number - 1) // requested_batch_size) + 1
+                image_in_batch = ((image_number - 1) % requested_batch_size) + 1
+                image_seed = next(seed_iterator)
                 iteration_request = json.loads(json.dumps(base_request, ensure_ascii=False))
                 iteration_request["batch_count"] = 1
+                iteration_request["batch_size"] = 1
                 iteration_request["unlimited"] = False
-                iteration_request["seed"] = next(seed_iterator)
-                iteration_request["_webui_parent_batch_number"] = batch_number
+                iteration_request["seed"] = image_seed
+                iteration_request["_webui_parent_batch_number"] = parent_batch_number
                 iteration_request["_webui_parent_batch_count"] = requested_batch_count
+                iteration_request["_webui_parent_batch_size"] = requested_batch_size
+                iteration_request["_webui_parent_image_in_batch"] = image_in_batch
+                iteration_request["_webui_parent_image_number"] = image_number
+                iteration_request["_webui_parent_image_count"] = None if unlimited else requested_image_count
                 iteration_request["_webui_parent_unlimited"] = unlimited
 
-                iteration_preview_root = job_root / "live-preview" / f"batch_{batch_number:05d}"
+                iteration_preview_root = job_root / "live-preview" / f"batch_{image_number:05d}"
                 iteration_preview_root.mkdir(parents=True, exist_ok=True)
                 iteration_request["live_preview_root"] = str(iteration_preview_root)
-                iteration_request_path = job_root / f"request-batch-{batch_number:05d}.json"
+                iteration_request_path = job_root / f"request-batch-{image_number:05d}.json"
                 iteration_request_path.write_text(
                     json.dumps(iteration_request, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
 
-                # Reset only per-image UI/runtime telemetry. The resident model process
-                # and its checkpoint cache remain untouched.
                 job.current_step = 0
                 job.total_steps = max(
                     1,
@@ -2688,13 +2966,19 @@ class GenerationJobManager:
                 job.live_cfg_step_series = {}
                 job.live_preview_root = str(iteration_preview_root)
                 job.live_preview_latest_path = str(iteration_preview_root / "latest.json")
-                self._transition_job(job, status="running", worker_stage="starting_batch")
+                job.skip_current_requested = False
+                job.skip_requested_at = None
+                self._transition_job(job, status="running", worker_stage="starting_image")
 
                 orchestration.update(
                     {
-                        "current_batch": batch_number,
-                        "completed_batches": completed_batches,
-                        "current_seed": iteration_request["seed"],
+                        "current_batch": parent_batch_number,
+                        "current_image": image_number,
+                        "current_image_in_batch": image_in_batch,
+                        "attempted_images": attempted_images,
+                        "completed_images": completed_images,
+                        "skipped_images": int(job.skipped_images),
+                        "current_seed": image_seed,
                         "current_request_path": str(iteration_request_path),
                     }
                 )
@@ -2704,9 +2988,14 @@ class GenerationJobManager:
                     job,
                     "job-progress",
                     worker_stage=job.worker_stage,
-                    batch_number=batch_number,
+                    batch_number=parent_batch_number,
                     batch_count=requested_batch_count,
-                    completed_batches=completed_batches,
+                    batch_size=requested_batch_size,
+                    image_number=image_number,
+                    image_in_batch=image_in_batch,
+                    image_count=None if unlimited else requested_image_count,
+                    completed_images=completed_images,
+                    skipped_images=job.skipped_images,
                     unlimited=unlimited,
                     live_preview_url=None,
                     live_preview_path=None,
@@ -2715,20 +3004,105 @@ class GenerationJobManager:
                     progress_percent=0.0,
                 )
                 console.write(
-                    f"WEBUI_BATCH_START_JSON: {json.dumps({'batch_number': batch_number, 'batch_count': requested_batch_count, 'unlimited': unlimited, 'seed': iteration_request['seed']}, sort_keys=True)}\n"
+                    "WEBUI_IMAGE_START_JSON: "
+                    + json.dumps(
+                        {
+                            "image_number": image_number,
+                            "image_count": None if unlimited else requested_image_count,
+                            "batch_number": parent_batch_number,
+                            "image_in_batch": image_in_batch,
+                            "batch_count": requested_batch_count,
+                            "batch_size": requested_batch_size,
+                            "unlimited": unlimited,
+                            "seed": image_seed,
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
                 )
                 console.flush()
 
-                completion = await self.model_runtime.run_job(
-                    job_id=job.job_id,
-                    config_path=iteration_request_path,
-                    save_txt=True,
-                    save_json=True,
-                    on_line=on_line,
-                )
+                output_count_before = len(job.output_paths)
+                try:
+                    completion = await self.model_runtime.run_job(
+                        job_id=job.job_id,
+                        config_path=iteration_request_path,
+                        save_txt=True,
+                        save_json=True,
+                        on_line=on_line,
+                    )
+                except ModelRuntimeUnavailable as exc:
+                    if job.skip_current_requested and job.status not in {"cancelling", "cancelled"}:
+                        attempted_images += 1
+                        output_completed_before_cancel = len(job.output_paths) > output_count_before
+                        skip_event = {
+                            "timestamp": _utc_now(),
+                            "image_number": image_number,
+                            "batch_number": parent_batch_number,
+                            "image_in_batch": image_in_batch,
+                            "seed": int(image_seed),
+                            "runtime_error": f"{type(exc).__name__}: {exc}",
+                            "output_completed_before_cancel": output_completed_before_cancel,
+                        }
+                        if output_completed_before_cancel:
+                            completed_images += 1
+                            skip_event["outcome"] = "completed_before_skip_reached_runtime"
+                        else:
+                            job.skipped_images += 1
+                            job.skipped_image_seeds.append(int(image_seed))
+                            skip_event["outcome"] = "skipped"
+                        job.skip_events.append(skip_event)
+                        job.skip_current_requested = False
+                        job.skip_requested_at = None
+                        orchestration["command_completions"].append(
+                            {
+                                "image_number": image_number,
+                                "batch_number": parent_batch_number,
+                                "ok": False,
+                                "skipped": not output_completed_before_cancel,
+                                "output_completed_before_cancel": output_completed_before_cancel,
+                                "error": str(exc),
+                            }
+                        )
+                        orchestration.update(
+                            {
+                                "attempted_images": attempted_images,
+                                "completed_images": completed_images,
+                                "skipped_images": int(job.skipped_images),
+                                "completed_batches": attempted_images // requested_batch_size,
+                                "last_skip_event": skip_event,
+                            }
+                        )
+                        job.model_runtime_diagnostics["batch_orchestration"] = orchestration
+                        self._touch_job_runtime(job, progress=True)
+                        self._persist_job(job)
+                        self._publish_event(
+                            job,
+                            "job-image-skipped",
+                            skip_event=skip_event,
+                            completed_images=completed_images,
+                            skipped_images=job.skipped_images,
+                        )
+                        console.write(
+                            "WEBUI_IMAGE_SKIP_JSON: "
+                            + json.dumps(skip_event, ensure_ascii=False, sort_keys=True)
+                            + "\n"
+                        )
+                        console.flush()
+                        await self._restore_resident_runtime_after_skip(job)
+                        has_more_images = unlimited or attempted_images < requested_image_count
+                        await self._pause_between_images_if_requested(
+                            job,
+                            has_more_images=has_more_images,
+                        )
+                        continue
+                    raise
+
                 last_completion = dict(completion)
                 completion_summary = {
-                    "batch_number": batch_number,
+                    "image_number": image_number,
+                    "batch_number": parent_batch_number,
+                    "image_in_batch": image_in_batch,
                     "ok": bool(completion.get("ok")),
                     "command_id": completion.get("command_id"),
                     "result": dict(completion.get("result") or {}),
@@ -2751,16 +3125,21 @@ class GenerationJobManager:
                     job.return_code = 1
                     self._transition_job(job, status="failed", worker_stage="failed")
                     job.error = (
-                        "Resident runtime batch contract violation: each WebUI iteration must "
-                        f"complete exactly one batch, but reported {runtime_completed}."
+                        "Resident runtime image contract violation: each WebUI image iteration must "
+                        f"complete exactly one runtime batch, but reported {runtime_completed}."
                     )
                     break
 
-                completed_batches += 1
+                attempted_images += 1
+                completed_images += 1
                 orchestration.update(
                     {
-                        "completed_batches": completed_batches,
-                        "current_batch": batch_number,
+                        "attempted_images": attempted_images,
+                        "completed_images": completed_images,
+                        "skipped_images": int(job.skipped_images),
+                        "completed_batches": attempted_images // requested_batch_size,
+                        "current_batch": parent_batch_number,
+                        "current_image": image_number,
                         "last_completed_at": _utc_now(),
                     }
                 )
@@ -2770,24 +3149,45 @@ class GenerationJobManager:
                 self._publish_event(
                     job,
                     "job-progress",
-                    worker_stage="batch_completed",
-                    batch_number=batch_number,
+                    worker_stage="image_completed",
+                    batch_number=parent_batch_number,
                     batch_count=requested_batch_count,
-                    completed_batches=completed_batches,
+                    batch_size=requested_batch_size,
+                    image_number=image_number,
+                    image_in_batch=image_in_batch,
+                    image_count=None if unlimited else requested_image_count,
+                    completed_images=completed_images,
+                    skipped_images=job.skipped_images,
                     unlimited=unlimited,
                     output_count=len(job.output_paths),
                 )
                 console.write(
-                    f"WEBUI_BATCH_COMPLETE_JSON: {json.dumps({'batch_number': batch_number, 'completed_batches': completed_batches, 'output_count': len(job.output_paths)}, sort_keys=True)}\n"
+                    "WEBUI_IMAGE_COMPLETE_JSON: "
+                    + json.dumps(
+                        {
+                            "image_number": image_number,
+                            "completed_images": completed_images,
+                            "skipped_images": job.skipped_images,
+                            "output_count": len(job.output_paths),
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
                 )
                 console.flush()
 
-                # Give cancellation and UI polling requests a scheduling point between
-                # images, especially for generate-forever mode.
+                has_more_images = unlimited or attempted_images < requested_image_count
+                await self._pause_between_images_if_requested(
+                    job,
+                    has_more_images=has_more_images,
+                )
                 await asyncio.sleep(0)
 
         job.model_runtime_diagnostics["command_completion"] = last_completion
-        orchestration["completed_batches"] = completed_batches
+        orchestration["attempted_images"] = attempted_images
+        orchestration["completed_images"] = completed_images
+        orchestration["skipped_images"] = int(job.skipped_images)
+        orchestration["completed_batches"] = attempted_images // requested_batch_size
         orchestration["finished_at"] = _utc_now()
         job.model_runtime_diagnostics["batch_orchestration"] = orchestration
 
@@ -2801,6 +3201,7 @@ class GenerationJobManager:
             self._transition_job(job, status="completed", worker_stage="completed")
             self._apply_model_parity(job)
 
+        self._job_resume_events.pop(job.job_id, None)
         self._finalize_resident_job(job)
 
     def _finalize_resident_job(self, job: GenerationJob) -> None:

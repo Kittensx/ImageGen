@@ -91,6 +91,64 @@ class ComponentResidencyRegistry:
         self.components[component.component_id] = component
         return component
 
+    def remove(
+        self,
+        component_id: str,
+        *,
+        require_unleased: bool = True,
+        call_unload: bool = True,
+    ) -> ManagedComponent | None:
+        selected = str(component_id)
+        component = self.components.get(selected)
+        if component is None:
+            return None
+        if require_unleased and component.leased:
+            raise RuntimeError(
+                f"Cannot remove leased component {selected!r}."
+            )
+        if call_unload and callable(component.unload_callback):
+            try:
+                component.unload_callback()
+            except Exception:
+                pass
+        self.components.pop(selected, None)
+        return component
+
+    def replace_scoped(
+        self,
+        *,
+        component_id: str,
+        component_kind: str,
+        model_identity: str,
+        module: torch.nn.Module,
+        preferred_dtype: str | torch.dtype | None = None,
+        required_by_stages: Iterable[str] = (),
+        estimated_runtime_overhead_bytes: int = 0,
+        pinned_cpu_capable: bool = False,
+        supports_non_blocking_transfer: bool = False,
+        unload_callback: Any = None,
+    ) -> ManagedComponent:
+        selected = str(component_id)
+        existing = self.components.get(selected)
+        if existing is not None:
+            if existing.leased:
+                raise RuntimeError(
+                    f"Cannot replace leased component {selected!r}."
+                )
+            self.remove(selected, require_unleased=True, call_unload=True)
+        return self.register(
+            component_id=selected,
+            component_kind=component_kind,
+            model_identity=model_identity,
+            module=module,
+            preferred_dtype=preferred_dtype,
+            required_by_stages=required_by_stages,
+            estimated_runtime_overhead_bytes=estimated_runtime_overhead_bytes,
+            pinned_cpu_capable=pinned_cpu_capable,
+            supports_non_blocking_transfer=supports_non_blocking_transfer,
+            unload_callback=unload_callback,
+        )
+
     def invalidate_incompatible(self, model_identity: str) -> list[str]:
         identity = str(model_identity or "unknown")
         removed: list[str] = []

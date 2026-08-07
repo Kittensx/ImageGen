@@ -133,6 +133,7 @@ class AdaptiveComponentMemoryManager:
         self._preview_mode = "disabled"
         self._effective_profile = self.settings.policy
         self.hires_cleanup_reports: list[dict[str, Any]] = []
+        self.external_stage_telemetry: list[dict[str, Any]] = []
         self._oom_attention_context_factory: Callable[[str], Any] | None = None
         self._oom_vae_memory_configurator: Callable[..., Any] | None = None
 
@@ -189,6 +190,47 @@ class AdaptiveComponentMemoryManager:
         )
         self.capture("components_registered")
         self.apply_initial_policy()
+
+    def register_scoped_component(
+        self,
+        *,
+        component_id: str,
+        component_kind: str,
+        model_identity: str,
+        module: torch.nn.Module,
+        preferred_dtype: str | torch.dtype | None = None,
+        required_by_stages: Iterable[str] = (),
+        estimated_runtime_overhead_bytes: int = 0,
+        unload_callback: Any = None,
+    ) -> Any:
+        component = self.registry.replace_scoped(
+            component_id=component_id,
+            component_kind=component_kind,
+            model_identity=model_identity,
+            module=module,
+            preferred_dtype=preferred_dtype,
+            required_by_stages=required_by_stages,
+            estimated_runtime_overhead_bytes=estimated_runtime_overhead_bytes,
+            pinned_cpu_capable=self.settings.pinned_cpu_memory,
+            unload_callback=unload_callback,
+        )
+        self.capture(f"scoped_component_registered_{component_id}")
+        return component
+
+    def remove_scoped_component(
+        self,
+        component_id: str,
+        *,
+        call_unload: bool = True,
+    ) -> Any:
+        removed = self.registry.remove(
+            component_id,
+            require_unleased=True,
+            call_unload=call_unload,
+        )
+        if removed is not None:
+            self.capture(f"scoped_component_removed_{component_id}")
+        return removed
 
     @staticmethod
     def _module_dtype(module: torch.nn.Module) -> str:
@@ -519,6 +561,20 @@ class AdaptiveComponentMemoryManager:
             "stage": stage,
             "action": "cuda_allocator_cache_release",
             "reason": reason,
+        })
+
+    def release_cuda_cache(self, *, stage: str, reason: str) -> None:
+        """Public stage-boundary allocator release for scoped external runtimes."""
+
+        self._release_cuda_cache(stage=stage, reason=reason)
+
+    def record_external_stage_telemetry(self, stage: str, payload: dict[str, Any]) -> None:
+        record = {"stage": str(stage), **dict(payload or {})}
+        self.external_stage_telemetry.append(record)
+        self.automatic_actions.append({
+            "stage": str(stage),
+            "action": "external_stage_telemetry_recorded",
+            "event": record.get("event"),
         })
 
     def _exit_lease(self, stage: str, plan: ResidencyPlan | None) -> None:
@@ -1182,5 +1238,6 @@ class AdaptiveComponentMemoryManager:
             "oom_recovery_actions": list(self.oom.actions),
             "oom_recovery": self.oom.summary(),
             "hires_cleanup_reports": list(self.hires_cleanup_reports),
+            "external_stage_telemetry": list(self.external_stage_telemetry),
             "failure_bundle": self.failure_bundle,
         }

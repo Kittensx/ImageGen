@@ -1268,7 +1268,7 @@ export function initializePromptTools(current = {}) {
   if ($("#hiresSchedulerName")) $("#hiresSchedulerName").value = current.hires_scheduler_name || "";
   if ($("#hiresCfgScale")) $("#hiresCfgScale").value = current.hires_cfg_scale ?? "";
   if ($("#hiresCfgRescale")) $("#hiresCfgRescale").value = current.hires_cfg_rescale ?? "";
-  if ($("#hiresUpscaler")) $("#hiresUpscaler").value = current.hires_upscaler || "latent_bicubic";
+  if ($("#hiresUpscaler")) $("#hiresUpscaler").value = current.hires_upscaler_id || current.hires_upscaler || "";
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = current.hires_save_lowres !== false;
   updateHiresSizeControls();
   renderBaseParserSettings();
@@ -1384,7 +1384,7 @@ export function refreshPromptConfigurationCatalogs(payload = {}) {
     hires_scheduler_name: $("#hiresSchedulerName")?.value || "",
     hires_cfg_scale: String($("#hiresCfgScale")?.value || "").trim() === "" ? null : Number($("#hiresCfgScale")?.value),
     hires_cfg_rescale: String($("#hiresCfgRescale")?.value || "").trim() === "" ? null : Number($("#hiresCfgRescale")?.value),
-    hires_upscaler: $("#hiresUpscaler")?.value || "latent_bicubic",
+    hires_upscaler: $("#hiresUpscaler")?.value || "",
     hires_save_lowres: $("#hiresSaveLowres")?.checked !== false,
   });
 }

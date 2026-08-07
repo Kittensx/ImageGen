@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import inspect
 from typing import Any, TYPE_CHECKING
+from pathlib import Path
 
 import torch
 
 from image_gen.contracts import PipelineComponents
 from image_gen.systems.validation.capabilities import capability_for
 from image_gen.systems.memory.telemetry import MemoryTelemetry
+from image_gen.contracts.vae_provenance import attach_vae_provenance
 
 if TYPE_CHECKING:
     from modules.load_safetensors_model import LoadModel
@@ -96,6 +98,23 @@ class ModelLoadingSystem:
             or getattr(checkpoint_report, "file_name", "")
             or model_path
         )
+        checkpoint_hash = str(getattr(checkpoint_report, "sha256", "") or "")
+        checkpoint_path = str(
+            getattr(checkpoint_report, "model_path", "")
+            or getattr(checkpoint_report, "path", "")
+            or model_path
+        )
+        vae_provenance = attach_vae_provenance(
+            built.vae,
+            {
+                "source_kind": "embedded_checkpoint",
+                "source_path": checkpoint_path,
+                "sha256": checkpoint_hash,
+                "identity": f"embedded_checkpoint:{checkpoint_hash}" if checkpoint_hash else f"embedded_checkpoint:{checkpoint_path}",
+                "display_name": f"Embedded VAE ({getattr(checkpoint_report, 'file_name', '') or Path(checkpoint_path).name})",
+                "embedded_in_checkpoint": True,
+            },
+        )
         return LoadedModel(
             components=PipelineComponents(
                 unet=built.unet,
@@ -105,7 +124,8 @@ class ModelLoadingSystem:
                 prediction_type=prediction_type,
                 prediction_type_source=prediction_type_source,
                 model_identity=model_identity,
-                model_hash=str(getattr(checkpoint_report, "sha256", "") or ""),
+                model_hash=checkpoint_hash,
+                vae_provenance=vae_provenance,
             ),
             load_plan=plan,
             built_components=built,

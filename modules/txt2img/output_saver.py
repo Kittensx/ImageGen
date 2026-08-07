@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +35,21 @@ DEFAULT_FILENAME_PATTERN = "{index:05d}-{seed}"
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _LEADING_INDEX = re.compile(r"^(\d{5,})(?:[-_]|$)")
 _TRAILING_INDEX = re.compile(r"(?:^|[-_])(\d{5,})$")
+
+
+def _atomic_temp_path(final_path: Path) -> Path:
+    token = uuid.uuid4().hex
+    return final_path.with_name(
+        f".{final_path.stem}.{token}.tmp{final_path.suffix}"
+    )
+
+
+def _cleanup_paths(paths: Sequence[Path]) -> None:
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @dataclass
@@ -467,58 +484,94 @@ class GenerationOutputSaver:
         records: list[SavedImageRecord] = []
         next_idx = self.next_index()
 
-        for image_offset, image in enumerate(pil_images):
-            image_seed = seeds[image_offset]
-            image_manifest = self._manifest_copy(manifest) if manifest is not None else None
-            if image_manifest is not None and image_seed is not None:
-                image_manifest.required_for_rerun.seed = int(image_seed)
-                batch_seeds = list(image_manifest.extra.get("resolved_seeds", []) or [])
-                image_manifest.extra["batch_resolved_seeds"] = batch_seeds
-                image_manifest.extra["resolved_seeds"] = [int(image_seed)]
-                image_manifest.extra["image_seed"] = int(image_seed)
-                self._project_prompt_expansion_for_image(image_manifest, image_offset)
-                self._project_regions_for_image(image_manifest, image_offset)
+        try:
+            for image_offset, image in enumerate(pil_images):
+                image_seed = seeds[image_offset]
+                image_manifest = self._manifest_copy(manifest) if manifest is not None else None
+                if image_manifest is not None and image_seed is not None:
+                    image_manifest.required_for_rerun.seed = int(image_seed)
+                    batch_seeds = list(image_manifest.extra.get("resolved_seeds", []) or [])
+                    image_manifest.extra["batch_resolved_seeds"] = batch_seeds
+                    image_manifest.extra["resolved_seeds"] = [int(image_seed)]
+                    image_manifest.extra["image_seed"] = int(image_seed)
+                    self._project_prompt_expansion_for_image(image_manifest, image_offset)
+                    self._project_regions_for_image(image_manifest, image_offset)
 
-            base_path = self._avoid_collision(
-                self.build_base_path(
-                    next_idx,
-                    seed=image_seed,
+                base_path = self._avoid_collision(
+                    self.build_base_path(
+                        next_idx,
+                        seed=image_seed,
+                        manifest=image_manifest,
+                    )
+                )
+                image_path = base_path.with_suffix(self.image_ext)
+                txt_path = base_path.with_suffix(".txt") if image_manifest is not None and save_txt else None
+                json_path = base_path.with_suffix(".json") if image_manifest is not None and save_json else None
+
+                save_kwargs = self._image_save_kwargs(
+                    image_path=image_path,
                     manifest=image_manifest,
+                    image_kwargs=image_kwargs,
                 )
-            )
-            image_path = base_path.with_suffix(self.image_ext)
-            txt_path = base_path.with_suffix(".txt") if image_manifest is not None and save_txt else None
-            json_path = base_path.with_suffix(".json") if image_manifest is not None and save_json else None
+                temp_image = _atomic_temp_path(image_path)
+                temp_txt = _atomic_temp_path(txt_path) if txt_path is not None else None
+                temp_json = _atomic_temp_path(json_path) if json_path is not None else None
+                temporary_paths = [
+                    path for path in (temp_image, temp_txt, temp_json) if path is not None
+                ]
+                try:
+                    image.save(temp_image, **save_kwargs)
+                    if image_manifest is not None:
+                        image_manifest.update_runtime_paths(
+                            image_path=str(image_path),
+                            txt_path=None if txt_path is None else str(txt_path),
+                            json_path=None if json_path is None else str(json_path),
+                        )
+                        # Sidecars are fully written before any final path becomes visible.
+                        if temp_txt is not None:
+                            save_manifest_txt(
+                                self._manifest_copy(image_manifest), temp_txt
+                            )
+                        if temp_json is not None:
+                            save_manifest_json(
+                                self._manifest_copy(image_manifest), temp_json
+                            )
+                    os.replace(temp_image, image_path)
+                    if temp_txt is not None and txt_path is not None:
+                        os.replace(temp_txt, txt_path)
+                    if temp_json is not None and json_path is not None:
+                        os.replace(temp_json, json_path)
+                except Exception:
+                    _cleanup_paths(temporary_paths)
+                    # Remove only files owned by this failed transaction. Collision
+                    # avoidance guarantees these paths did not exist beforehand.
+                    _cleanup_paths(
+                        [path for path in (image_path, txt_path, json_path) if path is not None]
+                    )
+                    raise
 
-            save_kwargs = self._image_save_kwargs(
-                image_path=image_path,
-                manifest=image_manifest,
-                image_kwargs=image_kwargs,
-            )
-            image.save(image_path, **save_kwargs)
-
-            if image_manifest is not None:
-                image_manifest.update_runtime_paths(
-                    image_path=str(image_path),
-                    txt_path=None if txt_path is None else str(txt_path),
-                    json_path=None if json_path is None else str(json_path),
+                records.append(
+                    SavedImageRecord(
+                        image_path=str(image_path),
+                        txt_path=None if txt_path is None else str(txt_path),
+                        json_path=None if json_path is None else str(json_path),
+                        index=next_idx,
+                        seed=image_seed,
+                    )
                 )
-                # Both sidecars receive complete, self-consistent paths.
-                if txt_path is not None:
-                    save_manifest_txt(image_manifest, txt_path)
-                if json_path is not None:
-                    save_manifest_json(image_manifest, json_path)
-
-            records.append(
-                SavedImageRecord(
-                    image_path=str(image_path),
-                    txt_path=None if txt_path is None else str(txt_path),
-                    json_path=None if json_path is None else str(json_path),
-                    index=next_idx,
-                    seed=image_seed,
+                next_idx += 1
+        except Exception:
+            # Treat the complete batch as one atomic transaction. A failure on
+            # a later image must not leave earlier images or sidecars behind.
+            for record in reversed(records):
+                _cleanup_paths(
+                    [
+                        Path(path)
+                        for path in (record.image_path, record.txt_path, record.json_path)
+                        if path
+                    ]
                 )
-            )
-            next_idx += 1
+            raise
 
         return records
 

@@ -1,10 +1,24 @@
 from __future__ import annotations
+
 from typing import Any
 
 
 def prompt_with_default(label: str, default: Any) -> Any:
     raw = input(f"{label} [{default}]: ").strip()
     return default if raw == "" else raw
+
+
+def prompt_yes_no(label: str, default: bool) -> bool:
+    default_token = "Y/n" if default else "y/N"
+    raw = input(f"{label} [{default_token}]: ").strip().casefold()
+    if raw == "":
+        return bool(default)
+    if raw in {"y", "yes", "1", "true", "on"}:
+        return True
+    if raw in {"n", "no", "0", "false", "off"}:
+        return False
+    print("Invalid selection. Please answer y or n.")
+    return prompt_yes_no(label, default)
 
 
 def choose_from_registry(title: str, registry_map: dict[str, Any]) -> dict[str, Any]:
@@ -72,13 +86,59 @@ def build_interactive_overrides() -> dict[str, Any]:
         "model_path": model_path,
     }
 
-def build_hires_interactive_overrides() -> dict[str, Any]:
-    """Prompt for the standard run.bat settings plus latent hires controls.
+
+def _supported_neural_upscalers(project_context: Any) -> tuple[Any, ...]:
+    from image_gen.systems.upscaling.discovery import discover_upscalers
+
+    discovery = discover_upscalers(project_context, mode="unidentified")
+    return tuple(discovery.supported_neural)
+
+
+def _choose_supported_neural_upscaler(project_context: Any) -> Any:
+    supported = _supported_neural_upscalers(project_context)
+    if not supported:
+        from image_gen.systems.upscaling.discovery import configured_upscaler_roots
+
+        roots = ", ".join(str(item) for item in configured_upscaler_roots(project_context)) or "<no configured roots>"
+        raise RuntimeError(
+            "No supported neural .pth upscalers were discovered. "
+            f"Place a supported .pth file under one of these roots and retry: {roots}"
+        )
+
+    print("\n=== Supported neural .pth hires upscalers ===")
+    for index, descriptor in enumerate(supported, start=1):
+        relative = str(getattr(descriptor, "relative_path", "") or getattr(descriptor, "file_name", "") or "")
+        architecture = str(getattr(descriptor, "architecture", "") or "unknown")
+        native_scale = int(getattr(descriptor, "native_scale", 0) or 0)
+        tile_label = "tiled" if bool(getattr(descriptor, "tile_supported", False)) else "untiled"
+        path_label = f" [{relative}]" if relative else ""
+        print(
+            f"{index}. {descriptor.display_name} · {architecture} · x{native_scale} · {tile_label}{path_label}"
+        )
+
+    while True:
+        raw = input(f"Choose neural upscaler [1-{len(supported)}] [1]: ").strip()
+        if raw == "":
+            return supported[0]
+        try:
+            selected = int(raw)
+        except ValueError:
+            selected = 0
+        if 1 <= selected <= len(supported):
+            return supported[selected - 1]
+        print("Invalid selection.")
+
+
+def build_hires_interactive_overrides(project_context: Any | None = None) -> dict[str, Any]:
+    """Prompt for the standard run.bat settings plus Phase 14N PTH hires controls.
 
     Blank hires prompt overrides explicitly inherit the selected base prompts.
-    This launcher intentionally keeps the already validated latent-bilinear path;
-    external ESRGAN model selection is a later extension after quality tuning.
+    New interactive hires runs focus on supported neural `.pth` upscalers and
+    source-fidelity artifacts instead of the retired Python-only latent methods.
     """
+
+    if project_context is None:
+        raise ValueError("project_context is required for interactive neural hires selection.")
 
     overrides = build_interactive_overrides()
 
@@ -104,6 +164,22 @@ def build_hires_interactive_overrides() -> dict[str, Any]:
     if hires_steps < 1:
         raise ValueError("Hires steps must be at least 1.")
 
+    descriptor = _choose_supported_neural_upscaler(project_context)
+    print(f"Selected hires upscaler: {descriptor.display_name} ({descriptor.upscaler_id})")
+
+    save_lowres = prompt_yes_no(
+        "Save the exact low-resolution base artifact",
+        True,
+    )
+    save_pre_denoise = prompt_yes_no(
+        "Save the pixel-upscaled pre-denoise artifact",
+        True,
+    )
+    save_vae_roundtrip = prompt_yes_no(
+        "Save the deterministic VAE round-trip artifact",
+        False,
+    )
+
     overrides.update(
         {
             "hires_enabled": True,
@@ -123,10 +199,13 @@ def build_hires_interactive_overrides() -> dict[str, Any]:
             "hires_scale": hires_scale,
             "hires_steps": hires_steps,
             "hires_denoising_strength": hires_denoising_strength,
-            "hires_upscaler": "latent_bilinear",
+            "hires_strategy": "pixel_neural",
+            "hires_upscaler": descriptor.upscaler_id,
+            "hires_upscaler_id": descriptor.upscaler_id,
+            "hires_save_lowres": save_lowres,
+            "hires_save_upscaled_pre_denoise": save_pre_denoise,
+            "hires_save_vae_roundtrip": save_vae_roundtrip,
         }
     )
 
-    print("Hires upscaler: latent_bilinear (validated current path)")
     return overrides
-

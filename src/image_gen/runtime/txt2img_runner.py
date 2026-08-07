@@ -22,8 +22,14 @@ from image_gen.systems.diagnostics import (
     PipelineStageError,
 )
 from image_gen.systems.model_loading import ModelLoadingSystem
+from image_gen.contracts.vae_provenance import read_vae_provenance
 from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
 from image_gen.systems.output import OutputSystem, PreparedOutputSaveRequest
+from image_gen.systems.upscaling import (
+    StandaloneNeuralUpscaler,
+    UpscalerModelRegistry,
+    discover_upscalers,
+)
 from image_gen.systems.registry import RuntimeRegistrySystem
 from modules.pipeline.progress_reporter import ProgressReporter
 from modules.project_context import ProjectContext
@@ -206,21 +212,44 @@ def _compact_memory_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_memory_event_callback(*, console_verbose: bool) -> Callable[[dict[str, Any]], None]:
+def _build_memory_event_callback(
+    *,
+    console_verbose: bool,
+    console_mode: str = "json",
+    progress_reporter: Any | None = None,
+) -> Callable[[dict[str, Any]], None]:
     """Build the memory event callback used by CLI and WebUI workers.
 
-    Normal jobs emit a compact live-status event so the WebUI can display VRAM
-    and component residency. Verbose jobs retain the full diagnostic payload.
+    WebUI workers retain the compact JSON transport they parse. Human CLI runs
+    can instead fold the same requested/available/used figures into the active
+    sampling line, or suppress memory output entirely. Verbose diagnostics
+    always retain the full structured payload.
     """
 
+    resolved_mode = str(console_mode or "json").strip().lower()
+    if resolved_mode not in {"off", "compact", "json"}:
+        resolved_mode = "json"
+    if console_verbose:
+        resolved_mode = "json"
+
     def _emit(payload: dict[str, Any]) -> None:
-        output = payload if console_verbose else _compact_memory_event_payload(payload)
+        compact = _compact_memory_event_payload(payload)
+        if resolved_mode == "compact":
+            updater = getattr(progress_reporter, "update_memory_status", None)
+            if callable(updater):
+                updater(payload)
+            return
+        if resolved_mode == "off":
+            return
+        output = payload if console_verbose else compact
         print(
             "MEMORY_STATUS_JSON: "
             + json.dumps(output, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
 
+    setattr(_emit, "_image_gen_default_memory_callback", True)
+    setattr(_emit, "_image_gen_console_mode", resolved_mode)
     return _emit
 
 
@@ -626,9 +655,24 @@ class Txt2ImgRunner:
                 self.state.extra.pop(preview_key, None)
 
             self.state.extra["progress_reporter"] = progress_reporter
-            if not callable(self.state.extra.get("memory_event_callback")):
+            console_verbose = bool(extras.get("_console_verbose", False))
+            console_memory_mode = str(
+                extras.get("_console_memory_mode")
+                or ("json" if extras.get("progress_json", False) else "compact")
+            ).strip().lower()
+            existing_memory_callback = self.state.extra.get("memory_event_callback")
+            replace_default_callback = bool(
+                getattr(
+                    existing_memory_callback,
+                    "_image_gen_default_memory_callback",
+                    False,
+                )
+            )
+            if not callable(existing_memory_callback) or replace_default_callback:
                 self.state.extra["memory_event_callback"] = _build_memory_event_callback(
-                    console_verbose=bool(extras.get("_console_verbose", False))
+                    console_verbose=console_verbose,
+                    console_mode=console_memory_mode,
+                    progress_reporter=progress_reporter,
                 )
             for key in (
                 "live_preview_callback",
@@ -965,13 +1009,28 @@ class Txt2ImgRunner:
             except (StopIteration, AttributeError, TypeError):
                 component_devices[component_name] = str(getattr(module, "device", "unknown"))
                 component_dtypes[component_name] = str(getattr(module, "dtype", "unknown"))
+        canonical_vae = read_vae_provenance(loaded.components.vae)
         vae_provenance = {
-            "mode": str(extras.get("vae_mode") or ("manual_external_selection" if extras.get("vae_path") else "checkpoint_embedded_auto")),
+            **canonical_vae,
+            "mode": str(
+                extras.get("vae_mode")
+                or (
+                    "manual_external_selection"
+                    if extras.get("vae_path")
+                    else "checkpoint_embedded_auto"
+                )
+            ),
             "selection_enabled": bool(extras.get("external_vae_override_enabled", True)),
-            "requested_path": str(extras.get("vae_override_requested_path") or extras.get("vae_path") or ""),
-            "effective_source": "checkpoint_embedded",
-            "effective_path": "",
-            "loaded_from_checkpoint": True,
+            "requested_path": str(
+                extras.get("vae_override_requested_path")
+                or extras.get("vae_path")
+                or ""
+            ),
+            "effective_source": str(canonical_vae.get("source_kind") or "runtime_component"),
+            "effective_path": str(canonical_vae.get("source_path") or ""),
+            "loaded_from_checkpoint": bool(
+                canonical_vae.get("embedded_in_checkpoint", False)
+            ),
             "component_device": component_devices.get("vae", "unknown"),
             "component_dtype": component_dtypes.get("vae", "unknown"),
         }
@@ -1054,7 +1113,7 @@ class Txt2ImgRunner:
                 "checkpoint component load memory telemetry captured",
                 **model_load_memory,
             )
-        return PipelineCompositionRoot(
+        pipeline = PipelineCompositionRoot(
             components=loaded.components,
             prompt_adapter=prompt_adapter,
             scheduler_adapter=scheduler_adapter,
@@ -1065,6 +1124,27 @@ class Txt2ImgRunner:
             dtype=runtime_dtype,
             system_overrides=self.system_overrides,
         ).build(state=self.state)
+        pixel_requested = bool(getattr(request, "hires_enabled", False))
+        if pixel_requested:
+            discovery = self.diagnostics_system.run_stage(
+                session,
+                "upscaler_discovery",
+                "discover_for_pixel_hires",
+                lambda: discover_upscalers(self.project_context, mode="unidentified"),
+            )
+            registry = UpscalerModelRegistry.from_discovery(
+                discovery,
+                memory_manager=pipeline.memory_manager,
+            )
+            pipeline.configure_neural_upscaling(
+                registry=registry,
+                runtime=StandaloneNeuralUpscaler(registry),
+            )
+            setattr(request, "_hires_upscaler_registry", registry)
+            discovery_record = discovery.to_dict() if hasattr(discovery, "to_dict") else {}
+            extras["hires_upscaler_discovery"] = discovery_record
+            session.request_extras["hires_upscaler_discovery"] = discovery_record
+        return pipeline
 
     def run_request(
         self,

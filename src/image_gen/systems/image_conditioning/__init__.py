@@ -1,3 +1,14 @@
+from .vae_encoding import (
+    VAE_ENCODE_CONTRACT_VERSION,
+    VAE_ROUND_TRIP_CONTRACT_VERSION,
+    VAE_EXECUTION_FINGERPRINT_VERSION,
+    VAEEncodeResult,
+    VAERoundTripResult,
+    build_vae_execution_fingerprint,
+    vae_encode_for_sampling,
+    vae_round_trip_for_diagnostics,
+    vae_round_trip_from_encoded_for_diagnostics,
+)
 from .contracts import (
     ImageConditionedSchedule,
     ImageConditionedStepPlan,
@@ -32,6 +43,15 @@ from .schedule import (
 )
 
 __all__ = [
+    "VAE_ENCODE_CONTRACT_VERSION",
+    "VAE_ROUND_TRIP_CONTRACT_VERSION",
+    "VAE_EXECUTION_FINGERPRINT_VERSION",
+    "VAEEncodeResult",
+    "VAERoundTripResult",
+    "build_vae_execution_fingerprint",
+    "vae_encode_for_sampling",
+    "vae_round_trip_for_diagnostics",
+    "vae_round_trip_from_encoded_for_diagnostics",
     "ImageConditionedSchedule",
     "ImageConditionedStepPlan",
     "ScheduleRehydrationResult",

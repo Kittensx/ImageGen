@@ -297,6 +297,13 @@
   margin-top: 4px;
 }
 
+.generation-interrupt-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 7px;
+}
+
 .primary-button,
 .secondary-button,
 .infinity-button,
@@ -5364,7 +5371,8 @@ body.is-resizing .center-splitter::before {
 
 .lora-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(225px, 100%), 1fr));
+  grid-auto-rows: max-content;
   gap: 10px;
   align-content: start;
   min-height: 0;
@@ -5375,6 +5383,8 @@ body.is-resizing .center-splitter::before {
 
 .lora-card {
   min-width: 0;
+  min-height: 322px;
+  align-self: start;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -5402,6 +5412,7 @@ body.is-resizing .center-splitter::before {
 
 .lora-card-preview-wrap {
   position: relative;
+  flex: 0 0 158px;
   min-height: 158px;
   height: 158px;
   overflow: hidden;
@@ -5497,6 +5508,7 @@ body.is-resizing .center-splitter::before {
 }
 
 .lora-card-body {
+  flex: 1 0 auto;
   display: grid;
   gap: 7px;
   padding: 10px;
@@ -5563,8 +5575,9 @@ body.is-resizing .center-splitter::before {
 }
 
 .lora-card-actions {
+  flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(5, minmax(30px, 1fr));
+  grid-template-columns: repeat(3, minmax(38px, 1fr));
   gap: 5px;
   padding: 0 10px 10px;
 }

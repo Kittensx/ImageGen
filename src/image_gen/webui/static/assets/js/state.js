@@ -4,6 +4,7 @@ export const state = {
   vaes: [],
   loras: [],
   textualInversions: [],
+  upscalers: null,
   checkpointCatalog: [],
   selectedCheckpointAssetId: "",
   selectedLoraAssetId: "",
@@ -195,6 +196,7 @@ export function setCatalogs(payload) {
   state.vaes = payload.models?.vaes || payload.vaes || state.vaes;
   state.loras = payload.models?.loras || payload.loras || state.loras;
   state.textualInversions = payload.models?.textual_inversions || payload.textual_inversions || state.textualInversions;
+  state.upscalers = payload.upscalers || state.upscalers;
   state.checkpointCatalog = payload.models?.models || payload.models || state.checkpointCatalog;
   state.samplers = payload.plugins?.samplers || state.samplers;
   state.schedulers = payload.plugins?.schedulers || state.schedulers;

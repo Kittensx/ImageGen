@@ -9,6 +9,81 @@ from image_gen.contracts import (
 from modules.txt2img.generation_manifest import GenerationManifest
 
 
+def _recorded_hires_runtime_identity(manifest: GenerationManifest) -> dict[str, str]:
+    payload = manifest.to_dict()
+    extra = payload.get("extra") if isinstance(payload, dict) else {}
+    pipeline = (extra or {}).get("pipeline_metadata") if isinstance(extra, dict) else {}
+    hires = (pipeline or {}).get("hires_fix") if isinstance(pipeline, dict) else {}
+    if not isinstance(hires, dict):
+        return {}
+    source = hires.get("pixel_source_preparation")
+    source = source if isinstance(source, dict) else {}
+    upscale = source.get("upscale_metadata")
+    upscale = upscale if isinstance(upscale, dict) else {}
+    vae_encode = source.get("vae_encode")
+    vae_encode = vae_encode if isinstance(vae_encode, dict) else {}
+    vae = vae_encode.get("vae")
+    vae = vae if isinstance(vae, dict) else {}
+    plan = hires.get("upscale_plan")
+    plan = plan if isinstance(plan, dict) else {}
+    descriptor = plan.get("descriptor")
+    descriptor = descriptor if isinstance(descriptor, dict) else {}
+    diagnostics = hires.get("phase14n7_diagnostics")
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    diagnostic_upscaler = diagnostics.get("upscaler")
+    diagnostic_upscaler = diagnostic_upscaler if isinstance(diagnostic_upscaler, dict) else {}
+    diagnostic_vae = diagnostics.get("vae")
+    diagnostic_vae = diagnostic_vae if isinstance(diagnostic_vae, dict) else {}
+    return {
+        "strategy": str(diagnostics.get("strategy") or plan.get("strategy") or ""),
+        "upscaler_id": str(
+            upscale.get("upscaler_id")
+            or plan.get("upscaler_id")
+            or descriptor.get("upscaler_id")
+            or diagnostic_upscaler.get("id")
+            or ""
+        ),
+        "upscaler_sha256": str(
+            upscale.get("upscaler_sha256")
+            or descriptor.get("sha256")
+            or diagnostic_upscaler.get("sha256")
+            or ""
+        ).casefold(),
+        "vae_sha256": str(
+            vae.get("sha256") or diagnostic_vae.get("sha256") or ""
+        ).casefold(),
+        "vae_source_kind": str(
+            vae.get("source_kind") or diagnostic_vae.get("source_kind") or ""
+        ),
+    }
+
+
+def _restore_recorded_hires_base_dimensions(payload: dict[str, Any]) -> dict[str, Any]:
+    """Restore the first-pass dimensions hidden by final-output manifests.
+
+    Final hires manifests intentionally record the final image size in
+    ``required_for_rerun.width`` / ``height``.  The original base dimensions
+    remain in ``hires_dimension_plan``.  Exact replay must restore those base
+    values before resolving the second-pass target or the target collapses to
+    the base size and hires validation fails.
+    """
+
+    if not bool(payload.get("hires_enabled", False)):
+        return payload
+    plan = payload.get("hires_dimension_plan")
+    if not isinstance(plan, dict):
+        return payload
+    try:
+        base_width = int(plan.get("base_width") or 0)
+        base_height = int(plan.get("base_height") or 0)
+    except (TypeError, ValueError):
+        return payload
+    if base_width > 0 and base_height > 0:
+        payload["width"] = base_width
+        payload["height"] = base_height
+    return payload
+
+
 def _recorded_hires_schedule(manifest: GenerationManifest) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = manifest.to_dict()
     extra = payload.get("extra") if isinstance(payload, dict) else {}
@@ -132,6 +207,7 @@ def manifest_to_request_kwargs(
     payload = manifest.to_rerun_payload(
         include_optional_for_rerun=include_optional_for_rerun
     )
+    _restore_recorded_hires_base_dimensions(payload)
     payload.setdefault("hires_step_policy", "proportional_tail_v1")
     prompt_cfg_schedules = _recorded_prompt_cfg_schedules(manifest)
     if prompt_cfg_schedules:
@@ -156,6 +232,15 @@ def manifest_to_request_kwargs(
         payload["hires_schedule_conformance_source_replay"] = replay
         payload["hires_schedule_conformance_source_fingerprint"] = fingerprint
         payload["hires_schedule_replay_mode"] = "recorded_exact"
+    hires_identity = _recorded_hires_runtime_identity(manifest)
+    if hires_identity.get("strategy") == "pixel_neural":
+        payload["hires_expected_upscaler_sha256"] = hires_identity.get(
+            "upscaler_sha256", ""
+        )
+        payload["hires_expected_vae_sha256"] = hires_identity.get("vae_sha256", "")
+        payload["hires_expected_vae_source_kind"] = hires_identity.get(
+            "vae_source_kind", ""
+        )
 
     prompt_assets = _recorded_prompt_assets(manifest)
     payload["prompt_asset_contract_version"] = prompt_assets["contract_version"]
@@ -185,6 +270,7 @@ def apply_manifest_to_existing_request(
     payload = manifest.to_rerun_payload(
         include_optional_for_rerun=include_optional_for_rerun
     )
+    _restore_recorded_hires_base_dimensions(payload)
     payload.setdefault("hires_step_policy", "proportional_tail_v1")
     prompt_cfg_schedules = _recorded_prompt_cfg_schedules(manifest)
     if prompt_cfg_schedules:
@@ -209,6 +295,15 @@ def apply_manifest_to_existing_request(
         payload["hires_schedule_conformance_source_replay"] = replay
         payload["hires_schedule_conformance_source_fingerprint"] = fingerprint
         payload["hires_schedule_replay_mode"] = "recorded_exact"
+    hires_identity = _recorded_hires_runtime_identity(manifest)
+    if hires_identity.get("strategy") == "pixel_neural":
+        payload["hires_expected_upscaler_sha256"] = hires_identity.get(
+            "upscaler_sha256", ""
+        )
+        payload["hires_expected_vae_sha256"] = hires_identity.get("vae_sha256", "")
+        payload["hires_expected_vae_source_kind"] = hires_identity.get(
+            "vae_source_kind", ""
+        )
 
     prompt_assets = _recorded_prompt_assets(manifest)
     payload["prompt_asset_contract_version"] = prompt_assets["contract_version"]

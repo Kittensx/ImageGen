@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from copy import deepcopy
+from typing import Any, Mapping
 
 import torch
-import torch.nn.functional as F
 
 from image_gen.contracts import GenerationRequest, SchedulerOutput
 from image_gen.runtime.hires_sizing import HiresDimensionPlan, resolve_hires_dimensions
+from image_gen.systems.image_conditioning import VAEEncodeResult, VAERoundTripResult
+from image_gen.systems.upscaling import UpscalerDescriptor
 from image_gen.systems.image_conditioning import (
     A1111_FIXED_STEPS_V1,
     DEFAULT_HIRES_STEP_POLICY,
@@ -22,10 +24,8 @@ from image_gen.systems.image_conditioning import (
     resolve_image_conditioned_step_plan,
 )
 from modules.txt2img.seed_utils import create_torch_generator, offset_seed
-
-
 HIRES_ALGORITHM_VERSION = "image-gen-hires-refinement-v2"
-_VALID_UPSCALERS = {"latent_nearest", "latent_bilinear", "latent_bicubic"}
+_VALID_STRATEGIES = {"pixel_neural"}
 
 
 def _scalar_float(value: torch.Tensor | float | int | None) -> float | None:
@@ -39,6 +39,188 @@ def _scalar_float(value: torch.Tensor | float | int | None) -> float | None:
 
 
 @dataclass(frozen=True)
+class HiresUpscalePlan:
+    strategy: str
+    legacy_value: str
+    latent_interpolation: str | None
+    upscaler_id: str | None
+    descriptor: UpscalerDescriptor | None
+    target_width: int
+    target_height: int
+    exact_resize_filter: str
+    tile_size: int
+    tile_overlap: int
+    tile_batch_size: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "strategy": self.strategy,
+            "legacy_value": self.legacy_value,
+            "latent_interpolation": self.latent_interpolation,
+            "upscaler_id": self.upscaler_id,
+            "descriptor": self.descriptor.to_dict() if self.descriptor is not None else None,
+            "target_width": int(self.target_width),
+            "target_height": int(self.target_height),
+            "exact_resize_filter": self.exact_resize_filter,
+            "tile_size": int(self.tile_size),
+            "tile_overlap": int(self.tile_overlap),
+            "tile_batch_size": int(self.tile_batch_size),
+        }
+
+
+@dataclass(frozen=True)
+class PixelNeuralHiresSourceResult:
+    """Immutable source-preparation boundary before Phase 14M noise."""
+
+    exact_target_images: torch.Tensor
+    upscale_metadata: Mapping[str, Any]
+    vae_encode_result: VAEEncodeResult
+    vae_round_trip: VAERoundTripResult | None = None
+    diagnostic_artifacts: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        images = self.exact_target_images
+        if not torch.is_tensor(images) or images.ndim != 4 or int(images.shape[1]) != 3:
+            raise ValueError("Pixel-neural source result requires an exact RGB BCHW tensor.")
+        metadata = deepcopy(dict(self.upscale_metadata or {}))
+        object.__setattr__(self, "upscale_metadata", metadata)
+        object.__setattr__(
+            self,
+            "diagnostic_artifacts",
+            deepcopy(dict(self.diagnostic_artifacts or {})),
+        )
+        target_width = int(metadata.get("target_width") or 0)
+        target_height = int(metadata.get("target_height") or 0)
+        if target_width < 1 or target_height < 1:
+            raise ValueError("Pixel-neural source result requires exact target dimensions in upscaler metadata.")
+        if tuple(images.shape[-2:]) != (target_height, target_width):
+            raise ValueError("Pixel-neural source tensor does not match upscaler target metadata.")
+        latents = self.vae_encode_result.latents
+        if int(latents.shape[0]) != int(images.shape[0]):
+            raise ValueError("Pixel-neural source result must preserve batch ordering into VAE latents.")
+        encode_metadata = dict(self.vae_encode_result.metadata or {})
+        exact_contract = dict(encode_metadata.get("exact_image_contract") or {})
+        if (
+            int(exact_contract.get("target_width") or 0) != target_width
+            or int(exact_contract.get("target_height") or 0) != target_height
+        ):
+            raise ValueError("Pixel-neural VAE encode metadata does not match the exact target tensor.")
+        vae_identity = dict(encode_metadata.get("vae") or {})
+        vae_hash = str(vae_identity.get("sha256") or "").casefold()
+        if len(vae_hash) != 64 or any(character not in "0123456789abcdef" for character in vae_hash):
+            raise ValueError("Pixel-neural source result requires a complete VAE SHA-256 identity.")
+        encode_upscaler = dict(encode_metadata.get("upscale_provenance") or {})
+        if (
+            str(encode_upscaler.get("upscaler_id") or "")
+            != str(metadata.get("upscaler_id") or "")
+            or str(encode_upscaler.get("upscaler_sha256") or "").casefold()
+            != str(metadata.get("upscaler_sha256") or "").casefold()
+        ):
+            raise ValueError("Pixel-neural VAE encode provenance does not match the executed upscaler.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": "phase14n5-pixel-neural-source-result-v1",
+            "exact_target_shape": [int(value) for value in self.exact_target_images.shape],
+            "upscale_metadata": dict(self.upscale_metadata),
+            "vae_encode": self.vae_encode_result.to_serializable_dict(),
+            "vae_round_trip": (
+                self.vae_round_trip.to_serializable_dict()
+                if self.vae_round_trip is not None
+                else None
+            ),
+            "diagnostic_artifacts": dict(self.diagnostic_artifacts or {}),
+        }
+
+
+def resolve_hires_upscale_plan(
+    request: GenerationRequest,
+    *,
+    dimensions: HiresDimensionPlan | None = None,
+    registry: Any | None = None,
+) -> HiresUpscalePlan:
+    """Resolve the active `.pth`-only hires source plan.
+
+    Only the active pixel-neural strategy is executable. Historical disabled
+    requests may still carry stale fields, but active execution never imports or
+    falls back to retired hires implementations.
+    """
+
+    dimensions = dimensions or resolve_hires_dimensions(request)
+    enabled = bool(getattr(request, "hires_enabled", False))
+    legacy = str(getattr(request, "hires_upscaler", "") or "").strip()
+    requested_strategy = str(
+        getattr(request, "hires_strategy", "pixel_neural") or "pixel_neural"
+    ).strip().casefold()
+    requested_id = str(getattr(request, "hires_upscaler_id", "") or "").strip()
+    selected_id = requested_id or legacy
+
+    if requested_strategy not in _VALID_STRATEGIES:
+        if not enabled:
+            selected_id = ""
+            requested_strategy = "pixel_neural"
+        else:
+            raise ValueError("hires_strategy must be 'pixel_neural'.")
+
+    common = {
+        "strategy": "pixel_neural",
+        "legacy_value": selected_id,
+        "latent_interpolation": None,
+        "upscaler_id": selected_id or None,
+        "target_width": int(dimensions.effective_width),
+        "target_height": int(dimensions.effective_height),
+        "exact_resize_filter": str(
+            getattr(request, "hires_exact_resize_filter", "bicubic") or "bicubic"
+        ).casefold(),
+        "tile_size": int(getattr(request, "hires_tile_size", 0) or 0),
+        "tile_overlap": int(getattr(request, "hires_tile_overlap", 16) or 0),
+        "tile_batch_size": int(getattr(request, "hires_tile_batch_size", 1) or 1),
+    }
+
+    if not selected_id:
+        if enabled:
+            raise ValueError(
+                "Pixel-neural hires requires a discovered neural .pth upscaler ID."
+            )
+        return HiresUpscalePlan(descriptor=None, **common)
+
+    if registry is None:
+        registry = getattr(request, "_hires_upscaler_registry", None)
+    if registry is None and not enabled:
+        return HiresUpscalePlan(descriptor=None, **common)
+    if registry is None:
+        raise ValueError(
+            f"Pixel-neural hires requested {selected_id!r}, but no upscaler registry is configured."
+        )
+    try:
+        descriptor = registry.resolve_neural(selected_id)
+    except Exception as exc:
+        raise ValueError(
+            f"Pixel-neural hires could not resolve stable upscaler ID {selected_id!r}: {exc}"
+        ) from exc
+    if not descriptor.selectable:
+        raise ValueError(
+            f"Pixel-neural upscaler {selected_id!r} is not supported: {descriptor.load_status}."
+        )
+    if not descriptor.sha256 or len(descriptor.sha256) != 64:
+        raise ValueError(f"Pixel-neural upscaler {selected_id!r} lacks a complete SHA-256.")
+    expected_sha256 = str(
+        getattr(request, "hires_expected_upscaler_sha256", "") or ""
+    ).strip().casefold()
+    if expected_sha256:
+        if len(expected_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in expected_sha256
+        ):
+            raise ValueError("Recorded neural upscaler SHA-256 is invalid.")
+        if descriptor.sha256.casefold() != expected_sha256:
+            raise ValueError(
+                f"Recorded neural upscaler hash mismatch for {selected_id!r}: "
+                f"expected {expected_sha256}, found {descriptor.sha256.casefold()}."
+            )
+    return HiresUpscalePlan(descriptor=descriptor, **common)
+
+
+@dataclass(frozen=True)
 class HiresExecutionPlan:
     enabled: bool
     dimensions: HiresDimensionPlan
@@ -47,13 +229,17 @@ class HiresExecutionPlan:
     effective_steps: int
     denoising_strength: float
     safe_denoising_strength: float
-    upscaler: str
+    upscale_plan: HiresUpscalePlan
     sampler_name: str
     scheduler_name: str
     cfg_scale: float
     cfg_rescale: float
     step_policy: str = DEFAULT_HIRES_STEP_POLICY
     noise_policy: str = HIRES_NOISE_POLICY_ID
+
+    @property
+    def upscaler(self) -> str:
+        return str(self.upscale_plan.upscaler_id or self.upscale_plan.legacy_value)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +252,8 @@ class HiresExecutionPlan:
             "denoising_strength": float(self.denoising_strength),
             "safe_denoising_strength": float(self.safe_denoising_strength),
             "upscaler": self.upscaler,
+            "hires_strategy": self.upscale_plan.strategy,
+            "upscale_plan": self.upscale_plan.to_dict(),
             "sampler_name": self.sampler_name,
             "scheduler_name": self.scheduler_name,
             "cfg_scale": float(self.cfg_scale),
@@ -88,11 +276,7 @@ def resolve_hires_execution_plan(request: GenerationRequest) -> HiresExecutionPl
         )
     raw_strength = getattr(request, "hires_denoising_strength", 0.45)
     strength = float(0.45 if raw_strength is None else raw_strength)
-    upscaler = str(getattr(request, "hires_upscaler", "latent_bilinear") or "latent_bilinear").strip().lower()
-    if upscaler not in _VALID_UPSCALERS:
-        raise ValueError(
-            "hires_upscaler must be one of: latent_nearest, latent_bilinear, latent_bicubic."
-        )
+    upscale_plan = resolve_hires_upscale_plan(request, dimensions=dimensions)
     step_policy = str(
         getattr(request, "hires_step_policy", DEFAULT_HIRES_STEP_POLICY)
         or DEFAULT_HIRES_STEP_POLICY
@@ -138,7 +322,7 @@ def resolve_hires_execution_plan(request: GenerationRequest) -> HiresExecutionPl
         effective_steps=step_plan.effective_refinement_steps,
         denoising_strength=step_plan.normalized_denoising_strength,
         safe_denoising_strength=step_plan.safe_denoising_strength,
-        upscaler=upscaler,
+        upscale_plan=upscale_plan,
         sampler_name=sampler_name,
         scheduler_name=scheduler_name,
         cfg_scale=cfg_scale,
@@ -295,28 +479,33 @@ def slice_schedule_for_denoising(
     return output
 
 
-def upscale_latents(
-    latents: torch.Tensor,
-    *,
-    target_width: int,
-    target_height: int,
-    latent_scale_factor: int,
-    upscaler: str,
-) -> torch.Tensor:
-    if not torch.is_tensor(latents) or latents.ndim != 4:
-        raise ValueError("Hires latent upscaling requires a BCHW latent tensor.")
-    latent_width = int(target_width) // int(latent_scale_factor)
-    latent_height = int(target_height) // int(latent_scale_factor)
-    if latent_width < 1 or latent_height < 1:
-        raise ValueError("Hires target dimensions are too small for the latent scale factor.")
-    mode = str(upscaler).replace("latent_", "", 1)
-    kwargs: dict[str, Any] = {
-        "size": (latent_height, latent_width),
-        "mode": mode,
-    }
-    if mode in {"bilinear", "bicubic"}:
-        kwargs["align_corners"] = False
-    return F.interpolate(latents, **kwargs)
+def validate_recorded_hires_vae_identity(
+    request: GenerationRequest,
+    vae_provenance: Mapping[str, Any],
+) -> None:
+    """Reject pixel-neural replay when the executed VAE hash changed."""
+
+    expected_sha256 = str(
+        getattr(request, "hires_expected_vae_sha256", "") or ""
+    ).strip().casefold()
+    if not expected_sha256:
+        return
+    if len(expected_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in expected_sha256
+    ):
+        raise ValueError(
+            "Recorded pixel-neural replay requires a complete expected VAE SHA-256."
+        )
+    actual_sha256 = str(vae_provenance.get("sha256") or "").strip().casefold()
+    if actual_sha256 != expected_sha256:
+        source_kind = str(
+            getattr(request, "hires_expected_vae_source_kind", "") or "recorded VAE"
+        ).strip()
+        raise ValueError(
+            f"Recorded VAE hash mismatch for {source_kind}: expected {expected_sha256}, "
+            f"found {actual_sha256 or 'missing'}. Exact pixel-neural replay is blocked."
+        )
+
 
 
 def add_hires_noise(
@@ -351,12 +540,15 @@ __all__ = [
     "HIRES_NOISE_POLICY_ID",
     "HIRES_NOISE_SEED_OFFSET",
     "HiresExecutionPlan",
+    "HiresUpscalePlan",
+    "PixelNeuralHiresSourceResult",
     "PROPORTIONAL_TAIL_V1",
     "SUPPORTED_HIRES_STEP_POLICIES",
     "add_hires_noise",
     "build_hires_request",
     "hires_schedule_baseline_metadata",
     "resolve_hires_execution_plan",
+    "resolve_hires_upscale_plan",
     "slice_schedule_for_denoising",
-    "upscale_latents",
+    "validate_recorded_hires_vae_identity",
 ]

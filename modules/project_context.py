@@ -326,7 +326,8 @@ class ProjectContext:
             "hires_height": int(generation.get("hires_height") or 0),
             "hires_steps": int(generation.get("hires_steps") or 20),
             "hires_denoising_strength": float(generation.get("hires_denoising_strength") or 0.4),
-            "hires_upscaler": str(generation.get("hires_upscaler") or "latent_bicubic"),
+            "hires_strategy": str(generation.get("hires_strategy") or "pixel_neural"),
+            "hires_upscaler": str(generation.get("hires_upscaler") or ""),
             "hires_save_lowres": bool(generation.get("hires_save_lowres", True)),
             "parser_kwargs": dict(generation.get("parser_kwargs") or {}),
             "diagnostics": dict(self.config.get("diagnostics") or {}),
@@ -367,6 +368,7 @@ class ProjectContext:
             "generation": dict(self.config.get("generation") or {}),
             "registry": dict(self.config.get("registry") or {}),
             "loader": dict(self.config.get("loader") or {}),
+            "upscaling": dict(self.config.get("upscaling") or {}),
             "diagnostics": dict(self.config.get("diagnostics") or {}),
         }
 

@@ -126,16 +126,36 @@ class VAEExecutionController:
             return buffer.device
         return torch.device("cpu")
 
+    @staticmethod
+    def _module_dtype(module: torch.nn.Module) -> torch.dtype:
+        for parameter in module.parameters():
+            if parameter.is_floating_point():
+                return parameter.dtype
+        for buffer in module.buffers():
+            if buffer.is_floating_point():
+                return buffer.dtype
+        return torch.float32
+
     def _resolve_device(self) -> torch.device:
         requested = self.settings.device
         current = self._module_device(self.vae)
         if requested == "auto":
             return current
         if requested == "cpu":
-            return torch.device("cpu")
+            if current.type != "cpu":
+                raise RuntimeError(
+                    "VAE execution requested CPU, but the VAE component is still placed on "
+                    f"{current}. Move/offload the component before encoding or decoding."
+                )
+            return current
         if not torch.cuda.is_available():
             raise RuntimeError("--vae-device cuda was requested, but CUDA is unavailable.")
-        return current if current.type == "cuda" else torch.device("cuda")
+        if current.type != "cuda":
+            raise RuntimeError(
+                "VAE execution requested CUDA, but the VAE component is still placed on "
+                f"{current}. Acquire/place the component before encoding or decoding."
+            )
+        return current
 
     @staticmethod
     def _tile_starts(length: int, tile_size: int, overlap: int) -> list[int]:
@@ -381,7 +401,8 @@ class VAEExecutionController:
         if not torch.is_tensor(images) or images.ndim != 4:
             raise ValueError("VAE encode input must be a BCHW tensor.")
         device = self._resolve_device()
-        source = images.to(device=device)
+        dtype = self._module_dtype(self.vae)
+        source = images.to(device=device, dtype=dtype)
         slicing = bool(self.settings.slicing and int(source.shape[0]) > 1)
         batches: Iterable[torch.Tensor] = source.split(1, dim=0) if slicing else (source,)
         means: list[torch.Tensor] = []
@@ -409,6 +430,10 @@ class VAEExecutionController:
             "tile_count": tile_count,
             "batch_slices": len(means),
             "input_shape": [int(item) for item in images.shape],
+            "input_device": str(images.device),
+            "input_dtype": str(images.dtype),
+            "effective_input_device": str(source.device),
+            "effective_input_dtype": str(source.dtype),
             "mean_shape": [int(item) for item in mean_result.shape],
             "logvar_shape": [int(item) for item in logvar_result.shape],
         }

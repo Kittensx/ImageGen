@@ -1,20 +1,20 @@
 import { loadFragments } from "./fragments.js";
 
-import { api } from "./api.js";
+import { api } from "./api.js?v=0.1.77";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.68";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.75";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
 import { bindSettings } from "./features/settings.js?v=0.1.62";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
 import { bindWorkspaceLayout } from "./features/layout.js?v=0.1.74";
-import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.74";
+import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
 import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=0.1.74";
-import { bindLoraWorkspace } from "./features/loras.js?v=0.1.74";
+import { bindLoraWorkspace } from "./features/loras.js?v=0.1.77";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
@@ -25,6 +25,8 @@ import { bindVariationMatrix, openVariationMatrix } from "./features/variation-m
 import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.45";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
 import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.68";
+import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
+import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=0.1.78";
 
 const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
 
@@ -623,6 +625,7 @@ async function applyReplayValues(values = {}) {
   }));
 
   applyGenerationValues(values);
+  window.imageGenPromptLoraSync?.syncFromPrompts?.();
   applyVaeSelectionPolicy();
   initializePromptTools(values);
   await refreshAdvancedEditors({ preservePresetSelection: true });
@@ -989,6 +992,7 @@ async function start() {
     $("#projectPath").textContent = `Project: ${bootstrap.project_root}`;
     populateModels(current);
     populatePlugins(current);
+    initializeHiresUpscalers(bootstrap.upscalers || {}, current);
     applyGenerationValues(current);
     applyVaeSelectionPolicy();
     initializePromptTools(current);
@@ -996,6 +1000,8 @@ async function start() {
     renderModelArchitectureStatus(state.activeModel);
     const workspaceLayout = bindWorkspaceLayout(bootstrap.settings || {});
     const defaultAssetsController = bindDefaultAssets(bootstrap.default_assets || {});
+    const promptLoraSync = bindPromptLoraSync({ defaultAssetsController });
+    promptLoraSync.syncFromPrompts();
     let workspaceTabs = null;
     const checkpointWorkspace = bindCheckpointWorkspace({
       activateModelPath: async (modelPath) => {
@@ -1037,6 +1043,7 @@ async function start() {
     bindCfgLab({ collect: collectCurrentValues, saveSession: saveSessionSoon, openVariationMatrix });
     bindOutputPatternBuilder();
     bindPromptTools({ saveSessionSoon });
+    bindHiresUpscalers(saveSessionSoon);
     $("#vaePath")?.addEventListener("change", applyVaeSelectionPolicy);
     renderGallery(state.recentOutputs);
     renderPromptPresets(bootstrap.prompt_presets || []);

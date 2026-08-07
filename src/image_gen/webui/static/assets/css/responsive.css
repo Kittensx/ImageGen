@@ -686,7 +686,7 @@
   }
 
   .lora-card-grid {
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(215px, 100%), 1fr));
   }
 
   .lora-workspace-active-row {
@@ -755,7 +755,7 @@
   .lora-card-grid {
     max-height: none;
     overflow: visible;
-    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
   }
 
   .lora-workspace-active-row {

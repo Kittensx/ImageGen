@@ -17,4 +17,5 @@ __all__ = [
     "registry",
     "sampling",
     "scheduling",
+    "upscaling",
 ]
