@@ -1,0 +1,13 @@
+/* Editable coordinate table. */
+.coordinate-details { margin-top: 10px; }
+.coordinate-summary { cursor: pointer; font-size: 12px; color: #888; user-select: none; }
+.coordinate-table-scroll { overflow-x: auto; margin-top: 6px; }
+.coordinate-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.coordinate-table-heading { text-align: left; padding: 2px 4px; border: 1px solid var(--rb-line); background: var(--rb-panel-raised); color: #888; }
+.coordinate-table-heading-cell { padding: 2px 4px; border: 1px solid var(--rb-line); background: var(--rb-panel-raised); color: #888; }
+.coordinate-row.is-active { background: #2a3a4a; }
+.coordinate-cell { padding: 1px 4px; border: 1px solid #333; }
+.coordinate-cell-number { color: #888; }
+.coordinate-table-input { width: 100%; background: transparent; border: none; color: #e0e0e0; font-size: 11px; outline: none; }
+.coordinate-table-input.is-number { text-align: right; }
+.coordinate-table-delete { background: none; border: none; color: #e55; cursor: pointer; font-size: 11px; }

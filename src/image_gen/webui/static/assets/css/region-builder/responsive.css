@@ -1,0 +1,6 @@
+/* Region Builder responsive adjustments. */
+@media (max-width: 860px) {
+  .main-layout { grid-template-columns: 1fr; }
+  .header { align-items: flex-start; flex-direction: column; }
+  .header-controls { flex-wrap: wrap; }
+}

@@ -1,0 +1,88 @@
+<div class="canvas-section">
+<div class="canvas-heading-row">
+<h2>Canvas</h2>
+<div class="toolbar">
+<div class="mode-toolbar">
+<span class="mode-label">Tool</span>
+<button class="mode-btn active" id="selectModeBtn" onclick="setInteractionMode('select')" title="Mouse/select mode (M)" type="button">🖱 Mouse</button>
+<button class="mode-btn" id="panModeBtn" onclick="setInteractionMode('pan')" title="Pan mode (P)" type="button">✋ Pan</button>
+<button class="mode-btn" id="paintBtn" onclick="togglePaint()" title="Paint mode (B)" type="button">🎨 Paint</button>
+<span class="mode-tip">Mouse = move boxes · Pan = move viewport · Paint = mask/paint</span>
+</div>
+<span class="brush-controls" id="brushSizeGroup">
+            Brush: <input class="brush-slider" id="brushSize" max="40" min="2" oninput="onBrushSize()" type="range" value="12"/>
+<span id="brushSizeLabel">12</span>
+<button class="mini-tool-button" id="eraserBtn" onclick="toggleEraser()">Eraser</button>
+<button class="mini-tool-button" onclick="fillCanvasFromRects()">Sync</button>
+<button class="mini-tool-button" id="fillBtn" onclick="toggleFill()">Fill</button>
+<button class="mini-tool-button" id="undoBtn" onclick="undoPaint()">↩</button>
+<button class="mini-tool-button" id="redoBtn" onclick="redoPaint()">↪</button>
+<span class="mini-label">α</span>
+<input class="opacity-slider" id="opacitySlider" max="100" min="10" oninput="onOpacityChange()" type="range" value="100"/>
+</span>
+<button class="btn-add" onclick="addRegion()">＋ Add</button>
+<button class="btn-del" onclick="clearAll()">✕ Clear</button>
+</div>
+</div>
+<div class="tiles-grid" id="tilesGrid"></div>
+<div class="canvas-wrap" id="canvasWrap">
+<div class="canvas-stage-label">Generated canvas</div>
+<div class="canvas-stage-note">Anything outside the white box is offscreen and will not render.</div>
+<div class="canvas-dimension-badge" id="canvasDimensionBadge">512 × 512 usable area</div>
+<div class="view-container" id="viewContainer">
+<div class="guide-overlay" id="guideOverlay"></div>
+<div class="canvas-surface"></div>
+<canvas class="canvas-overlay" id="regionCanvas"></canvas>
+</div>
+<div class="empty-state" id="emptyState">
+<span>🖼</span>
+          Click ＋ Add or pick a preset above
+          <small>Mouse mode moves regions • Pan mode moves the viewport • Wheel zooms • Arrow keys nudge selected regions</small>
+</div>
+</div>
+<div class="toolbar">
+<button onclick="autoTile('H',2)">2→</button>
+<button onclick="autoTile('H',3)">3→</button>
+<button onclick="autoTile('H',4)">4→</button>
+<button onclick="autoTile('V',2)">2↓</button>
+<button onclick="autoTile('V',3)">3↓</button>
+<button onclick="autoTile('V',4)">4↓</button>
+<button onclick="autoTileMix(2,2)">2×2</button>
+<button onclick="autoTileMix(3,2)">3×2</button>
+<span class="grid-controls">
+<span class="grid-label">Grid</span>
+<input class="grid-size-input" id="gridCols" max="10" min="1" oninput="renderGuides()" title="columns" type="number" value="2"/>
+<span class="grid-separator">×</span>
+<input class="grid-size-input" id="gridRows" max="10" min="1" oninput="renderGuides()" title="rows" type="number" value="2"/>
+<button class="grid-apply-button" onclick="applyCustomGrid()" title="Create grid with custom row/col count">Apply</button>
+</span>
+<button class="reset-view-button" onclick="resetView()">⊡ Reset View</button>
+</div>
+<div class="canvas-options">
+<label><input checked="" id="showGuides" onchange="renderGuides()" type="checkbox"/> Show guides</label>
+<label><input id="snapGrid" onchange="renderGuides()" type="checkbox"/> Snap to grid</label>
+<label><input checked="" id="snapEdge" onchange="renderGuides()" type="checkbox"/> Snap to edge</label>
+<span>Tip: snap to edge makes nearby region borders touch without having to overlap them manually.</span>
+</div>
+<!-- Editable coordinate table -->
+<details class="coordinate-details" id="coordTable">
+<summary class="coordinate-summary">Coordinates</summary>
+<div class="coordinate-table-scroll">
+<table class="coordinate-table">
+<thead>
+<tr>
+<th class="coordinate-table-heading">#</th>
+<th class="coordinate-table-heading">Text</th>
+<th class="coordinate-table-heading-cell">x1</th>
+<th class="coordinate-table-heading-cell">x2</th>
+<th class="coordinate-table-heading-cell">y1</th>
+<th class="coordinate-table-heading-cell">y2</th>
+<th class="coordinate-table-heading-cell">w</th>
+<th class="coordinate-table-heading-cell"></th>
+</tr>
+</thead>
+<tbody id="coordBody"></tbody>
+</table>
+</div>
+</details>
+</div>

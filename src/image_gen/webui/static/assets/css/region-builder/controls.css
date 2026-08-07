@@ -1,0 +1,47 @@
+/* Toolbars, grid controls, and movement/resize assists. */
+.toolbar { display: flex; gap: 4px; flex-wrap: wrap; }
+.toolbar button, .tile-btn { padding: 5px 12px; border-radius: var(--rb-radius-small); border: 1px solid #333; background: #222; color: #aaa; cursor: pointer; font-size: 11px; transition: .1s; white-space: nowrap; }
+.toolbar button:hover, .tile-btn:hover { background: #2a2a2a; border-color: #555; color: #eee; }
+.btn-primary { background: var(--rb-accent) !important; border-color: var(--rb-accent) !important; color: #fff !important; }
+.btn-primary:hover { background: var(--rb-accent-hover) !important; }
+.btn-add { background: #1a3a2a !important; border-color: #2b8a3e !important; color: #69db7c !important; }
+.btn-add:hover { background: #1e4a35 !important; }
+.btn-del { color: #ff6b6b !important; border-color: #5a1a1a !important; }
+.btn-del:hover { background: #2a1515 !important; }
+.mode-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid #2d2d2d; border-radius: 8px; background: #171717; }
+.mode-label { font-size: 10px; color: #7d879b; text-transform: uppercase; letter-spacing: .08em; }
+.mode-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #222; color: #b6bfd2; cursor: pointer; font-size: 11px; transition: .12s; }
+.mode-btn:hover { background: #2a2a2a; border-color: #555; color: #fff; }
+.mode-btn.active { background: #1d2c64; border-color: var(--rb-accent); color: #fff; box-shadow: 0 0 0 1px rgba(91,127,255,.16) inset; }
+.mode-tip { font-size: 11px; color: #7d879b; }
+.brush-controls { display: none; align-items: center; gap: 4px; font-size: 10px; color: #666; }
+.brush-slider { width: 60px; vertical-align: middle; }
+.opacity-slider { width: 48px; vertical-align: middle; }
+.mini-tool-button { background: #444; color: #ccc; border: 1px solid #666; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; }
+.mini-label { font-size: 10px; color: #666; }
+.grid-controls { display: inline-flex; align-items: center; gap: 3px; padding: 0 4px; border-left: 1px solid var(--rb-line); }
+.grid-label { font-size: 10px; color: #888; }
+.grid-size-input { width: 32px; padding: 2px; border-radius: 3px; border: 1px solid var(--rb-line); background: var(--rb-panel-raised); color: var(--rb-text); font-size: 10px; outline: none; text-align: center; }
+.grid-separator { font-size: 9px; color: #555; }
+.grid-apply-button { padding: 2px 8px !important; font-size: 10px !important; }
+.reset-view-button { border-color: #555 !important; color: #888 !important; margin-left: auto; }
+.tiles-grid { display: flex; gap: 2px; flex-wrap: wrap; }
+.tile-btn { min-width: 32px; text-align: center; font-size: 10px; padding: 4px 8px; }
+.tile-btn.selected { border-color: var(--rb-accent); color: #5b7fff; background: #1a2040; }
+.nudge-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; max-width: 164px; }
+.nudge-grid button, .assist-grid button { padding: 5px 4px; border-radius: 4px; border: 1px solid #333; background: #222; color: #d0d7e4; cursor: pointer; font-size: 11px; transition: .1s; }
+.nudge-grid button:hover, .assist-grid button:hover { background: #2a2a2a; border-color: #555; }
+.nudge-grid .spacer { visibility: hidden; }
+.assist-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 4px; }
+.assist-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.assist-row input { width: 66px; padding: 4px 5px; border-radius: 4px; border: 1px solid #333; background: var(--rb-panel-raised); color: var(--rb-text); font-size: 12px; outline: none; }
+.assist-row input:focus { border-color: #3b5bdb; }
+.assist-note { font-size: 10px; color: #677188; line-height: 1.45; }
+.assist-label { font-size: 11px; color: #7f8898; }
+.assist-hint { font-size: 10px; color: #677188; }
+.assist-actions { margin-top: 6px; align-items: flex-start; }
+.assist-section-title { font-size: 10px; color: #677188; margin-bottom: 4px; }
+.resize-assist { flex: 1; min-width: 120px; }
+.assist-note-spaced { margin-top: 6px; }
+.edge-actions { grid-template-columns: repeat(2,1fr); }
+.edge-actions button { font-size: 10px; }

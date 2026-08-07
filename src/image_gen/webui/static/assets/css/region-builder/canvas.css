@@ -1,0 +1,47 @@
+/* Canvas surface, regions, paint overlay, guides, and viewport labels. */
+.canvas-section { background: var(--rb-panel-bg); border-radius: var(--rb-radius); padding: 12px; border: 1px solid var(--rb-line); display: flex; flex-direction: column; gap: 10px; }
+.canvas-section h2 { font-size: 12px; color: #555; font-weight: 500; text-transform: uppercase; letter-spacing: .4px; }
+.canvas-heading-row { display: flex; justify-content: space-between; align-items: center; }
+.canvas-wrap { position: relative; background: radial-gradient(circle at center, #141414 0%, #101010 68%, #0b0b0b 100%); border-radius: 8px; overflow: hidden !important; border: 1px solid #2a2a2a; cursor: crosshair; user-select: none; }
+.canvas-wrap.dragging, .canvas-wrap.panning { cursor: grabbing; }
+.canvas-wrap.pan-mode { cursor: grab; }
+.canvas-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; display: none; cursor: crosshair; pointer-events: none; image-rendering: pixelated; }
+.canvas-overlay.active { display: block; pointer-events: auto; }
+.canvas-wrap.paint-mode .region-block { opacity: .4; border-style: dashed; }
+.canvas-wrap.paint-mode .resize-handle, .canvas-wrap.paint-mode .remove-btn { display: none !important; }
+.canvas-wrap.pan-mode .region-block, .canvas-wrap.pan-mode .canvas-overlay, .canvas-wrap.panning .region-block, .canvas-wrap.panning .canvas-overlay { pointer-events: none !important; }
+.view-container { width: 100%; height: 100%; position: relative; transform-origin: 0 0; z-index: 1; background: transparent; }
+.empty-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #444; font-size: 13px; pointer-events: none; }
+.empty-state span { font-size: 32px; opacity: .5; }
+.empty-state small { font-size: 11px; color: #333; }
+.region-block { position: absolute; border: 2px solid rgba(255,255,255,.15); border-radius: var(--rb-radius-small); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: border-color .12s, box-shadow .12s; overflow: hidden; }
+.region-block:hover { border-color: rgba(255,255,255,.35); }
+.region-block.active { border-color: var(--rb-accent); box-shadow: 0 0 16px rgba(91,127,255,.25); z-index: 2; }
+.region-block .r-label { position: absolute; top: 4px; left: 6px; font-size: 10px; font-weight: 700; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .3px; pointer-events: none; }
+.region-block .r-text { font-size: 12px; text-align: center; padding: 4px 6px; color: rgba(255,255,255,.7); text-shadow: 0 1px 4px rgba(0,0,0,.8); pointer-events: none; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; max-width: 90%; }
+.region-block .r-coords { position: absolute; bottom: 4px; left: 6px; font-size: 9px; color: rgba(255,255,255,.2); pointer-events: none; }
+.remove-btn { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: var(--rb-radius-small); border: 1px solid rgba(255,255,255,.25); background: rgba(201,42,42,.88); color: #fff; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 7; padding: 0; line-height: 1; opacity: .72; transition: opacity .1s, background .1s, transform .1s; }
+.region-block:hover .remove-btn, .region-block.active .remove-btn { opacity: 1; }
+.remove-btn:hover { background: #f03e3e; transform: scale(1.06); }
+.resize-handle { position: absolute; width: 10px; height: 10px; background: #5b7fff; border: 1px solid rgba(255,255,255,.3); border-radius: 2px; z-index: 6; display: none; }
+.region-block.active .resize-handle { display: block; }
+.resize-ne { top: -5px; right: -5px; cursor: ne-resize; }
+.resize-sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+.resize-se { bottom: -5px; right: -5px; cursor: se-resize; }
+.resize-nw { top: -5px; left: -5px; cursor: nw-resize; }
+.c0 { background: rgba(59,91,219,.2); } .c0.active { background: rgba(59,91,219,.3); }
+.c1 { background: rgba(43,170,62,.2); } .c1.active { background: rgba(43,170,62,.3); }
+.c2 { background: rgba(230,60,60,.2); } .c2.active { background: rgba(230,60,60,.3); }
+.c3 { background: rgba(220,170,50,.2); } .c3.active { background: rgba(220,170,50,.3); }
+.c4 { background: rgba(160,80,220,.2); } .c4.active { background: rgba(160,80,220,.3); }
+.c5 { background: rgba(40,190,210,.2); } .c5.active { background: rgba(40,190,210,.3); }
+.c6 { background: rgba(210,110,50,.2); } .c6.active { background: rgba(210,110,50,.3); }
+.c7 { background: rgba(110,200,110,.2); } .c7.active { background: rgba(110,200,110,.3); }
+.canvas-stage-label { position: absolute; left: 12px; top: 10px; z-index: 2; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.12); background: rgba(12,14,18,.82); color: #d7deee; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
+.canvas-stage-note { position: absolute; left: 12px; bottom: 12px; z-index: 2; padding: 4px 8px; border-radius: var(--rb-radius); border: 1px solid rgba(255,255,255,.08); background: rgba(12,14,18,.72); color: #d8deea; font-size: 10px; pointer-events: none; }
+.canvas-surface { position: absolute; inset: 0; border: 3px solid rgba(255,255,255,.96); border-radius: var(--rb-radius); background: linear-gradient(180deg,#fff 0%,#fafafa 100%); box-shadow: 0 0 0 1px rgba(0,0,0,.28),0 12px 38px rgba(0,0,0,.34),inset 0 0 0 1px rgba(255,255,255,.86); pointer-events: none; }
+.canvas-dimension-badge { position: absolute; right: 12px; bottom: 12px; z-index: 2; padding: 4px 8px; border-radius: var(--rb-radius); border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.92); color: #111827; font-size: 10px; font-weight: 700; letter-spacing: .03em; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.22); }
+.guide-overlay { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .12s ease; z-index: 1; border-radius: var(--rb-radius); }
+.guide-overlay.visible { opacity: 1; }
+.canvas-options { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 10px; margin-top: 8px; border: 1px solid #2a2a2a; border-radius: 8px; background: #171717; color: #9da6b7; font-size: 11px; }
+.canvas-options label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }

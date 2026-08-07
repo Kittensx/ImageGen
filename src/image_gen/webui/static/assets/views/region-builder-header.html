@@ -1,0 +1,23 @@
+<div class="header">
+<h1>IMAGE_GEN REGION <small>SuperHybrid builder · native model-output backend</small></h1>
+<div class="header-actions header-controls">
+<label class="compact-label">Resolution</label>
+<input class="resolution-input" id="resW" max="2048" min="64" onchange="onResChange()" step="8" type="number" value="512"/>
+<span class="muted-separator">×</span>
+<input class="resolution-input" id="resH" max="2048" min="64" onchange="onResChange()" step="8" type="number" value="512"/>
+<select class="compact-select" id="resPreset" onchange="onResPreset()">
+<option value="512,512">512²</option>
+<option value="768,768">768²</option>
+<option value="1024,1024">1024²</option>
+<option value="1152,896">SDXL 1152×896</option>
+<option value="1216,832">SDXL 1216×832</option>
+<option value="1344,768">SDXL 1344×768</option>
+<option value="512,768">Portrait 512×768</option>
+<option value="768,512">Landscape 768×512</option>
+</select>
+<label class="compact-label">
+<input checked="" id="pixelMode" onchange="rebuild();render();updateEditor()" type="checkbox"/>
+        Pixel coords
+      </label>
+</div>
+</div>
