@@ -40,13 +40,29 @@ class ManagedComponent:
         return self.active_leases > 0
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload.pop("module", None)
-        payload.pop("unload_callback", None)
-        payload["required_by_stages"] = sorted(self.required_by_stages)
-        payload["estimated_total_bytes"] = self.estimated_total_bytes
-        payload["leased"] = self.leased
-        return payload
+        # Do not use dataclasses.asdict() here.  asdict() deep-copies every field
+        # before callers can remove ``module`` and ``unload_callback``.  During
+        # CUDA OOM recovery that deep copy can clone torch Parameters and trigger
+        # a second allocation failure while merely trying to capture diagnostics.
+        # Build the serializable report explicitly so recovery remains allocation-
+        # light and never traverses live model objects.
+        return {
+            "component_id": self.component_id,
+            "component_kind": self.component_kind,
+            "model_identity": self.model_identity,
+            "current_device": self.current_device,
+            "preferred_dtype": self.preferred_dtype,
+            "estimated_parameter_bytes": int(self.estimated_parameter_bytes),
+            "estimated_buffer_bytes": int(self.estimated_buffer_bytes),
+            "estimated_runtime_overhead_bytes": int(self.estimated_runtime_overhead_bytes),
+            "pinned_cpu_capable": bool(self.pinned_cpu_capable),
+            "supports_non_blocking_transfer": bool(self.supports_non_blocking_transfer),
+            "last_used_monotonic_ns": int(self.last_used_monotonic_ns),
+            "required_by_stages": sorted(self.required_by_stages),
+            "active_leases": int(self.active_leases),
+            "estimated_total_bytes": self.estimated_total_bytes,
+            "leased": self.leased,
+        }
 
 
 @dataclass(frozen=True)

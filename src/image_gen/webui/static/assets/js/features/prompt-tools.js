@@ -1,8 +1,12 @@
 import { api } from "../api.js";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
+import { clampHiresDimension, normalizeHiresSizeMode, planHiresDimensions } from "../components/hires-dimensions.js?v=0.1.79";
+import { updateHiresUpscalerPlanUI } from "./hires-upscalers.js?v=0.1.79";
 
 let saveSessionSoon = () => {};
+let hiresPlannerParityTimer = null;
+let hiresPlannerParitySequence = 0;
 
 function option(value, label, selected = false, disabled = false) {
   const node = document.createElement("option");
@@ -625,19 +629,18 @@ function regionBuilderDimensions(target = regionBuilderTarget) {
     return { width: baseWidth, height: baseHeight, pass: "base" };
   }
 
-  const mode = String($("#hiresSizeMode")?.value || "scale_from_base");
-  if (mode === "explicit_dimensions") {
-    return {
-      width: Math.max(64, Math.round(Number($("#hiresWidth")?.value || baseWidth))),
-      height: Math.max(64, Math.round(Number($("#hiresHeight")?.value || baseHeight))),
-      pass: "hires",
-    };
-  }
-
-  const scale = Math.max(1.01, Number($("#hiresScale")?.value || 1.5));
+  const plan = planHiresDimensions({
+    baseWidth,
+    baseHeight,
+    mode: $("#hiresSizeMode")?.value || "scale_from_base",
+    scale: $("#hiresScale")?.value || 1.5,
+    targetWidth: $("#hiresWidth")?.value,
+    targetHeight: $("#hiresHeight")?.value,
+    enabled: true,
+  });
   return {
-    width: Math.max(64, Math.round(baseWidth * scale)),
-    height: Math.max(64, Math.round(baseHeight * scale)),
+    width: plan.final_width,
+    height: plan.final_height,
     pass: "hires",
   };
 }
@@ -1113,17 +1116,11 @@ function bindPromptFocus() {
 }
 
 function normalizedHiresSizeMode(value, enabled = true) {
-  const mode = String(value || "scale_from_base").trim().toLowerCase();
-  if (enabled && mode === "same_as_base") return "scale_from_base";
-  return ["same_as_base", "scale_from_base", "explicit_dimensions"].includes(mode)
-    ? mode
-    : "scale_from_base";
+  return normalizeHiresSizeMode(value, enabled);
 }
 
 function normalizedHiresDimension(value, fallback) {
-  const parsed = Number(value);
-  const candidate = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-  return Math.max(64, Math.min(16384, Math.round(candidate / 8) * 8));
+  return clampHiresDimension(value, fallback);
 }
 
 function updateHiresScheduleSummary() {
@@ -1183,49 +1180,154 @@ function updateHiresPairStatus() {
   status.className = experimental ? "field-status warning" : "field-status subtle";
 }
 
-function updateHiresSizeControls() {
+function scheduleHiresPlannerParity(plan, enabled) {
+  const toggle = $("#hiresPlannerParityDiagnostics");
+  const status = $("#hiresPlannerParityStatus");
+  if (hiresPlannerParityTimer) window.clearTimeout(hiresPlannerParityTimer);
+  if (!toggle?.checked || !enabled) {
+    if (status) {
+      status.textContent = toggle?.checked ? "Planner parity diagnostic is waiting for hires to be enabled." : "Planner parity diagnostic is off.";
+      status.className = "field-status subtle";
+    }
+    return;
+  }
+  const sequence = ++hiresPlannerParitySequence;
+  if (status) {
+    status.textContent = `Planner parity diagnostic: checking browser plan ${plan.contract_version || "unknown"} against server…`;
+    status.className = "field-status subtle";
+  }
+  hiresPlannerParityTimer = window.setTimeout(async () => {
+    try {
+      const response = await api.hiresDimensionPlan({
+        width: plan.base_width,
+        height: plan.base_height,
+        hires_size_mode: plan.mode,
+        hires_scale: plan.requested_scale,
+        hires_width: plan.requested_width,
+        hires_height: plan.requested_height,
+      });
+      if (sequence !== hiresPlannerParitySequence) return;
+      const server = response?.plan || {};
+      const keys = [
+        "contract_version", "mode", "base_width", "base_height", "requested_width",
+        "requested_height", "internal_width", "internal_height", "final_width",
+        "final_height", "axis_scale_width", "axis_scale_height", "uniform_scale",
+        "aspect_ratio_changed", "alignment_applied", "dimension_multiple",
+      ];
+      const mismatches = keys.filter((key) => JSON.stringify(server[key]) !== JSON.stringify(plan[key]));
+      if (status) {
+        status.textContent = mismatches.length
+          ? `Planner parity mismatch: ${mismatches.join(", ")} · browser ${plan.contract_version || "unknown"} / server ${response?.contract_version || server.contract_version || "unknown"}.`
+          : `Planner parity: Match · ${plan.contract_version || "unknown"} · alignment multiple ${plan.dimension_multiple}.`;
+        status.className = mismatches.length ? "field-status error" : "field-status ready";
+      }
+    } catch (error) {
+      if (sequence !== hiresPlannerParitySequence) return;
+      if (status) {
+        status.textContent = `Planner parity diagnostic failed: ${error.message}`;
+        status.className = "field-status error";
+      }
+    }
+  }, 300);
+}
+
+function updateHiresSizeControls({ source = "" } = {}) {
   const enabled = $("#hiresEnabled")?.checked === true;
   const sizeMode = $("#hiresSizeMode");
-  const mode = normalizedHiresSizeMode(sizeMode?.value, enabled);
-  if (sizeMode && sizeMode.value !== mode) sizeMode.value = mode;
+  let mode = normalizedHiresSizeMode(sizeMode?.value, enabled);
   const scaleField = $("#hiresScaleField");
   const widthField = $("#hiresWidthField");
   const heightField = $("#hiresHeightField");
   const scaleInput = $("#hiresScale");
   const widthInput = $("#hiresWidth");
   const heightInput = $("#hiresHeight");
-  if (scaleInput) scaleInput.disabled = !enabled || mode !== "scale_from_base";
-  if (widthInput) widthInput.disabled = !enabled || mode !== "explicit_dimensions";
-  if (heightInput) heightInput.disabled = !enabled || mode !== "explicit_dimensions";
-  scaleField?.classList.toggle("is-disabled", !enabled || mode !== "scale_from_base");
-  widthField?.classList.toggle("is-disabled", !enabled || mode !== "explicit_dimensions");
-  heightField?.classList.toggle("is-disabled", !enabled || mode !== "explicit_dimensions");
+
+  if (enabled && mode === "scale_from_base" && (source === "width" || source === "height")) {
+    mode = "explicit_dimensions";
+    if (sizeMode) sizeMode.value = mode;
+  } else if (sizeMode && sizeMode.value !== mode) {
+    sizeMode.value = mode;
+  }
+
   [
     "#hiresPromptParserMode", "#hiresPromptParserName", "#hiresShortcutProfileMode",
     "#hiresShortcutProfileName", "#hiresPositivePrompt", "#hiresNegativePrompt",
     "#hiresSizeMode", "#hiresSteps", "#hiresDenoisingStrength", "#hiresStepPolicy",
     "#hiresSamplerName", "#hiresSchedulerName", "#hiresCfgScale", "#hiresCfgRescale",
-    "#hiresUpscaler", "#hiresSaveLowres",
+    "#hiresUpscaler", "#hiresSaveLowres", "#hiresAspectPolicy", "#hiresPaddingMode",
+    "#hiresFinalSizeCorrectionFilter", "#hiresCorrectionFingerprintDiagnostics",
   ].forEach((selector) => {
     const node = $(selector);
     if (node) node.disabled = !enabled;
   });
-  const baseWidth = normalizedHiresDimension($("#width")?.value, 512);
-  const baseHeight = normalizedHiresDimension($("#height")?.value, 512);
-  let width = baseWidth;
-  let height = baseHeight;
-  if (mode === "scale_from_base") {
-    const scale = Math.max(1.01, Math.min(8, Number(scaleInput?.value || 1.5)));
-    width = normalizedHiresDimension(baseWidth * scale, baseWidth * 1.5);
-    height = normalizedHiresDimension(baseHeight * scale, baseHeight * 1.5);
-  } else if (mode === "explicit_dimensions") {
-    width = normalizedHiresDimension(widthInput?.value, baseWidth * 2);
-    height = normalizedHiresDimension(heightInput?.value, baseHeight * 2);
+
+  if (scaleInput) scaleInput.disabled = !enabled || mode !== "scale_from_base";
+  if (widthInput) widthInput.disabled = !enabled;
+  if (heightInput) heightInput.disabled = !enabled;
+  scaleField?.classList.toggle("is-disabled", !enabled || mode !== "scale_from_base");
+  widthField?.classList.toggle("is-disabled", !enabled);
+  heightField?.classList.toggle("is-disabled", !enabled);
+  widthField?.classList.toggle("is-calculated", enabled && mode === "scale_from_base");
+  heightField?.classList.toggle("is-calculated", enabled && mode === "scale_from_base");
+
+  const plan = planHiresDimensions({
+    baseWidth: $("#width")?.value,
+    baseHeight: $("#height")?.value,
+    mode,
+    scale: scaleInput?.value || 1.5,
+    targetWidth: widthInput?.value,
+    targetHeight: heightInput?.value,
+    enabled,
+  });
+
+  if (enabled && mode === "scale_from_base") {
+    if (widthInput) widthInput.value = String(plan.requested_width);
+    if (heightInput) heightInput.value = String(plan.requested_height);
+  } else if (enabled && mode === "explicit_dimensions") {
+    if (plan.uniform_scale !== null && scaleInput) {
+      scaleInput.value = String(plan.uniform_scale);
+    } else if (scaleInput) {
+      scaleInput.value = "";
+    }
   }
+
   const status = $("#hiresSizeStatus");
   if (status) status.textContent = enabled
-    ? `Second-pass dimensions: ${width} × ${height} · ${mode.replaceAll("_", " ")}.`
+    ? `Requested target: ${plan.requested_width} × ${plan.requested_height} · ${mode === "scale_from_base" ? "scale from base" : "exact target dimensions"}.`
     : "Hires generation is disabled.";
+
+  const effectiveStatus = $("#hiresEffectiveScaleStatus");
+  if (effectiveStatus) {
+    if (!enabled) {
+      effectiveStatus.textContent = "Effective scaling: disabled.";
+      effectiveStatus.className = "field-status subtle";
+    } else if (plan.is_uniform_scale) {
+      effectiveStatus.textContent = `Effective scaling: Uniform ${Number(plan.uniform_scale).toFixed(6)}x.`;
+      effectiveStatus.className = "field-status subtle";
+    } else {
+      effectiveStatus.textContent = `Effective scaling: Width ${plan.axis_scale_width.toFixed(6)}x / Height ${plan.axis_scale_height.toFixed(6)}x · Aspect ratio changed.`;
+      effectiveStatus.className = "field-status warning";
+    }
+  }
+
+  const alignmentStatus = $("#hiresAlignmentStatus");
+  if (alignmentStatus) {
+    alignmentStatus.textContent = enabled
+      ? `Dimension plan: Requested ${plan.requested_width} × ${plan.requested_height} · Internal aligned ${plan.internal_width} × ${plan.internal_height} · Final target ${plan.final_width} × ${plan.final_height}${plan.alignment_applied ? " · alignment correction required" : " · no alignment correction"}.`
+      : "Dimension plan: disabled.";
+    alignmentStatus.className = plan.alignment_applied && enabled ? "field-status warning" : "field-status subtle";
+  }
+
+  updateHiresUpscalerPlanUI(plan, enabled);
+  scheduleHiresPlannerParity(plan, enabled);
+  const correctionFingerprintStatus = $("#hiresCorrectionFingerprintStatus");
+  if (correctionFingerprintStatus) {
+    const fingerprintEnabled = Boolean($("#hiresCorrectionFingerprintDiagnostics")?.checked);
+    correctionFingerprintStatus.textContent = fingerprintEnabled
+      ? "Correction fingerprint enabled: a deterministic metadata-only SHA-256 will be recorded for this hires correction contract."
+      : "Correction fingerprint is off. Enabling it hashes only the deterministic correction contract; it does not add an image-processing pass.";
+    correctionFingerprintStatus.className = fingerprintEnabled ? "field-status ready" : "field-status subtle";
+  }
   updateHiresScheduleSummary();
   updateHiresPairStatus();
 }
@@ -1269,6 +1371,11 @@ export function initializePromptTools(current = {}) {
   if ($("#hiresCfgScale")) $("#hiresCfgScale").value = current.hires_cfg_scale ?? "";
   if ($("#hiresCfgRescale")) $("#hiresCfgRescale").value = current.hires_cfg_rescale ?? "";
   if ($("#hiresUpscaler")) $("#hiresUpscaler").value = current.hires_upscaler_id || current.hires_upscaler || "";
+  if ($("#hiresAspectPolicy")) $("#hiresAspectPolicy").value = current.hires_aspect_policy || "stretch";
+  if ($("#hiresPaddingMode")) $("#hiresPaddingMode").value = current.hires_padding_mode || "reflect";
+  if ($("#hiresFinalSizeCorrectionFilter")) $("#hiresFinalSizeCorrectionFilter").value = current.hires_final_size_correction_filter || current.hires_exact_resize_filter || "auto";
+  if ($("#hiresPlannerParityDiagnostics")) $("#hiresPlannerParityDiagnostics").checked = false;
+  if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(current.hires_correction_fingerprint_enabled);
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = current.hires_save_lowres !== false;
   updateHiresSizeControls();
   renderBaseParserSettings();
@@ -1327,10 +1434,24 @@ export function bindPromptTools(options = {}) {
   ["#hiresPositivePrompt", "#hiresNegativePrompt"].forEach((selector) => {
     $(selector)?.addEventListener("input", saveSessionSoon);
   });
-  ["#hiresEnabled", "#hiresSizeMode", "#hiresScale", "#hiresWidth", "#hiresHeight", "#hiresSteps", "#hiresDenoisingStrength", "#hiresStepPolicy", "#hiresSamplerName", "#hiresSchedulerName", "#hiresCfgScale", "#hiresCfgRescale", "#hiresUpscaler", "#hiresSaveLowres", "#samplerName", "#schedulerName", "#cfgScale", "#width", "#height"].forEach((selector) => {
+  const bindHiresDimensionEvent = (selector, source) => {
+    $(selector)?.addEventListener("input", () => { updateHiresSizeControls({ source }); saveSessionSoon(); });
+    $(selector)?.addEventListener("change", () => { updateHiresSizeControls({ source }); saveSessionSoon(); });
+  };
+  bindHiresDimensionEvent("#hiresScale", "scale");
+  bindHiresDimensionEvent("#hiresWidth", "width");
+  bindHiresDimensionEvent("#hiresHeight", "height");
+  bindHiresDimensionEvent("#hiresSizeMode", "mode");
+  bindHiresDimensionEvent("#hiresEnabled", "enabled");
+  bindHiresDimensionEvent("#width", "base");
+  bindHiresDimensionEvent("#height", "base");
+  ["#hiresSteps", "#hiresDenoisingStrength", "#hiresStepPolicy", "#hiresSamplerName", "#hiresSchedulerName", "#hiresCfgScale", "#hiresCfgRescale", "#hiresUpscaler", "#hiresAspectPolicy", "#hiresPaddingMode", "#hiresFinalSizeCorrectionFilter", "#hiresSaveLowres", "#samplerName", "#schedulerName", "#cfgScale"].forEach((selector) => {
     $(selector)?.addEventListener("input", () => { updateHiresSizeControls(); saveSessionSoon(); });
     $(selector)?.addEventListener("change", () => { updateHiresSizeControls(); saveSessionSoon(); });
   });
+  $("#hiresPlannerParityDiagnostics")?.addEventListener("change", () => updateHiresSizeControls());
+  $("#hiresCorrectionFingerprintDiagnostics")?.addEventListener("change", () => { updateHiresSizeControls(); saveSessionSoon(); });
+  window.addEventListener("image-gen-hires-upscaler-change", () => updateHiresSizeControls());
   $("#savePromptParserPresetButton")?.addEventListener("click", saveParserPreset);
   $("#deletePromptParserPresetButton")?.addEventListener("click", deleteParserPreset);
   $("#validateCurrentPromptButton")?.addEventListener("click", validateCurrentPrompt);

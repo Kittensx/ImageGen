@@ -7,6 +7,8 @@ from typing import Any, Callable, Mapping
 
 import torch
 
+from image_gen.contracts import format_hires_failure
+
 from image_gen.systems.upscaling.contracts import (
     UpscaleProgress,
     UpscaleRequest,
@@ -14,7 +16,11 @@ from image_gen.systems.upscaling.contracts import (
     UpscalerRuntimeQualification,
 )
 from image_gen.systems.upscaling.registry import UpscalerModelRegistry
-from image_gen.systems.upscaling.resize import resize_exact, resolve_target_dimensions
+from image_gen.systems.upscaling.resize import (
+    apply_target_correction,
+    compute_native_output_dimensions,
+    resolve_target_dimensions,
+)
 from image_gen.systems.upscaling.tiling import (
     RuntimeModelMetadata,
     TilePlan,
@@ -164,7 +170,12 @@ class StandaloneNeuralUpscaler:
                     genuine_oom = isinstance(exc, torch.cuda.OutOfMemoryError) or (
                         target_device.type == "cuda" and self._is_cuda_oom(exc)
                     )
-                    if not genuine_oom or not request.allow_oom_retry or retry_count >= 1:
+                    if (
+                        not genuine_oom
+                        or not request.allow_oom_retry
+                        or not request.allow_tiling
+                        or retry_count >= 1
+                    ):
                         raise
                     previous_tile_size = effective_tile_size
                     next_tile_size = self._retry_tile_size(
@@ -227,15 +238,48 @@ class StandaloneNeuralUpscaler:
             runtime_dtype = str(next(loaded.module.parameters()).dtype)
             runtime_device = str(next(loaded.module.parameters()).device)
 
-        resized = resize_exact(
-            native_output,
-            target_width=target_width,
-            target_height=target_height,
-            resize_filter=request.exact_resize_filter,
+        descriptor = getattr(loaded, "descriptor", None)
+        descriptor_native_scale = int(
+            getattr(descriptor, "native_scale", 0)
+            or getattr(model_metadata, "native_scale", 0)
+            or 0
         )
-        if not bool(torch.isfinite(resized).all()):
+        predicted_native_width, predicted_native_height = compute_native_output_dimensions(
+            source_width=source_width,
+            source_height=source_height,
+            native_scale=descriptor_native_scale,
+        )
+        actual_native_width = int(native_output.shape[-1])
+        actual_native_height = int(native_output.shape[-2])
+        native_dimension_match = (
+            actual_native_width == predicted_native_width
+            and actual_native_height == predicted_native_height
+        )
+        requested_correction_filter = str(
+            request.final_size_correction_filter or request.exact_resize_filter or "auto"
+        )
+        try:
+            corrected, correction_metadata = apply_target_correction(
+                native_output,
+                target_width=target_width,
+                target_height=target_height,
+                aspect_policy=request.aspect_policy,
+                final_size_correction_filter=requested_correction_filter,
+                padding_mode=request.padding_mode,
+            )
+        except Exception as exc:
+            raise UpscaleRuntimeError(format_hires_failure(
+                "target_aspect_correction",
+                f"Deterministic target/aspect correction failed: {exc}",
+                model=request.upscaler_id,
+                native=f"{actual_native_width}x{actual_native_height}",
+                target=f"{target_width}x{target_height}",
+                aspect_policy=request.aspect_policy,
+                padding_mode=request.padding_mode,
+            )) from exc
+        if not bool(torch.isfinite(corrected).all()):
             raise UpscaleRuntimeError("Neural upscaler output contains NaN or Inf.")
-        resized = resized.clamp(0.0, 1.0)
+        corrected = corrected.clamp(0.0, 1.0)
         duration_ms = (time.perf_counter() - started) * 1000.0
         if progress_callback is not None:
             progress_callback(
@@ -266,10 +310,24 @@ class StandaloneNeuralUpscaler:
             "model_metadata": model_metadata.to_dict(),
             "source_shape": [int(item) for item in source.shape],
             "native_output_shape": [int(item) for item in native_output.shape],
-            "output_shape": [int(item) for item in resized.shape],
+            "output_shape": [int(item) for item in corrected.shape],
             "target_width": target_width,
             "target_height": target_height,
             "exact_resize_filter": request.exact_resize_filter,
+            "final_size_correction_filter": requested_correction_filter,
+            "aspect_policy": request.aspect_policy,
+            "padding_mode": request.padding_mode,
+            "target_correction": correction_metadata,
+            "predicted_native_width": predicted_native_width,
+            "predicted_native_height": predicted_native_height,
+            "actual_native_width": actual_native_width,
+            "actual_native_height": actual_native_height,
+            "native_dimension_match": native_dimension_match,
+            "native_dimension_discrepancy": (
+                "" if native_dimension_match else
+                f"descriptor predicted {predicted_native_width}x{predicted_native_height}; "
+                f"runtime produced {actual_native_width}x{actual_native_height}"
+            ),
             "tile_batch_size": request.tile_batch_size,
             "tile_plan": plan.to_dict(include_regions=True),
             "tile_count": int(source.shape[0]) * len(plan.regions),
@@ -309,7 +367,7 @@ class StandaloneNeuralUpscaler:
                     "oom_retry_reason": retry_reason[:512],
                 },
             )
-        return UpscaleResult(images=resized, metadata=metadata)
+        return UpscaleResult(images=corrected, metadata=metadata)
 
     def _execute_batch(
         self,

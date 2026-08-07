@@ -72,7 +72,12 @@ GENERATION_REQUEST_KEYS = {
     "hires_scale",
     "hires_width",
     "hires_height",
+    "hires_dimension_plan_version",
     "hires_dimension_plan",
+    "hires_axis_scale_width",
+    "hires_axis_scale_height",
+    "hires_uniform_scale",
+    "hires_aspect_ratio_changed",
     "hires_enabled",
     "hires_steps",
     "hires_denoising_strength",
@@ -90,12 +95,19 @@ GENERATION_REQUEST_KEYS = {
     "hires_upscaler",
     "hires_upscaler_id",
     "hires_expected_upscaler_sha256",
+    "hires_expected_native_scale",
     "hires_expected_vae_sha256",
     "hires_expected_vae_source_kind",
     "hires_tile_size",
     "hires_tile_overlap",
     "hires_tile_batch_size",
     "hires_exact_resize_filter",
+    "hires_final_size_correction_filter",
+    "hires_aspect_policy",
+    "hires_padding_mode",
+    "hires_recorded_target_correction",
+    "hires_correction_fingerprint_enabled",
+    "hires_recorded_correction_fingerprint",
     "hires_save_upscaled_pre_denoise",
     "hires_save_vae_roundtrip",
     "hires_diagnostic_vae_execution_fingerprint",
@@ -104,6 +116,35 @@ GENERATION_REQUEST_KEYS = {
     "hires_host_staging_policy",
     "hires_host_staging_cap_mb",
     "hires_artifact_disk_budget_mb",
+    "outpaint_prototype_enabled",
+    "outpaint_source_image",
+    "outpaint_anchor",
+    "outpaint_source_x",
+    "outpaint_source_y",
+    "outpaint_feather_px",
+    "outpaint_context_seed_mode",
+    "outpaint_denoising_strength",
+    "outpaint_latent_strategy",
+    "outpaint_prompt_mode",
+    "outpaint_overlay_positive_prompt",
+    "outpaint_overlay_negative_prompt",
+    "outpaint_diagnostic_artifacts",
+    "outpaint_prototype_record",
+    "outpaint_shape_expansion_enabled",
+    "outpaint_shape_target_mode",
+    "outpaint_shape_target_width",
+    "outpaint_shape_target_height",
+    "outpaint_shape_base_width",
+    "outpaint_shape_base_height",
+    "outpaint_shape_anchor",
+    "outpaint_shape_context_seed_mode",
+    "outpaint_shape_source_handoff",
+    "outpaint_shape_prompt_mode",
+    "outpaint_shape_overlay_positive_prompt",
+    "outpaint_shape_overlay_negative_prompt",
+    "outpaint_shape_denoising_strength",
+    "outpaint_shape_save_base",
+    "outpaint_shape_runtime_record",
     "prompt_preflight",
     "prompt_shadow_compare",
     "prompt_route_plan",
@@ -213,6 +254,24 @@ def load_request_from_manifest_json(path: str | Path) -> dict[str, Any]:
 def load_request_from_infotext(path: str | Path) -> dict[str, Any]:
     text = _load_text(path)
     payload = parse_infotext(text)
+
+    # IMAGE_GEN's text sidecar historically recorded the final/internal hires
+    # size in the A1111-style Size field.  When the sidecar also carries the
+    # hires dimension plan, restore the UI-owned base dimensions before request
+    # normalization so hires scaling is not applied a second time.
+    if bool(payload.get("hires_enabled", False)):
+        plan = payload.get("hires_dimension_plan")
+        if isinstance(plan, dict):
+            try:
+                base_width = int(plan.get("base_width") or 0)
+                base_height = int(plan.get("base_height") or 0)
+            except (TypeError, ValueError):
+                base_width = 0
+                base_height = 0
+            if base_width > 0 and base_height > 0:
+                payload["width"] = base_width
+                payload["height"] = base_height
+
     payload["infotext_source"] = str(path)
     payload["infotext_raw"] = text
 

@@ -26,7 +26,11 @@ from modules.prompt_parsers.semantic_replay import (
     select_superhybrid_semantic_slot,
 )
 from modules.txt2img.generation_manifest import GenerationManifest
-from modules.txt2img.manifest_io import save_manifest_json, save_manifest_txt
+from modules.txt2img.manifest_io import (
+    save_manifest_diagnostics_json,
+    save_manifest_json,
+    save_manifest_txt,
+)
 from modules.txt2img.png_metadata import build_pnginfo
 from modules.txt2img.seed_utils import offset_seed
 
@@ -57,6 +61,7 @@ class SavedImageRecord:
     image_path: str
     txt_path: str | None = None
     json_path: str | None = None
+    diagnostics_json_path: str | None = None
     index: int | None = None
     seed: int | None = None
 
@@ -446,9 +451,12 @@ class GenerationOutputSaver:
     def _avoid_collision(self, base_path: Path) -> Path:
         candidate = base_path
         suffix = 1
-        while any(
-            candidate.with_suffix(ext).exists()
-            for ext in (self.image_ext, ".txt", ".json")
+        while (
+            any(
+                candidate.with_suffix(ext).exists()
+                for ext in (self.image_ext, ".txt", ".json")
+            )
+            or candidate.with_name(candidate.name + ".diagnostics.json").exists()
         ):
             candidate = base_path.with_name(f"{base_path.name}-{suffix:02d}")
             suffix += 1
@@ -475,6 +483,7 @@ class GenerationOutputSaver:
         manifest: GenerationManifest | None = None,
         save_txt: bool = True,
         save_json: bool = True,
+        save_diagnostics_json: bool = True,
         image_kwargs: dict[str, Any] | None = None,
     ) -> list[SavedImageRecord]:
         pil_images = self._coerce_pil_images(images)
@@ -507,6 +516,11 @@ class GenerationOutputSaver:
                 image_path = base_path.with_suffix(self.image_ext)
                 txt_path = base_path.with_suffix(".txt") if image_manifest is not None and save_txt else None
                 json_path = base_path.with_suffix(".json") if image_manifest is not None and save_json else None
+                diagnostics_json_path = (
+                    base_path.with_name(base_path.name + ".diagnostics.json")
+                    if image_manifest is not None and save_diagnostics_json
+                    else None
+                )
 
                 save_kwargs = self._image_save_kwargs(
                     image_path=image_path,
@@ -516,8 +530,15 @@ class GenerationOutputSaver:
                 temp_image = _atomic_temp_path(image_path)
                 temp_txt = _atomic_temp_path(txt_path) if txt_path is not None else None
                 temp_json = _atomic_temp_path(json_path) if json_path is not None else None
+                temp_diagnostics_json = (
+                    _atomic_temp_path(diagnostics_json_path)
+                    if diagnostics_json_path is not None
+                    else None
+                )
                 temporary_paths = [
-                    path for path in (temp_image, temp_txt, temp_json) if path is not None
+                    path
+                    for path in (temp_image, temp_txt, temp_json, temp_diagnostics_json)
+                    if path is not None
                 ]
                 try:
                     image.save(temp_image, **save_kwargs)
@@ -527,6 +548,10 @@ class GenerationOutputSaver:
                             txt_path=None if txt_path is None else str(txt_path),
                             json_path=None if json_path is None else str(json_path),
                         )
+                        if diagnostics_json_path is not None:
+                            image_manifest.runtime_info.extra["output_diagnostics_json_path"] = str(
+                                diagnostics_json_path
+                            )
                         # Sidecars are fully written before any final path becomes visible.
                         if temp_txt is not None:
                             save_manifest_txt(
@@ -536,17 +561,32 @@ class GenerationOutputSaver:
                             save_manifest_json(
                                 self._manifest_copy(image_manifest), temp_json
                             )
+                        if temp_diagnostics_json is not None:
+                            save_manifest_diagnostics_json(
+                                self._manifest_copy(image_manifest), temp_diagnostics_json
+                            )
                     os.replace(temp_image, image_path)
                     if temp_txt is not None and txt_path is not None:
                         os.replace(temp_txt, txt_path)
                     if temp_json is not None and json_path is not None:
                         os.replace(temp_json, json_path)
+                    if temp_diagnostics_json is not None and diagnostics_json_path is not None:
+                        os.replace(temp_diagnostics_json, diagnostics_json_path)
                 except Exception:
                     _cleanup_paths(temporary_paths)
                     # Remove only files owned by this failed transaction. Collision
                     # avoidance guarantees these paths did not exist beforehand.
                     _cleanup_paths(
-                        [path for path in (image_path, txt_path, json_path) if path is not None]
+                        [
+                            path
+                            for path in (
+                                image_path,
+                                txt_path,
+                                json_path,
+                                diagnostics_json_path,
+                            )
+                            if path is not None
+                        ]
                     )
                     raise
 
@@ -555,6 +595,11 @@ class GenerationOutputSaver:
                         image_path=str(image_path),
                         txt_path=None if txt_path is None else str(txt_path),
                         json_path=None if json_path is None else str(json_path),
+                        diagnostics_json_path=(
+                            None
+                            if diagnostics_json_path is None
+                            else str(diagnostics_json_path)
+                        ),
                         index=next_idx,
                         seed=image_seed,
                     )
@@ -567,7 +612,12 @@ class GenerationOutputSaver:
                 _cleanup_paths(
                     [
                         Path(path)
-                        for path in (record.image_path, record.txt_path, record.json_path)
+                        for path in (
+                            record.image_path,
+                            record.txt_path,
+                            record.json_path,
+                            record.diagnostics_json_path,
+                        )
                         if path
                     ]
                 )
@@ -583,6 +633,7 @@ def save_generation_batch(
     manifest: GenerationManifest | None = None,
     save_txt: bool = True,
     save_json: bool = True,
+    save_diagnostics_json: bool = True,
     image_ext: str = ".png",
     image_kwargs: dict[str, Any] | None = None,
 ) -> list[SavedImageRecord]:
@@ -596,5 +647,6 @@ def save_generation_batch(
         manifest=manifest,
         save_txt=save_txt,
         save_json=save_json,
+        save_diagnostics_json=save_diagnostics_json,
         image_kwargs=image_kwargs,
     )

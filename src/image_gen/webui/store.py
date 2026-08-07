@@ -34,6 +34,11 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
     "theme_palette": {
         "accent": {"name": "Sky Blue", "color": "#179ee7"},
         "surface": {"name": "Charcoal", "color": "#111d29"},
+        "typography": {
+            "font_family": "Inter",
+            "primary_button_text": "#ffffff",
+            "secondary_button_text": "#d5f1ff",
+        },
     },
     "live_preview_enabled": True,
     "live_preview_mode": "fast",
@@ -266,6 +271,11 @@ class WebUIStore:
         defaults = {
             "accent": {"name": "Sky Blue", "color": "#179ee7"},
             "surface": {"name": "Charcoal", "color": "#111d29"},
+            "typography": {
+                "font_family": "Inter",
+                "primary_button_text": "#ffffff",
+                "secondary_button_text": "#d5f1ff",
+            },
         }
         return {
             key: {

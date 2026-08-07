@@ -1,5 +1,5 @@
 {
-  "settings_defaults_version": 11,
+  "settings_defaults_version": 12,
   "restore_last_session": true,
   "ui_scale": 105,
   "density": "comfortable",
@@ -12,6 +12,11 @@
     "surface": {
       "name": "Charcoal",
       "color": "#111d29"
+    },
+    "typography": {
+      "font_family": "Inter",
+      "primary_button_text": "#ffffff",
+      "secondary_button_text": "#d5f1ff"
     }
   },
   "live_preview_enabled": true,

@@ -23,10 +23,10 @@ MAX_PARSED_JOBS = 1000
 MAX_IMMEDIATE_SUBMISSION = 250
 _TOKEN_TTL_SECONDS = 15 * 60
 
-_INT_FIELDS = {"seed", "width", "height", "steps", "batch_size", "batch_count", "clip_skip", "hires_width", "hires_height", "hires_steps"}
-_FLOAT_FIELDS = {"cfg_scale", "cfg_rescale", "guidance_rescale", "hires_scale", "hires_denoising_strength"}
-_BOOL_FIELDS = {"save_images", "tiling", "prompt_shadow_compare", "hires_enabled", "hires_save_lowres"}
-_DICT_FIELDS = {"sampler_kwargs", "scheduler_kwargs", "prompt_parser_kwargs", "prompt_shortcut_profile_snapshot", "hires_prompt_parser_kwargs", "hires_shortcut_profile_snapshot", "prompt_preflight", "prompt_route_plan", "hires_prompt_route_plan", "parser_kwargs", "extras", "variation_matrix"}
+_INT_FIELDS = {"seed", "width", "height", "steps", "batch_size", "batch_count", "clip_skip", "hires_width", "hires_height", "hires_steps", "hires_expected_native_scale", "outpaint_shape_target_width", "outpaint_shape_target_height", "outpaint_shape_base_width", "outpaint_shape_base_height"}
+_FLOAT_FIELDS = {"cfg_scale", "cfg_rescale", "guidance_rescale", "hires_scale", "hires_axis_scale_width", "hires_axis_scale_height", "hires_uniform_scale", "hires_denoising_strength", "outpaint_shape_denoising_strength"}
+_BOOL_FIELDS = {"save_images", "save_txt", "save_json", "save_diagnostics_json", "tiling", "prompt_shadow_compare", "hires_enabled", "hires_aspect_ratio_changed", "hires_save_lowres", "outpaint_shape_expansion_enabled", "outpaint_shape_save_base"}
+_DICT_FIELDS = {"sampler_kwargs", "scheduler_kwargs", "prompt_parser_kwargs", "prompt_shortcut_profile_snapshot", "hires_prompt_parser_kwargs", "hires_shortcut_profile_snapshot", "prompt_preflight", "prompt_route_plan", "hires_prompt_route_plan", "hires_recorded_target_correction", "hires_recorded_correction_fingerprint", "hires_dimension_plan", "outpaint_shape_runtime_record", "parser_kwargs", "extras", "variation_matrix"}
 _REMAP_FIELDS = {"model_path", "vae_path", "sampler_name", "scheduler_name"}
 _ALIASES = {
     "prompt": "positive_prompt",
@@ -45,8 +45,12 @@ _REQUEST_FIELDS = {
     "base_prompt_parser_name", "base_shortcut_profile_name", "hires_prompt_parser_mode",
     "hires_prompt_parser_name", "hires_prompt_parser_kwargs", "hires_shortcut_profile_mode",
     "hires_shortcut_profile_name", "hires_shortcut_profile_snapshot", "hires_positive_prompt",
-    "hires_negative_prompt", "hires_size_mode", "hires_scale", "hires_width", "hires_height", "hires_dimension_plan", "hires_enabled", "hires_steps", "hires_denoising_strength", "hires_step_policy", "hires_sampler_name", "hires_scheduler_name", "hires_cfg_scale", "hires_cfg_rescale", "hires_upscaler", "hires_save_lowres", "prompt_preflight", "prompt_shadow_compare", "prompt_route_plan", "hires_prompt_route_plan", "parser_kwargs", "lora_paths",
-    "prompt_asset_contract_version", "loras", "textual_inversions", "vae_name", "vae_hash", "output_dir", "output_prefix", "save_images",
+    "hires_negative_prompt", "hires_size_mode", "hires_scale", "hires_width", "hires_height", "hires_axis_scale_width", "hires_axis_scale_height", "hires_uniform_scale", "hires_aspect_ratio_changed", "hires_dimension_plan_version", "hires_dimension_plan", "hires_enabled", "hires_steps", "hires_denoising_strength", "hires_step_policy", "hires_sampler_name", "hires_scheduler_name", "hires_cfg_scale", "hires_cfg_rescale", "hires_upscaler", "hires_upscaler_id", "hires_expected_upscaler_sha256", "hires_expected_native_scale", "hires_final_size_correction_filter", "hires_aspect_policy", "hires_padding_mode", "hires_recorded_target_correction", "hires_correction_fingerprint_enabled", "hires_recorded_correction_fingerprint", "hires_save_lowres", "prompt_preflight", "prompt_shadow_compare", "prompt_route_plan", "hires_prompt_route_plan", "parser_kwargs", "lora_paths",
+    "prompt_asset_contract_version", "loras", "textual_inversions", "vae_name", "vae_hash", "output_dir", "output_prefix", "save_images", "save_txt", "save_json", "save_diagnostics_json",
+    "outpaint_shape_expansion_enabled", "outpaint_shape_target_mode", "outpaint_shape_target_width", "outpaint_shape_target_height",
+    "outpaint_shape_base_width", "outpaint_shape_base_height", "outpaint_shape_anchor", "outpaint_shape_context_seed_mode",
+    "outpaint_shape_source_handoff", "outpaint_shape_prompt_mode", "outpaint_shape_overlay_positive_prompt", "outpaint_shape_overlay_negative_prompt",
+    "outpaint_shape_denoising_strength", "outpaint_shape_save_base", "outpaint_shape_runtime_record",
     "extras", "variation_matrix",
 }
 _SECRET_KEYS = {
@@ -977,7 +981,7 @@ class BatchIOService:
             "base_prompt_parser_name", "base_shortcut_profile_name",
             "hires_prompt_parser_mode", "hires_prompt_parser_name", "hires_prompt_parser_kwargs_json",
             "hires_shortcut_profile_mode", "hires_shortcut_profile_name", "hires_shortcut_profile_snapshot_json",
-            "hires_positive_prompt", "hires_negative_prompt", "hires_size_mode", "hires_scale", "hires_width", "hires_height", "hires_dimension_plan_json", "prompt_preflight_json",
+            "hires_positive_prompt", "hires_negative_prompt", "hires_size_mode", "hires_scale", "hires_width", "hires_height", "hires_axis_scale_width", "hires_axis_scale_height", "hires_uniform_scale", "hires_aspect_ratio_changed", "hires_dimension_plan_version", "hires_dimension_plan_json", "hires_upscaler_id", "hires_expected_upscaler_sha256", "hires_expected_native_scale", "hires_final_size_correction_filter", "hires_aspect_policy", "hires_padding_mode", "hires_recorded_target_correction_json", "hires_correction_fingerprint_enabled", "hires_recorded_correction_fingerprint_json", "prompt_preflight_json",
             "parser_kwargs_json", "extras_json", "provenance_json",
         ]
         stream = io.StringIO(newline="")
@@ -994,6 +998,8 @@ class BatchIOService:
                 ("hires_prompt_parser_kwargs", "hires_prompt_parser_kwargs_json"),
                 ("hires_shortcut_profile_snapshot", "hires_shortcut_profile_snapshot_json"),
                 ("hires_dimension_plan", "hires_dimension_plan_json"),
+                ("hires_recorded_target_correction", "hires_recorded_target_correction_json"),
+                ("hires_recorded_correction_fingerprint", "hires_recorded_correction_fingerprint_json"),
                 ("prompt_preflight", "prompt_preflight_json"),
                 ("parser_kwargs", "parser_kwargs_json"),
                 ("extras", "extras_json"),

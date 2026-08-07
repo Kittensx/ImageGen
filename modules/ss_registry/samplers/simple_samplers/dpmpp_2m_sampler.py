@@ -658,6 +658,15 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 sigma_next=sigma_next,
                 history_policy=history_policy,
             )
+            x = self._apply_latent_step_hook(
+                state,
+                request=request,
+                latent=x,
+                step_index=i,
+                sigma=sigma,
+                sigma_next=sigma_next,
+                timestep=timestep,
+            )
             if trace_enabled:
                 latent_after_stats = self._tensor_trace_stats(x)
                 trace_extra["solver_latent_after"] = latent_after_stats

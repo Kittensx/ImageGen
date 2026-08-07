@@ -34,6 +34,31 @@ _INFO_ALIAS_OVERRIDES = {
     "schedule type": "scheduler_label",
     "scheduler": "scheduler_label",
     "model": "model_name",
+    "batch size": "batch_size",
+    "batch count": "batch_count",
+    "requested model path": "model_path",
+    "resolved model path": "resolved_model_path",
+    "loaded model path": "loaded_model_path",
+    "loaded model sha-256": "model_hash",
+    "loaded model architecture": "model_architecture",
+    "model cache reused": "model_cache_reused",
+    "compatibility mode": "compatibility_mode",
+    "guidance rescale": "cfg_rescale",
+    "scheduler kwargs": "scheduler_kwargs",
+    "scheduler validation warnings": "scheduler_validation_warnings",
+    "scheduler compatibility policy": "scheduler_compatibility_policy",
+    "scheduler effective sha-256": "scheduler_effective_sha256",
+    "sampler kwargs": "sampler_kwargs",
+    "guidance metadata": "guidance_metadata",
+    "cfg step series": "cfg_step_series",
+    "effective steps": "effective_steps",
+    "scheduler override applied": "scheduler_override_applied",
+    "active blend methods": "active_blend_methods",
+    "active blend weights": "active_blend_weights",
+    "tail features used": "tail_features_used",
+    "predicted stop step": "predicted_stop_step",
+    "generation time sec": "generation_time_sec",
+    "base model asset": "base_model_asset",
 }
 _IGNORE_INFOTEXT_KEYS = {"version"}
 
@@ -93,8 +118,15 @@ def _parse_parameter_line(line: str) -> dict[str, Any]:
             continue
 
         value = raw_value.strip()
+
+        if key == "optional extras":
+            extras = _coerce_scalar(value)
+            if isinstance(extras, dict):
+                payload.update(extras)
+            continue
+
         alias = _resolve_alias(_clean_key(key))
-        
+
         if alias in SPECIAL_FIELD_HANDLERS:
             handled = SPECIAL_FIELD_HANDLERS[alias](value)
             if handled:
@@ -129,11 +161,11 @@ def parse_infotext(text: str) -> dict[str, Any]:
     - Parameter lines such as 'Steps: ...' are parsed into fields.
     - A1111 'Version' is ignored for manifest generation.
     """
-    raw = str(text or "").replace("", "").strip()
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not raw:
         return {}
 
-    lines = [line.rstrip() for line in raw.split("") if line.strip()]
+    lines = [line.rstrip() for line in raw.splitlines() if line.strip()]
     payload: dict[str, Any] = {}
 
     positive_prompt_lines: list[str] = []
@@ -145,6 +177,13 @@ def parse_infotext(text: str) -> dict[str, Any]:
     for line in lines:
         stripped = line.strip()
         lowered = stripped.lower()
+
+        if lowered.startswith("prompt:"):
+            current_section = "positive"
+            value = stripped.split(":", 1)[1].strip()
+            if value:
+                positive_prompt_lines.append(value)
+            continue
 
         if lowered.startswith("negative prompt:"):
             current_section = "negative"
@@ -163,14 +202,19 @@ def parse_infotext(text: str) -> dict[str, Any]:
         elif current_section == "negative":
             negative_prompt_lines.append(stripped)
         else:
-            # tolerate stray non-parameter lines before/after params by folding
-            # them back into the positive prompt rather than discarding them.
-            positive_prompt_lines.append(stripped)
+            # IMAGE_GEN appends one metadata field per line after the A1111-style
+            # parameter header.  Once parameter parsing has started, keep any
+            # key/value line in the metadata tail instead of contaminating the
+            # positive prompt.  Truly free-form trailing text is still preserved.
+            if ":" in stripped:
+                tail_parameter_lines.append(stripped)
+            else:
+                positive_prompt_lines.append(stripped)
 
     if positive_prompt_lines:
-        payload["positive_prompt"] = "".join(positive_prompt_lines).strip()
+        payload["positive_prompt"] = "\n".join(positive_prompt_lines).strip()
     if negative_prompt_lines:
-        payload["negative_prompt"] = "".join(negative_prompt_lines).strip()
+        payload["negative_prompt"] = "\n".join(negative_prompt_lines).strip()
     else:
         payload["negative_prompt"] = ""
 

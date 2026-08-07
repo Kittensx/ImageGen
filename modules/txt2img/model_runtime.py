@@ -422,10 +422,18 @@ class ResidentTxt2ImgModelRuntime:
                 hires_positive_prompt=str(request.hires_positive_prompt or request.positive_prompt),
                 hires_negative_prompt=str(request.hires_negative_prompt if request.hires_negative_prompt is not None else request.negative_prompt),
                 hires_size_mode=str(request.hires_size_mode or "same_as_base"),
-                hires_scale=float(request.hires_scale or 2.0),
+                hires_scale=(float(request.hires_scale) if request.hires_scale is not None else None),
                 hires_width=int(request.hires_width or 0),
                 hires_height=int(request.hires_height or 0),
                 hires_dimension_plan=dict(request.hires_dimension_plan),
+                hires_axis_scale_width=float(request.hires_axis_scale_width),
+                hires_axis_scale_height=float(request.hires_axis_scale_height),
+                hires_uniform_scale=(
+                    float(request.hires_uniform_scale)
+                    if request.hires_uniform_scale is not None
+                    else None
+                ),
+                hires_aspect_ratio_changed=bool(request.hires_aspect_ratio_changed),
                 prompt_preflight=dict(request.prompt_preflight),
                 prompt_shadow_compare=bool(request.prompt_shadow_compare),
                 prompt_route_plan=dict(request.prompt_route_plan),
@@ -462,23 +470,35 @@ class ResidentTxt2ImgModelRuntime:
             if first_generation_started is None:
                 first_generation_started = time.perf_counter()
             self.emit_status("running", batch_number=batch_number, batch_count=batch_count)
-            try:
-                result = runner.run_request(
-                    batch_request,
-                    batch_extras,
-                    save_txt=bool(command.get("save_txt", True)),
-                    save_json=bool(command.get("save_json", True)),
-                    defer_output_save=True,
-                )
-            except TypeError as exc:
-                if "defer_output_save" not in str(exc):
-                    raise
-                result = runner.run_request(
-                    batch_request,
-                    batch_extras,
-                    save_txt=bool(command.get("save_txt", True)),
-                    save_json=bool(command.get("save_json", True)),
-                )
+            run_request_kwargs = {
+                "save_txt": bool(command.get("save_txt", True)),
+                "save_json": bool(command.get("save_json", True)),
+                "save_diagnostics_json": bool(command.get("save_diagnostics_json", True)),
+                "defer_output_save": True,
+            }
+            while True:
+                try:
+                    result = runner.run_request(
+                        batch_request,
+                        batch_extras,
+                        **run_request_kwargs,
+                    )
+                    break
+                except TypeError as exc:
+                    message = str(exc)
+                    unsupported = next(
+                        (
+                            key
+                            for key in ("save_diagnostics_json", "defer_output_save")
+                            if key in run_request_kwargs and key in message
+                        ),
+                        None,
+                    )
+                    if unsupported is None:
+                        raise
+                    # Preserve compatibility with test/plugin runner shims that
+                    # predate this optional output-sidecar argument.
+                    run_request_kwargs.pop(unsupported, None)
 
             live_preview_summary = dict(result.pipeline_result.metadata.get("live_preview") or {})
             print(

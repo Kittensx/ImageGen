@@ -61,6 +61,19 @@ export const api = {
   health: () => request("/api/health"),
   refreshModels: () => request("/api/models/refresh", { method: "POST" }),
   upscalers: () => request("/api/upscalers"),
+  hiresDimensionPlan: (values = {}) => request("/api/hires/dimension-plan", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
+  uploadOutpaintPrototypeSource: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request("/api/outpaint/prototype/source", { method: "POST", body: form });
+  },
+  outpaintPrototypePlan: (values = {}) => request("/api/outpaint/prototype/plan", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
   refreshUpscalers: (mode = "all", selectedFile = "") => request("/api/upscalers/refresh", {
     method: "POST",
     body: JSON.stringify({ mode, ...(selectedFile ? { selected_file: selectedFile } : {}) }),

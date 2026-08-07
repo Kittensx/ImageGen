@@ -307,10 +307,15 @@ class GenerationRequest:
     hires_positive_prompt: str = ""
     hires_negative_prompt: str = ""
     hires_size_mode: str = "same_as_base"
-    hires_scale: float = 2.0
+    hires_scale: Optional[float] = 2.0
     hires_width: int = 0
     hires_height: int = 0
+    hires_dimension_plan_version: str = ""
     hires_dimension_plan: dict[str, Any] = field(default_factory=dict)
+    hires_axis_scale_width: float = 1.0
+    hires_axis_scale_height: float = 1.0
+    hires_uniform_scale: Optional[float] = None
+    hires_aspect_ratio_changed: bool = False
     hires_enabled: bool = False
     hires_steps: int = 20
     hires_denoising_strength: float = 0.45
@@ -330,12 +335,19 @@ class GenerationRequest:
     hires_upscaler: str = ""
     hires_upscaler_id: str = ""
     hires_expected_upscaler_sha256: str = ""
+    hires_expected_native_scale: int = 0
     hires_expected_vae_sha256: str = ""
     hires_expected_vae_source_kind: str = ""
     hires_tile_size: int = 0
     hires_tile_overlap: int = 16
     hires_tile_batch_size: int = 1
     hires_exact_resize_filter: str = "bicubic"
+    hires_final_size_correction_filter: str = "auto"
+    hires_aspect_policy: str = "stretch"
+    hires_padding_mode: str = "reflect"
+    hires_recorded_target_correction: dict[str, Any] = field(default_factory=dict)
+    hires_correction_fingerprint_enabled: bool = False
+    hires_recorded_correction_fingerprint: dict[str, Any] = field(default_factory=dict)
     hires_save_upscaled_pre_denoise: bool = False
     hires_save_vae_roundtrip: bool = False
     hires_diagnostic_vae_execution_fingerprint: bool = False
@@ -344,6 +356,35 @@ class GenerationRequest:
     hires_host_staging_policy: str = "pageable"
     hires_host_staging_cap_mb: int = 1024
     hires_artifact_disk_budget_mb: int = 0
+    outpaint_prototype_enabled: bool = False
+    outpaint_source_image: str = ""
+    outpaint_anchor: str = "center"
+    outpaint_source_x: int = -1
+    outpaint_source_y: int = -1
+    outpaint_feather_px: int = 24
+    outpaint_context_seed_mode: str = "edge_pad_v1"
+    outpaint_denoising_strength: float = 0.70
+    outpaint_latent_strategy: str = "noise_only_new_regions_v1"
+    outpaint_prompt_mode: str = "source_prompt_v1"
+    outpaint_overlay_positive_prompt: str = ""
+    outpaint_overlay_negative_prompt: str = ""
+    outpaint_diagnostic_artifacts: bool = False
+    outpaint_prototype_record: dict[str, Any] = field(default_factory=dict)
+    outpaint_shape_expansion_enabled: bool = False
+    outpaint_shape_target_mode: str = "square"
+    outpaint_shape_target_width: int = 0
+    outpaint_shape_target_height: int = 0
+    outpaint_shape_base_width: int = 0
+    outpaint_shape_base_height: int = 0
+    outpaint_shape_anchor: str = "center"
+    outpaint_shape_context_seed_mode: str = "edge_pad_v1"
+    outpaint_shape_source_handoff: str = "auto"
+    outpaint_shape_prompt_mode: str = "overlay_only_v1"
+    outpaint_shape_overlay_positive_prompt: str = ""
+    outpaint_shape_overlay_negative_prompt: str = ""
+    outpaint_shape_denoising_strength: float = 0.40
+    outpaint_shape_save_base: bool = False
+    outpaint_shape_runtime_record: dict[str, Any] = field(default_factory=dict)
     prompt_preflight: dict[str, Any] = field(default_factory=dict)
     prompt_shadow_compare: bool = False
     prompt_route_plan: dict[str, Any] = field(default_factory=dict)
@@ -421,10 +462,17 @@ class GenerationRequest:
             "hires_positive_prompt": str(self.hires_positive_prompt or self.positive_prompt),
             "hires_negative_prompt": str(self.hires_negative_prompt or self.negative_prompt),
             "hires_size_mode": str(self.hires_size_mode or "same_as_base"),
-            "hires_scale": float(self.hires_scale or 2.0),
+            "hires_scale": (float(self.hires_scale) if self.hires_scale is not None else None),
             "hires_width": int(self.hires_width or 0),
             "hires_height": int(self.hires_height or 0),
+            "hires_dimension_plan_version": str(self.hires_dimension_plan_version or ""),
             "hires_dimension_plan": _json_safe(self.hires_dimension_plan),
+            "hires_axis_scale_width": float(self.hires_axis_scale_width),
+            "hires_axis_scale_height": float(self.hires_axis_scale_height),
+            "hires_uniform_scale": (
+                float(self.hires_uniform_scale) if self.hires_uniform_scale is not None else None
+            ),
+            "hires_aspect_ratio_changed": bool(self.hires_aspect_ratio_changed),
             "hires_enabled": bool(self.hires_enabled),
             "hires_steps": int(self.hires_steps or 20),
             "hires_denoising_strength": float(self.hires_denoising_strength or 0.45),
@@ -450,6 +498,7 @@ class GenerationRequest:
             "hires_expected_upscaler_sha256": str(
                 self.hires_expected_upscaler_sha256 or ""
             ),
+            "hires_expected_native_scale": int(self.hires_expected_native_scale or 0),
             "hires_expected_vae_sha256": str(self.hires_expected_vae_sha256 or ""),
             "hires_expected_vae_source_kind": str(
                 self.hires_expected_vae_source_kind or ""
@@ -458,6 +507,12 @@ class GenerationRequest:
             "hires_tile_overlap": int(self.hires_tile_overlap or 0),
             "hires_tile_batch_size": int(self.hires_tile_batch_size or 1),
             "hires_exact_resize_filter": str(self.hires_exact_resize_filter or "bicubic"),
+            "hires_final_size_correction_filter": str(self.hires_final_size_correction_filter or "auto"),
+            "hires_aspect_policy": str(self.hires_aspect_policy or "stretch"),
+            "hires_padding_mode": str(self.hires_padding_mode or "reflect"),
+            "hires_recorded_target_correction": _json_safe(self.hires_recorded_target_correction),
+            "hires_correction_fingerprint_enabled": bool(self.hires_correction_fingerprint_enabled),
+            "hires_recorded_correction_fingerprint": _json_safe(self.hires_recorded_correction_fingerprint),
             "hires_save_upscaled_pre_denoise": bool(self.hires_save_upscaled_pre_denoise),
             "hires_save_vae_roundtrip": bool(self.hires_save_vae_roundtrip),
             "hires_diagnostic_vae_execution_fingerprint": bool(
@@ -468,6 +523,35 @@ class GenerationRequest:
             "hires_host_staging_policy": str(self.hires_host_staging_policy or "pageable"),
             "hires_host_staging_cap_mb": int(self.hires_host_staging_cap_mb or 0),
             "hires_artifact_disk_budget_mb": int(self.hires_artifact_disk_budget_mb or 0),
+            "outpaint_prototype_enabled": bool(self.outpaint_prototype_enabled),
+            "outpaint_source_image": str(self.outpaint_source_image or ""),
+            "outpaint_anchor": str(self.outpaint_anchor or "center"),
+            "outpaint_source_x": int(self.outpaint_source_x),
+            "outpaint_source_y": int(self.outpaint_source_y),
+            "outpaint_feather_px": int(self.outpaint_feather_px),
+            "outpaint_context_seed_mode": str(self.outpaint_context_seed_mode or "edge_pad_v1"),
+            "outpaint_denoising_strength": float(self.outpaint_denoising_strength),
+            "outpaint_latent_strategy": str(self.outpaint_latent_strategy or "noise_only_new_regions_v1"),
+            "outpaint_prompt_mode": str(self.outpaint_prompt_mode or "source_prompt_v1"),
+            "outpaint_overlay_positive_prompt": str(self.outpaint_overlay_positive_prompt or ""),
+            "outpaint_overlay_negative_prompt": str(self.outpaint_overlay_negative_prompt or ""),
+            "outpaint_diagnostic_artifacts": bool(self.outpaint_diagnostic_artifacts),
+            "outpaint_prototype_record": _json_safe(self.outpaint_prototype_record),
+            "outpaint_shape_expansion_enabled": bool(self.outpaint_shape_expansion_enabled),
+            "outpaint_shape_target_mode": str(self.outpaint_shape_target_mode or "square"),
+            "outpaint_shape_target_width": int(self.outpaint_shape_target_width or 0),
+            "outpaint_shape_target_height": int(self.outpaint_shape_target_height or 0),
+            "outpaint_shape_base_width": int(self.outpaint_shape_base_width or 0),
+            "outpaint_shape_base_height": int(self.outpaint_shape_base_height or 0),
+            "outpaint_shape_anchor": str(self.outpaint_shape_anchor or "center"),
+            "outpaint_shape_context_seed_mode": str(self.outpaint_shape_context_seed_mode or "edge_pad_v1"),
+            "outpaint_shape_source_handoff": str(self.outpaint_shape_source_handoff or "auto"),
+            "outpaint_shape_prompt_mode": str(self.outpaint_shape_prompt_mode or "overlay_only_v1"),
+            "outpaint_shape_overlay_positive_prompt": str(self.outpaint_shape_overlay_positive_prompt or ""),
+            "outpaint_shape_overlay_negative_prompt": str(self.outpaint_shape_overlay_negative_prompt or ""),
+            "outpaint_shape_denoising_strength": float(self.outpaint_shape_denoising_strength),
+            "outpaint_shape_save_base": bool(self.outpaint_shape_save_base),
+            "outpaint_shape_runtime_record": _json_safe(self.outpaint_shape_runtime_record),
             "prompt_preflight": _json_safe(self.prompt_preflight),
             "prompt_shadow_compare": bool(self.prompt_shadow_compare),
             "prompt_route_plan": _json_safe(self.prompt_route_plan),

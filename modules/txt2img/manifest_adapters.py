@@ -11,6 +11,20 @@ from modules.txt2img.generation_manifest import GenerationManifest
 
 def _recorded_hires_runtime_identity(manifest: GenerationManifest) -> dict[str, str]:
     payload = manifest.to_dict()
+    optional = payload.get("optional_for_rerun") if isinstance(payload, dict) else {}
+    optional_extra = (optional or {}).get("extra") if isinstance(optional, dict) else {}
+    if isinstance(optional_extra, dict):
+        compact_identity = {
+            "strategy": str(optional_extra.get("hires_strategy") or ""),
+            "upscaler_id": str(optional_extra.get("hires_upscaler_id") or optional_extra.get("hires_upscaler") or ""),
+            "upscaler_sha256": str(optional_extra.get("hires_expected_upscaler_sha256") or "").casefold(),
+            "native_scale": int(optional_extra.get("hires_expected_native_scale") or 0),
+            "aspect_policy": str(optional_extra.get("hires_aspect_policy") or ""),
+            "vae_sha256": str(optional_extra.get("hires_expected_vae_sha256") or "").casefold(),
+            "vae_source_kind": str(optional_extra.get("hires_expected_vae_source_kind") or ""),
+        }
+        if any(compact_identity.values()):
+            return compact_identity
     extra = payload.get("extra") if isinstance(payload, dict) else {}
     pipeline = (extra or {}).get("pipeline_metadata") if isinstance(extra, dict) else {}
     hires = (pipeline or {}).get("hires_fix") if isinstance(pipeline, dict) else {}
@@ -59,13 +73,14 @@ def _recorded_hires_runtime_identity(manifest: GenerationManifest) -> dict[str, 
 
 
 def _restore_recorded_hires_base_dimensions(payload: dict[str, Any]) -> dict[str, Any]:
-    """Restore the first-pass dimensions hidden by final-output manifests.
+    """Restore first-pass dimensions for legacy hires manifests.
 
-    Final hires manifests intentionally record the final image size in
-    ``required_for_rerun.width`` / ``height``.  The original base dimensions
-    remain in ``hires_dimension_plan``.  Exact replay must restore those base
-    values before resolving the second-pass target or the target collapses to
-    the base size and hires validation fails.
+    Compact replay manifests record base dimensions directly in
+    ``required_for_rerun.width`` / ``height``.  Older hires manifests instead
+    stored the final/internal output size there while keeping the original base
+    dimensions in ``hires_dimension_plan``.  Keep this compatibility repair so
+    those older manifests still replay without collapsing or mis-scaling the
+    hires target.
     """
 
     if not bool(payload.get("hires_enabled", False)):
@@ -86,6 +101,13 @@ def _restore_recorded_hires_base_dimensions(payload: dict[str, Any]) -> dict[str
 
 def _recorded_hires_schedule(manifest: GenerationManifest) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = manifest.to_dict()
+    optional = payload.get("optional_for_rerun") if isinstance(payload, dict) else {}
+    optional_extra = (optional or {}).get("extra") if isinstance(optional, dict) else {}
+    if isinstance(optional_extra, dict):
+        replay = optional_extra.get("hires_recorded_schedule_replay")
+        fingerprint = optional_extra.get("hires_recorded_schedule_fingerprint")
+        if isinstance(replay, dict) and replay and isinstance(fingerprint, dict) and fingerprint:
+            return dict(replay), dict(fingerprint)
     extra = payload.get("extra") if isinstance(payload, dict) else {}
     pipeline_metadata = (extra or {}).get("pipeline_metadata") if isinstance(extra, dict) else {}
     hires = (pipeline_metadata or {}).get("hires_fix") if isinstance(pipeline_metadata, dict) else {}

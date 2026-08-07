@@ -72,7 +72,41 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _region_slots_behavior_source(slots: Any) -> list[dict[str, Any]]:
+    """Return REGION slot data that can materially change conditioning output."""
+    output: list[dict[str, Any]] = []
+    for slot_value in list(slots or []):
+        slot = dict(slot_value or {})
+        # Coordinate-resolution provenance explains how resolved coordinates
+        # were obtained; the resolved coordinates themselves define behavior.
+        slot.pop("coordinate_resolution", None)
+        regions: list[dict[str, Any]] = []
+        for region_value in list(slot.get("regions") or []):
+            region = dict(region_value or {})
+            region.pop("coordinate_resolution", None)
+            regions.append(region)
+        slot["regions"] = regions
+        output.append(slot)
+    return output
+
+
 def _fingerprint_source(record: Mapping[str, Any]) -> dict[str, Any]:
+    # Runtime estimates and coordinate-resolution provenance are derived
+    # diagnostics, not replay inputs. Excluding them keeps the REGION
+    # fingerprint stable while preserving prompts, resolved geometry, weights,
+    # temporal windows, masks/canvas identity, and semantic digests.
+    source = {
+        str(key): value
+        for key, value in dict(record or {}).items()
+        if key not in {"fingerprint", "replay_locked", "replay_source", "runtime_estimate"}
+    }
+    if "slots" in source:
+        source["slots"] = _region_slots_behavior_source(source.get("slots"))
+    return source
+
+
+def _legacy_fingerprint_source(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the pre-hotfix fingerprint source for legacy manifest validation."""
     return {
         str(key): value
         for key, value in dict(record or {}).items()
@@ -80,8 +114,182 @@ def _fingerprint_source(record: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def compact_region_record_for_replay(record: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return the behavior-defining REGION record without derived telemetry."""
+    value = dict(record or {})
+    if not value:
+        return {}
+    value.pop("runtime_estimate", None)
+    value.pop("replay_locked", None)
+    value.pop("replay_source", None)
+    if "slots" in value:
+        value["slots"] = _region_slots_behavior_source(value.get("slots"))
+    value["fingerprint"] = {
+        "algorithm": "sha256",
+        "digest": _stable_hash(_fingerprint_source(value)),
+    }
+    return value
+
+
 def _join_prompt_parts(*parts: str) -> str:
     return " ".join(str(part or "").strip() for part in parts if str(part or "").strip())
+
+
+def _resolve_region_pixel_coordinates(
+    region_blocks: Sequence[Any],
+    *,
+    width: int,
+    height: int,
+    coordinate_reference_slot: Mapping[str, Any] | None = None,
+    coordinate_reference_width: int | None = None,
+    coordinate_reference_height: int | None = None,
+) -> tuple[dict[int, tuple[float, float, float, float]], dict[str, Any]]:
+    """Resolve REGION pixel coordinates against the active generation canvas.
+
+    REGION prompt text can contain absolute pixel ranges that were authored for an
+    older canvas size. The runtime is authoritative, so when those coordinates no
+    longer fit the current request we rescale the entire pixel-coordinate region
+    plan to the active width/height instead of failing preflight/runtime.
+
+    The source canvas is inferred conservatively from the rightmost/bottommost
+    pixel extents present in the REGION block. Normalized-coordinate regions are
+    not modified.
+    """
+    target_width = max(1, int(width))
+    target_height = max(1, int(height))
+    epsilon = 1e-6
+    pixel_entries: list[tuple[int, float, float, float, float]] = []
+    for index, item in enumerate(region_blocks):
+        if bool(getattr(item, "coords_pixels", False)):
+            pixel_entries.append((
+                index,
+                float(getattr(item, "x1")),
+                float(getattr(item, "x2")),
+                float(getattr(item, "y1")),
+                float(getattr(item, "y2")),
+            ))
+    if not pixel_entries:
+        return {}, {
+            "unit": "normalized",
+            "source_width": None,
+            "source_height": None,
+            "target_width": target_width,
+            "target_height": target_height,
+            "auto_rescaled": False,
+        }
+
+    # When a hires pass inherits the same REGION prompt, scale from the already
+    # UI-resolved base plan rather than re-interpreting the literal parser-box
+    # coordinates.  This preserves the WebUI dimensions as the source of truth
+    # while maintaining identical relative REGION geometry at the hires canvas.
+    reference = dict(coordinate_reference_slot or {})
+    reference_regions = [
+        dict(item or {}) for item in list(reference.get("regions") or [])
+    ]
+    reference_width = int(coordinate_reference_width or 0)
+    reference_height = int(coordinate_reference_height or 0)
+    if (
+        reference_width > 0
+        and reference_height > 0
+        and len(reference_regions) == len(region_blocks)
+    ):
+        reference_pixels: dict[int, tuple[float, float, float, float]] = {}
+        valid_reference = True
+        for index, item in enumerate(region_blocks):
+            if not bool(getattr(item, "coords_pixels", False)):
+                continue
+            coordinates = dict(reference_regions[index].get("coordinates") or {})
+            if str(coordinates.get("unit") or "").strip().lower() != "pixels":
+                valid_reference = False
+                break
+            try:
+                values = (
+                    float(coordinates["x1"]),
+                    float(coordinates["x2"]),
+                    float(coordinates["y1"]),
+                    float(coordinates["y2"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                valid_reference = False
+                break
+            if not (
+                0.0 <= values[0] < values[1] <= float(reference_width) + epsilon
+                and 0.0 <= values[2] < values[3] <= float(reference_height) + epsilon
+            ):
+                valid_reference = False
+                break
+            reference_pixels[index] = values
+        if valid_reference and len(reference_pixels) == len(pixel_entries):
+            scale_x = float(target_width) / float(reference_width)
+            scale_y = float(target_height) / float(reference_height)
+            resolved = {
+                index: (
+                    max(0.0, min(float(target_width), x1 * scale_x)),
+                    max(0.0, min(float(target_width), x2 * scale_x)),
+                    max(0.0, min(float(target_height), y1 * scale_y)),
+                    max(0.0, min(float(target_height), y2 * scale_y)),
+                )
+                for index, (x1, x2, y1, y2) in reference_pixels.items()
+            }
+            return resolved, {
+                "unit": "pixels",
+                "source": "base_ui_resolved_region_plan",
+                "source_width": float(reference_width),
+                "source_height": float(reference_height),
+                "target_width": target_width,
+                "target_height": target_height,
+                "scale_x": float(scale_x),
+                "scale_y": float(scale_y),
+                "auto_rescaled": bool(
+                    reference_width != target_width or reference_height != target_height
+                ),
+            }
+
+    source_width = max(value[2] for value in pixel_entries)
+    source_height = max(value[4] for value in pixel_entries)
+    if source_width <= 0.0 or source_height <= 0.0:
+        raise RegionalPromptError("REGION pixel coordinates require positive source dimensions.")
+
+    overflow = any(
+        x1 < -epsilon or y1 < -epsilon or x2 > float(target_width) + epsilon or y2 > float(target_height) + epsilon
+        for _index, x1, x2, y1, y2 in pixel_entries
+    )
+    if not overflow:
+        return {index: (x1, x2, y1, y2) for index, x1, x2, y1, y2 in pixel_entries}, {
+            "unit": "pixels",
+            "source_width": float(source_width),
+            "source_height": float(source_height),
+            "target_width": target_width,
+            "target_height": target_height,
+            "scale_x": 1.0,
+            "scale_y": 1.0,
+            "auto_rescaled": False,
+        }
+
+    scale_x = float(target_width) / float(source_width)
+    scale_y = float(target_height) / float(source_height)
+    resolved: dict[int, tuple[float, float, float, float]] = {}
+    for index, x1, x2, y1, y2 in pixel_entries:
+        nx1 = max(0.0, min(float(target_width), x1 * scale_x))
+        nx2 = max(0.0, min(float(target_width), x2 * scale_x))
+        ny1 = max(0.0, min(float(target_height), y1 * scale_y))
+        ny2 = max(0.0, min(float(target_height), y2 * scale_y))
+        if not (0.0 <= nx1 < nx2 <= float(target_width) + epsilon):
+            raise RegionalPromptError("REGION pixel x coordinates could not be reconciled with the active generation width.")
+        if not (0.0 <= ny1 < ny2 <= float(target_height) + epsilon):
+            raise RegionalPromptError("REGION pixel y coordinates could not be reconciled with the active generation height.")
+        resolved[index] = (nx1, nx2, ny1, ny2)
+
+    return resolved, {
+        "unit": "pixels",
+        "source_width": float(source_width),
+        "source_height": float(source_height),
+        "target_width": target_width,
+        "target_height": target_height,
+        "scale_x": float(scale_x),
+        "scale_y": float(scale_y),
+        "auto_rescaled": True,
+    }
 
 
 def _canvas_metadata(value: str) -> dict[str, Any]:
@@ -124,6 +332,9 @@ def extract_superhybrid_region_slot(
     seed: int,
     width: int,
     height: int,
+    coordinate_reference_slot: Mapping[str, Any] | None = None,
+    coordinate_reference_width: int | None = None,
+    coordinate_reference_height: int | None = None,
 ) -> tuple[str, list[RuntimeRegionSpec], dict[str, Any]]:
     """Extract a SuperHybrid REGION block without executing any A1111 runtime code."""
     from modules.prompt_parsers.vendor import prompt_parser_superhybrid as backend
@@ -163,6 +374,14 @@ def extract_superhybrid_region_slot(
     base_prompt = explicit_base_prompt or extracted_base_prompt
     runtime_specs: list[RuntimeRegionSpec] = []
     record_regions: list[dict[str, Any]] = []
+    pixel_coordinate_map, pixel_coordinate_metadata = _resolve_region_pixel_coordinates(
+        region_blocks,
+        width=int(width),
+        height=int(height),
+        coordinate_reference_slot=coordinate_reference_slot,
+        coordinate_reference_width=coordinate_reference_width,
+        coordinate_reference_height=coordinate_reference_height,
+    )
     for region_index, item in enumerate(region_blocks):
         backend_name = str(item.backend or "").strip().lower()
         if backend_name and backend_name not in {"latent"}:
@@ -170,14 +389,18 @@ def extract_superhybrid_region_slot(
                 f"REGION backend={backend_name!r} is incompatible with IMAGE_GEN. "
                 "Use the native model-output backend or omit backend=."
             )
-        values = (float(item.x1), float(item.x2), float(item.y1), float(item.y2))
         coords_pixels = bool(item.coords_pixels)
         if coords_pixels:
+            values = pixel_coordinate_map.get(
+                region_index,
+                (float(item.x1), float(item.x2), float(item.y1), float(item.y2)),
+            )
             if not (0.0 <= values[0] < values[1] <= float(width)):
                 raise RegionalPromptError("REGION pixel x coordinates must fit the generation width.")
             if not (0.0 <= values[2] < values[3] <= float(height)):
                 raise RegionalPromptError("REGION pixel y coordinates must fit the generation height.")
         else:
+            values = (float(item.x1), float(item.x2), float(item.y1), float(item.y2))
             if not (0.0 <= values[0] < values[1] <= 1.0):
                 raise RegionalPromptError("REGION normalized x coordinates must be within 0..1.")
             if not (0.0 <= values[2] < values[3] <= 1.0):
@@ -235,6 +458,12 @@ def extract_superhybrid_region_slot(
                 "x1": values[0], "x2": values[1], "y1": values[2], "y2": values[3],
                 "unit": "pixels" if coords_pixels else "normalized",
             },
+            "coordinate_resolution": dict(pixel_coordinate_metadata) if coords_pixels else {
+                "unit": "normalized",
+                "target_width": int(width),
+                "target_height": int(height),
+                "auto_rescaled": False,
+            },
             "weight": weight,
             "start": start,
             "stop": stop,
@@ -250,6 +479,7 @@ def extract_superhybrid_region_slot(
         "source_prompt": text,
         "base_prompt": base_prompt,
         "region_count": len(record_regions),
+        "coordinate_resolution": dict(pixel_coordinate_metadata),
         "regions": record_regions,
     }
 
@@ -393,12 +623,17 @@ def validate_recorded_region_record(recorded: Mapping[str, Any], *, current: Map
     if value.get("contract_version") != REGION_CONTRACT_VERSION:
         raise RegionalPromptError("Recorded REGION plan uses an unsupported contract version.")
     fingerprint = dict(value.get("fingerprint") or {})
-    if fingerprint.get("algorithm") != "sha256" or fingerprint.get("digest") != _stable_hash(_fingerprint_source(value)):
+    digest = str(fingerprint.get("digest") or "")
+    current_digest = _stable_hash(_fingerprint_source(value))
+    legacy_digest = _stable_hash(_legacy_fingerprint_source(value))
+    if fingerprint.get("algorithm") != "sha256" or digest not in {current_digest, legacy_digest}:
         raise RegionalPromptError("Recorded REGION plan fingerprint validation failed.")
     for key in ("parser_id", "parser_version", "pass", "backend", "overlap_policy", "width", "height", "steps", "slot_count", "region_count"):
         if value.get(key) != dict(current or {}).get(key):
             raise RegionalPromptError(f"Recorded REGION {key.replace('_', ' ')} does not match the current request.")
-    if value.get("slots") != dict(current or {}).get("slots"):
+    if _region_slots_behavior_source(value.get("slots")) != _region_slots_behavior_source(
+        dict(current or {}).get("slots")
+    ):
         raise RegionalPromptError("Recorded REGION prompts, geometry, or semantics changed.")
     value["replay_locked"] = True
     value["replay_source"] = "recorded_exact"

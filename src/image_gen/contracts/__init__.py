@@ -4,6 +4,16 @@ from image_gen.contracts.compatibility import (
     SamplerCapabilities,
     SchedulerCompatibilityResult,
 )
+from image_gen.contracts.hires_diagnostics import (
+    HIRES_CORRECTION_FINGERPRINT_VERSION,
+    HIRES_FAILURE_STAGE_CODES,
+    HIRES_FAILURE_STAGE_LABELS,
+    build_hires_correction_audit,
+    build_hires_correction_fingerprint,
+    extract_hires_failure_stage,
+    format_hires_failure,
+    hires_failure_stage_label,
+)
 from image_gen.contracts.protocols import (
     AdapterConformanceError,
     AdapterConformanceResult,
@@ -36,6 +46,14 @@ __all__ = [
     "ConditioningOutput",
     "GenerationRequest",
     "GenerationResult",
+    "HIRES_CORRECTION_FINGERPRINT_VERSION",
+    "HIRES_FAILURE_STAGE_CODES",
+    "HIRES_FAILURE_STAGE_LABELS",
+    "build_hires_correction_audit",
+    "build_hires_correction_fingerprint",
+    "extract_hires_failure_stage",
+    "format_hires_failure",
+    "hires_failure_stage_label",
     "PROMPT_ASSET_CONTRACT_VERSION",
     "PromptAssetSelection",
     "canonical_prompt_asset_source",

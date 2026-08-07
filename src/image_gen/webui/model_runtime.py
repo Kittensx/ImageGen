@@ -290,6 +290,7 @@ class ResidentModelRuntimeClient:
         config_path: str | Path,
         save_txt: bool = True,
         save_json: bool = True,
+        save_diagnostics_json: bool = True,
         on_line: Callable[[str], Any] | None = None,
     ) -> dict[str, Any]:
         return await self.execute(
@@ -299,6 +300,7 @@ class ResidentModelRuntimeClient:
                 "config_path": str(config_path),
                 "save_txt": bool(save_txt),
                 "save_json": bool(save_json),
+                "save_diagnostics_json": bool(save_diagnostics_json),
             },
             on_line=on_line,
         )

@@ -20,7 +20,19 @@ import torch
 
 from image_gen.contracts import (
     PROMPT_ASSET_CONTRACT_VERSION,
+    extract_hires_failure_stage,
+    hires_failure_stage_label,
     normalize_prompt_asset_list,
+)
+from image_gen.systems.outpainting import (
+    OUTPAINT_ANCHORS,
+    OUTPAINT_CONTEXT_SEED_MODES,
+    OUTPAINT_LATENT_STRATEGIES,
+    OUTPAINT_PROMPT_MODES,
+    OUTPAINT_SHAPE_TARGET_MODES,
+    OUTPAINT_SOURCE_HANDOFF_MODES,
+    extract_outpaint_failure_stage,
+    outpaint_failure_label,
 )
 from image_gen.systems.image_conditioning import (
     DEFAULT_HIRES_STEP_POLICY,
@@ -34,6 +46,7 @@ from image_gen.runtime_options import (
     resolve_runtime_startup_options,
     runtime_request_settings,
 )
+from image_gen.runtime.hires_sizing import apply_hires_dimensions
 from image_gen.runtime.scheduler_settings import (
     normalize_scheduler_payload,
     scheduler_resolution_from_payload,
@@ -203,6 +216,7 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["hires_scale"] = _coerce_top_level_number(normalized.get("hires_scale"), integer=False, default=1.5)
     normalized["hires_width"] = _coerce_top_level_number(normalized.get("hires_width"), integer=True, default=0)
     normalized["hires_height"] = _coerce_top_level_number(normalized.get("hires_height"), integer=True, default=0)
+    apply_hires_dimensions(normalized)
     normalized["hires_steps"] = _coerce_top_level_number(normalized.get("hires_steps"), integer=True, default=20)
     normalized["hires_denoising_strength"] = _coerce_top_level_number(
         normalized.get("hires_denoising_strength"), integer=False, default=0.4
@@ -267,11 +281,41 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
         raise ValueError("hires_tile_overlap cannot be negative.")
     if normalized["hires_tile_batch_size"] < 1:
         raise ValueError("hires_tile_batch_size must be at least 1.")
-    normalized["hires_exact_resize_filter"] = str(
-        normalized.get("hires_exact_resize_filter") or "bicubic"
-    ).strip().casefold()
+    legacy_resize_filter = str(normalized.get("hires_exact_resize_filter") or "").strip().casefold()
+    normalized["hires_exact_resize_filter"] = legacy_resize_filter or "bicubic"
     if normalized["hires_exact_resize_filter"] not in {"nearest", "bilinear", "bicubic", "area"}:
         raise ValueError("hires_exact_resize_filter must be nearest, bilinear, bicubic, or area.")
+    normalized["hires_final_size_correction_filter"] = str(
+        normalized.get("hires_final_size_correction_filter")
+        or legacy_resize_filter
+        or "auto"
+    ).strip().casefold()
+    if normalized["hires_final_size_correction_filter"] not in {"auto", "nearest", "bilinear", "bicubic", "area"}:
+        raise ValueError(
+            "hires_final_size_correction_filter must be auto, nearest, bilinear, bicubic, or area."
+        )
+    normalized["hires_aspect_policy"] = str(
+        normalized.get("hires_aspect_policy") or "stretch"
+    ).strip().casefold()
+    if normalized["hires_aspect_policy"] not in {"stretch", "crop_to_fill", "pad_to_fit"}:
+        raise ValueError("hires_aspect_policy must be stretch, crop_to_fill, or pad_to_fit.")
+    normalized["hires_padding_mode"] = str(
+        normalized.get("hires_padding_mode") or "reflect"
+    ).strip().casefold()
+    if normalized["hires_padding_mode"] not in {"reflect", "replicate", "blurred_edge", "black"}:
+        raise ValueError("hires_padding_mode must be reflect, replicate, blurred_edge, or black.")
+    normalized["hires_recorded_target_correction"] = dict(
+        normalized.get("hires_recorded_target_correction") or {}
+    )
+    normalized["hires_correction_fingerprint_enabled"] = _coerce_boolean(
+        normalized.get("hires_correction_fingerprint_enabled", False), default=False
+    )
+    normalized["hires_recorded_correction_fingerprint"] = dict(
+        normalized.get("hires_recorded_correction_fingerprint") or {}
+    )
+    normalized["hires_expected_native_scale"] = _coerce_top_level_number(
+        normalized.get("hires_expected_native_scale"), integer=True, default=0
+    )
     normalized["hires_save_upscaled_pre_denoise"] = _coerce_boolean(
         normalized.get("hires_save_upscaled_pre_denoise", False), default=False
     )
@@ -281,9 +325,151 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["hires_save_lowres"] = _coerce_boolean(
         normalized.get("hires_save_lowres", False), default=False
     )
+    normalized["outpaint_prototype_enabled"] = _coerce_boolean(
+        normalized.get("outpaint_prototype_enabled", False), default=False
+    )
+    normalized["outpaint_source_image"] = str(normalized.get("outpaint_source_image") or "").strip()
+    normalized["outpaint_anchor"] = str(normalized.get("outpaint_anchor") or "center").strip().lower()
+    if normalized["outpaint_anchor"] not in OUTPAINT_ANCHORS:
+        raise ValueError("outpaint_anchor must be center, left, right, top, or bottom.")
+    normalized["outpaint_source_x"] = _coerce_top_level_number(
+        normalized.get("outpaint_source_x"), integer=True, default=-1
+    )
+    normalized["outpaint_source_y"] = _coerce_top_level_number(
+        normalized.get("outpaint_source_y"), integer=True, default=-1
+    )
+    normalized["outpaint_feather_px"] = _coerce_top_level_number(
+        normalized.get("outpaint_feather_px"), integer=True, default=24
+    )
+    if not 0 <= normalized["outpaint_feather_px"] <= 64:
+        raise ValueError("outpaint_feather_px must be between 0 and 64.")
+    normalized["outpaint_context_seed_mode"] = str(
+        normalized.get("outpaint_context_seed_mode") or "edge_pad_v1"
+    ).strip().lower()
+    if normalized["outpaint_context_seed_mode"] not in OUTPAINT_CONTEXT_SEED_MODES:
+        raise ValueError("Unsupported outpaint_context_seed_mode.")
+    normalized["outpaint_denoising_strength"] = _coerce_top_level_number(
+        normalized.get("outpaint_denoising_strength"), integer=False, default=0.70
+    )
+    if not 0.01 <= normalized["outpaint_denoising_strength"] <= 0.999:
+        raise ValueError("outpaint_denoising_strength must be between 0.01 and 0.999.")
+    normalized["outpaint_latent_strategy"] = str(
+        normalized.get("outpaint_latent_strategy") or "noise_only_new_regions_v1"
+    ).strip().lower()
+    if normalized["outpaint_latent_strategy"] not in OUTPAINT_LATENT_STRATEGIES:
+        raise ValueError("Unsupported outpaint_latent_strategy.")
+    normalized["outpaint_prompt_mode"] = str(
+        normalized.get("outpaint_prompt_mode") or "source_prompt_v1"
+    ).strip().lower()
+    if normalized["outpaint_prompt_mode"] not in OUTPAINT_PROMPT_MODES:
+        raise ValueError("Unsupported outpaint_prompt_mode.")
+    normalized["outpaint_overlay_positive_prompt"] = str(
+        normalized.get("outpaint_overlay_positive_prompt") or ""
+    ).strip()
+    normalized["outpaint_overlay_negative_prompt"] = str(
+        normalized.get("outpaint_overlay_negative_prompt") or ""
+    ).strip()
+    if (
+        normalized["outpaint_prototype_enabled"]
+        and normalized["outpaint_prompt_mode"] == "overlay_only_v1"
+        and not normalized["outpaint_overlay_positive_prompt"]
+    ):
+        raise ValueError(
+            "Extension prompt only requires an extension prompt."
+        )
+    normalized["outpaint_diagnostic_artifacts"] = _coerce_boolean(
+        normalized.get("outpaint_diagnostic_artifacts", False), default=False
+    )
+    normalized["outpaint_prototype_record"] = dict(
+        normalized.get("outpaint_prototype_record") or {}
+    )
+
+    normalized["outpaint_shape_expansion_enabled"] = _coerce_boolean(
+        normalized.get("outpaint_shape_expansion_enabled", False), default=False
+    )
+    normalized["outpaint_shape_target_mode"] = str(
+        normalized.get("outpaint_shape_target_mode") or "square"
+    ).strip().lower()
+    if normalized["outpaint_shape_target_mode"] not in OUTPAINT_SHAPE_TARGET_MODES:
+        raise ValueError("Unsupported outpaint_shape_target_mode.")
+    normalized["outpaint_shape_target_width"] = _coerce_top_level_number(
+        normalized.get("outpaint_shape_target_width"), integer=True, default=0
+    )
+    normalized["outpaint_shape_target_height"] = _coerce_top_level_number(
+        normalized.get("outpaint_shape_target_height"), integer=True, default=0
+    )
+    normalized["outpaint_shape_base_width"] = _coerce_top_level_number(
+        normalized.get("outpaint_shape_base_width"), integer=True, default=0
+    )
+    normalized["outpaint_shape_base_height"] = _coerce_top_level_number(
+        normalized.get("outpaint_shape_base_height"), integer=True, default=0
+    )
+    normalized["outpaint_shape_anchor"] = str(
+        normalized.get("outpaint_shape_anchor") or "center"
+    ).strip().lower()
+    if normalized["outpaint_shape_anchor"] not in OUTPAINT_ANCHORS:
+        raise ValueError("outpaint_shape_anchor must be center, left, right, top, or bottom.")
+    normalized["outpaint_shape_context_seed_mode"] = str(
+        normalized.get("outpaint_shape_context_seed_mode") or "edge_pad_v1"
+    ).strip().lower()
+    if normalized["outpaint_shape_context_seed_mode"] not in {"edge_pad_v1", "reflect_pad_v1"}:
+        raise ValueError("Post-generation expansion edge initialization must use edge pixels or mirrored edge pixels.")
+    normalized["outpaint_shape_source_handoff"] = str(
+        normalized.get("outpaint_shape_source_handoff") or "auto"
+    ).strip().lower()
+    if normalized["outpaint_shape_source_handoff"] not in OUTPAINT_SOURCE_HANDOFF_MODES:
+        raise ValueError("Unsupported outpaint_shape_source_handoff.")
+    normalized["outpaint_shape_prompt_mode"] = str(
+        normalized.get("outpaint_shape_prompt_mode") or "overlay_only_v1"
+    ).strip().lower()
+    if normalized["outpaint_shape_prompt_mode"] not in OUTPAINT_PROMPT_MODES:
+        raise ValueError("Unsupported outpaint_shape_prompt_mode.")
+    normalized["outpaint_shape_overlay_positive_prompt"] = str(
+        normalized.get("outpaint_shape_overlay_positive_prompt") or ""
+    ).strip()
+    normalized["outpaint_shape_overlay_negative_prompt"] = str(
+        normalized.get("outpaint_shape_overlay_negative_prompt") or ""
+    ).strip()
+    normalized["outpaint_shape_denoising_strength"] = _coerce_top_level_number(
+        normalized.get("outpaint_shape_denoising_strength"), integer=False, default=0.40
+    )
+    if not 0.01 <= normalized["outpaint_shape_denoising_strength"] <= 0.999:
+        raise ValueError("outpaint_shape_denoising_strength must be between 0.01 and 0.999.")
+    normalized["outpaint_shape_save_base"] = _coerce_boolean(
+        normalized.get("outpaint_shape_save_base", False), default=False
+    )
+    normalized["outpaint_shape_runtime_record"] = dict(
+        normalized.get("outpaint_shape_runtime_record") or {}
+    )
+    if normalized["outpaint_shape_expansion_enabled"]:
+        if normalized["outpaint_prototype_enabled"]:
+            raise ValueError("Expand After Generation cannot be combined with Expand Existing Image.")
+        if normalized["hires_enabled"]:
+            raise ValueError("Expand After Generation cannot run with hires or .pth upscaling enabled.")
+        if int(normalized.get("batch_size") or 1) != 1:
+            raise ValueError("Expand After Generation currently requires batch_size=1.")
+        if (
+            normalized["outpaint_shape_prompt_mode"] == "overlay_only_v1"
+            and not normalized["outpaint_shape_overlay_positive_prompt"]
+        ):
+            raise ValueError("Extension prompt only requires an extension prompt.")
+    if normalized["outpaint_prototype_enabled"]:
+        if normalized["hires_enabled"]:
+            raise ValueError("Existing-image expansion cannot run with hires enabled.")
+        if int(normalized.get("batch_size") or 1) != 1:
+            raise ValueError("Existing-image expansion requires batch_size=1.")
+        if not normalized["outpaint_source_image"]:
+            raise ValueError("Choose a source image before enabling existing-image expansion.")
+        if int(normalized.get("width") or 0) % 8 or int(normalized.get("height") or 0) % 8:
+            raise ValueError("Existing-image expansion target width and height must be divisible by 8.")
     seed_value = normalized.get("seed")
     normalized["seed"] = _coerce_top_level_number(seed_value, integer=True, default=None) if seed_value not in (None, "") else None
     normalized["save_images"] = _coerce_boolean(normalized.get("save_images", True), default=True)
+    normalized["save_txt"] = _coerce_boolean(normalized.get("save_txt", True), default=True)
+    normalized["save_json"] = _coerce_boolean(normalized.get("save_json", True), default=True)
+    normalized["save_diagnostics_json"] = _coerce_boolean(
+        normalized.get("save_diagnostics_json", False), default=False
+    )
     normalized["prompt_asset_contract_version"] = str(
         normalized.get("prompt_asset_contract_version")
         or PROMPT_ASSET_CONTRACT_VERSION
@@ -481,6 +667,23 @@ class GenerationJob:
             "output_paths": list(self.output_paths),
             "log_lines": self.log_lines[-80:],
             "error": self.error,
+            "failure_stage_code": (
+                extract_outpaint_failure_stage(self.error)
+                or extract_hires_failure_stage(self.error)
+            ),
+            "failure_stage_label": (
+                outpaint_failure_label(extract_outpaint_failure_stage(self.error))
+                if extract_outpaint_failure_stage(self.error)
+                else (
+                    hires_failure_stage_label(extract_hires_failure_stage(self.error))
+                    if extract_hires_failure_stage(self.error)
+                    else ""
+                )
+            ),
+            "failure_stage_domain": (
+                "outpaint" if extract_outpaint_failure_stage(self.error)
+                else ("hires" if extract_hires_failure_stage(self.error) else "")
+            ),
             "job_root": self.job_root,
             "console_log_path": self.console_log_path,
             "failure_bundle_path": self.failure_bundle_path,
@@ -3024,13 +3227,27 @@ class GenerationJobManager:
 
                 output_count_before = len(job.output_paths)
                 try:
-                    completion = await self.model_runtime.run_job(
-                        job_id=job.job_id,
-                        config_path=iteration_request_path,
-                        save_txt=True,
-                        save_json=True,
-                        on_line=on_line,
-                    )
+                    runtime_kwargs = {
+                        "job_id": job.job_id,
+                        "config_path": iteration_request_path,
+                        "save_txt": bool(job.request.get("save_txt", True)),
+                        "save_json": bool(job.request.get("save_json", True)),
+                        "save_diagnostics_json": bool(
+                            job.request.get("save_diagnostics_json", False)
+                        ),
+                        "on_line": on_line,
+                    }
+                    while True:
+                        try:
+                            completion = await self.model_runtime.run_job(**runtime_kwargs)
+                            break
+                        except TypeError as exc:
+                            if (
+                                "save_diagnostics_json" not in str(exc)
+                                or "save_diagnostics_json" not in runtime_kwargs
+                            ):
+                                raise
+                            runtime_kwargs.pop("save_diagnostics_json", None)
                 except ModelRuntimeUnavailable as exc:
                     if job.skip_current_requested and job.status not in {"cancelling", "cancelled"}:
                         attempted_images += 1
@@ -3314,6 +3531,12 @@ class GenerationJobManager:
             "--config",
             str(request_path),
         ]
+        if not bool(job.request.get("save_txt", True)):
+            command.append("--no-txt")
+        if not bool(job.request.get("save_json", True)):
+            command.append("--no-json")
+        if not bool(job.request.get("save_diagnostics_json", False)):
+            command.append("--no-diagnostics-json")
         job.model_diagnostics["pipeline_parity"] = {
             "shares_cli_runner_with_run_bat": True,
             "run_bat_entrypoint": "python -m modules.txt2img.cli run --interactive --save",

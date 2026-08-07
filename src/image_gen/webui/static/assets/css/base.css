@@ -3,7 +3,7 @@
 }
 
 html {
-  font-family: Inter, Segoe UI, Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: calc(16px * var(--ui-scale));
   background: var(--sky-500);
   color: var(--text);

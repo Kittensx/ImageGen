@@ -17,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION
+from image_gen.runtime.hires_sizing import resolve_hires_dimensions
+from image_gen.systems.outpainting import plan_outpaint_canvas
 from image_gen.runtime_options import (
     RuntimeStartupOptions,
     build_runtime_startup_status,
@@ -557,6 +559,7 @@ def create_app(
                 "upscaler_catalog_routes": [
                     "/api/upscalers",
                     "/api/upscalers/refresh",
+                    "/api/hires/dimension-plan",
                 ],
                 "asset_catalog_routes": [
                     "/api/assets/catalog",
@@ -602,6 +605,68 @@ def create_app(
     @app.get("/api/upscalers")
     async def upscaler_catalog_status() -> dict[str, Any]:
         return upscaler_catalog.payload()
+
+    @app.post("/api/hires/dimension-plan")
+    async def hires_dimension_plan(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            plan = resolve_hires_dimensions(dict(payload or {}))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"contract_version": plan.contract_version, "plan": plan.to_dict()}
+
+    @app.post("/api/outpaint/prototype/source")
+    async def upload_outpaint_prototype_source(file: UploadFile = File(...)) -> dict[str, Any]:
+        suffix = Path(file.filename or "source.png").suffix.lower() or ".png"
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            raise HTTPException(status_code=400, detail="Outpaint prototype source must be a supported image file.")
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Outpaint prototype source is empty.")
+        if len(data) > 64 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Outpaint prototype source exceeds the 64 MiB prototype limit.")
+        temp_root = context.data_root / "webui" / "temp" / "outpaint-prototype"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        target = temp_root / f"source-{uuid.uuid4().hex}{suffix}"
+        target.write_bytes(data)
+        try:
+            details = load_image_file_details(
+                context, target, display_name=file.filename or target.name
+            ).to_dict()
+        except (OSError, ValueError) as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"Unable to read outpaint source image: {exc}") from exc
+        image = dict(details.get("image") or {})
+        replay_payload = dict(details.get("replay") or {})
+        return {
+            "path": str(target.resolve()),
+            "filename": file.filename or target.name,
+            "width": int(image.get("width") or 0),
+            "height": int(image.get("height") or 0),
+            "metadata_source": str(details.get("metadata_source") or ""),
+            "positive_prompt": str(replay_payload.get("positive_prompt") or ""),
+            "negative_prompt": str(replay_payload.get("negative_prompt") or ""),
+            "metadata_available": bool(replay_payload),
+            "warnings": list(details.get("warnings") or []),
+        }
+
+    @app.post("/api/outpaint/prototype/plan")
+    async def outpaint_prototype_plan(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            explicit_x = int(payload.get("source_x", -1))
+            explicit_y = int(payload.get("source_y", -1))
+            plan = plan_outpaint_canvas(
+                source_width=int(payload.get("source_width") or 0),
+                source_height=int(payload.get("source_height") or 0),
+                target_width=int(payload.get("target_width") or 0),
+                target_height=int(payload.get("target_height") or 0),
+                anchor=str(payload.get("anchor") or "center"),
+                feather_px=int(payload.get("feather_px", 24)),
+                source_x=None if explicit_x < 0 else explicit_x,
+                source_y=None if explicit_y < 0 else explicit_y,
+            )
+            return plan.to_dict()
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/upscalers/refresh")
     async def refresh_upscaler_catalog(payload: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -144,6 +144,14 @@ class UpscalerDescriptor:
         return self.load_status == "supported"
 
     @property
+    def tile_capability(self) -> str:
+        if bool(self.tile_supported):
+            return "supported"
+        if self.selectable:
+            return "unsupported"
+        return "unqualified"
+
+    @property
     def disposition(self) -> str:
         return discovery_disposition(self.load_status)
 
@@ -207,6 +215,7 @@ class UpscalerDescriptor:
             "supports_half": bool(self.supports_half),
             "supports_bfloat16": bool(self.supports_bfloat16),
             "tile_supported": bool(self.tile_supported),
+            "tile_capability": self.tile_capability,
             "load_status": self.load_status,
             "scan_cache_status": self.scan_cache_status,
             "loader_backend": self.loader_backend,
@@ -404,6 +413,9 @@ SUPPORTED_UPSCALE_DTYPE_POLICIES = frozenset({
 })
 SUPPORTED_UPSCALE_DEVICE_POLICIES = frozenset({"auto", "cpu", "cuda"})
 SUPPORTED_EXACT_RESIZE_FILTERS = frozenset({"nearest", "bilinear", "bicubic", "area"})
+SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS = frozenset({"auto", *SUPPORTED_EXACT_RESIZE_FILTERS})
+SUPPORTED_ASPECT_POLICIES = frozenset({"stretch", "crop_to_fill", "pad_to_fit"})
+SUPPORTED_PADDING_MODES = frozenset({"reflect", "replicate", "blurred_edge", "black"})
 
 
 @dataclass(frozen=True)
@@ -419,6 +431,9 @@ class UpscaleRequest:
     dtype_policy: str = "auto"
     device_policy: str = "auto"
     exact_resize_filter: str = "bicubic"
+    final_size_correction_filter: str = ""
+    aspect_policy: str = "stretch"
+    padding_mode: str = "reflect"
     allow_tiling: bool = True
     allow_oom_retry: bool = True
     minimum_retry_tile_size: int = 64
@@ -442,6 +457,9 @@ class UpscaleRequest:
         dtype_policy = str(self.dtype_policy or "auto").strip().casefold()
         device_policy = str(self.device_policy or "auto").strip().casefold()
         exact_resize_filter = str(self.exact_resize_filter or "bicubic").strip().casefold()
+        final_size_correction_filter = str(self.final_size_correction_filter or "").strip().casefold()
+        aspect_policy = str(self.aspect_policy or "stretch").strip().casefold()
+        padding_mode = str(self.padding_mode or "reflect").strip().casefold()
         if dtype_policy not in SUPPORTED_UPSCALE_DTYPE_POLICIES:
             raise ValueError(
                 f"Unsupported upscaler dtype_policy: {self.dtype_policy!r}."
@@ -454,6 +472,14 @@ class UpscaleRequest:
             raise ValueError(
                 f"Unsupported upscaler exact_resize_filter: {self.exact_resize_filter!r}."
             )
+        if final_size_correction_filter and final_size_correction_filter not in SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS:
+            raise ValueError(
+                f"Unsupported final_size_correction_filter: {self.final_size_correction_filter!r}."
+            )
+        if aspect_policy not in SUPPORTED_ASPECT_POLICIES:
+            raise ValueError(f"Unsupported aspect_policy: {self.aspect_policy!r}.")
+        if padding_mode not in SUPPORTED_PADDING_MODES:
+            raise ValueError(f"Unsupported padding_mode: {self.padding_mode!r}.")
         if tile_size < 0:
             raise ValueError("Upscaler tile_size must be zero or positive.")
         if tile_overlap < 0:
@@ -475,6 +501,9 @@ class UpscaleRequest:
             dtype_policy=dtype_policy,
             device_policy=device_policy,
             exact_resize_filter=exact_resize_filter,
+            final_size_correction_filter=final_size_correction_filter,
+            aspect_policy=aspect_policy,
+            padding_mode=padding_mode,
             allow_tiling=bool(self.allow_tiling),
             allow_oom_retry=bool(self.allow_oom_retry),
             minimum_retry_tile_size=minimum_retry_tile_size,
@@ -494,6 +523,9 @@ class UpscaleRequest:
             "dtype_policy": normalized.dtype_policy,
             "device_policy": normalized.device_policy,
             "exact_resize_filter": normalized.exact_resize_filter,
+            "final_size_correction_filter": normalized.final_size_correction_filter,
+            "aspect_policy": normalized.aspect_policy,
+            "padding_mode": normalized.padding_mode,
             "allow_tiling": bool(normalized.allow_tiling),
             "allow_oom_retry": bool(normalized.allow_oom_retry),
             "minimum_retry_tile_size": int(normalized.minimum_retry_tile_size),

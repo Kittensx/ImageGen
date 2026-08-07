@@ -1,11 +1,11 @@
 import { loadFragments } from "./fragments.js";
 
-import { api } from "./api.js?v=0.1.77";
+import { api } from "./api.js?v=0.1.82";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js";
-import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.75";
+import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=0.1.83";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.82";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
@@ -18,15 +18,16 @@ import { bindLoraWorkspace } from "./features/loras.js?v=0.1.77";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
-import { bindOutputDetails } from "./features/output-details.js?v=0.1.64";
+import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js";
 import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.45";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
-import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.68";
+import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.80";
 import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
-import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=0.1.78";
+import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=0.1.79";
+import { bindOutpaintPrototype } from "./features/outpaint-prototype.js?v=0.1.84";
 
 const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
 
@@ -1044,6 +1045,7 @@ async function start() {
     bindOutputPatternBuilder();
     bindPromptTools({ saveSessionSoon });
     bindHiresUpscalers(saveSessionSoon);
+    bindOutpaintPrototype(saveSessionSoon);
     $("#vaePath")?.addEventListener("change", applyVaeSelectionPolicy);
     renderGallery(state.recentOutputs);
     renderPromptPresets(bootstrap.prompt_presets || []);

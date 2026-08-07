@@ -23,15 +23,33 @@ const RUNTIME_JOB_CONTROL_IDS = Object.freeze([
   "dialogRetainTextEncoder",
 ]);
 
+const FONT_FAMILY_STACKS = Object.freeze({
+  "Inter": 'Inter, "Segoe UI", Arial, sans-serif',
+  "System UI": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  "Segoe UI": '"Segoe UI", Arial, sans-serif',
+  "Arial": 'Arial, Helvetica, sans-serif',
+  "Verdana": 'Verdana, Geneva, sans-serif',
+  "Tahoma": 'Tahoma, Geneva, sans-serif',
+  "Trebuchet MS": '"Trebuchet MS", Arial, sans-serif',
+  "Georgia": 'Georgia, "Times New Roman", serif',
+  "Monospace": 'Consolas, "SFMono-Regular", monospace',
+});
+
 const DEFAULT_THEME_PALETTE = Object.freeze({
   accent: Object.freeze({ name: "Sky Blue", color: "#179ee7" }),
   surface: Object.freeze({ name: "Charcoal", color: "#111d29" }),
+  typography: Object.freeze({
+    font_family: "Inter",
+    primary_button_text: "#ffffff",
+    secondary_button_text: "#d5f1ff",
+  }),
 });
 
 function clonePalette(palette) {
   return {
-    accent: { ...palette.accent },
-    surface: { ...palette.surface },
+    accent: { ...DEFAULT_THEME_PALETTE.accent, ...(palette?.accent || {}) },
+    surface: { ...DEFAULT_THEME_PALETTE.surface, ...(palette?.surface || {}) },
+    typography: { ...DEFAULT_THEME_PALETTE.typography, ...(palette?.typography || {}) },
   };
 }
 
@@ -53,6 +71,22 @@ function normalizePalette(value = {}) {
     output[kind].name = String(candidate.name || output[kind].name).trim().slice(0, 40) || output[kind].name;
     output[kind].color = normalizeHex(candidate.color, output[kind].color);
   });
+
+  const typography = value?.typography;
+  if (typography && typeof typography === "object") {
+    const fontFamily = String(typography.font_family || output.typography.font_family);
+    output.typography.font_family = Object.prototype.hasOwnProperty.call(FONT_FAMILY_STACKS, fontFamily)
+      ? fontFamily
+      : output.typography.font_family;
+    output.typography.primary_button_text = normalizeHex(
+      typography.primary_button_text,
+      output.typography.primary_button_text,
+    );
+    output.typography.secondary_button_text = normalizeHex(
+      typography.secondary_button_text,
+      output.typography.secondary_button_text,
+    );
+  }
   return output;
 }
 
@@ -91,6 +125,14 @@ function relativeLuminance(hex) {
   return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
 }
 
+function contrastRatio(left, right) {
+  const a = relativeLuminance(left);
+  const b = relativeLuminance(right);
+  const lighter = Math.max(a, b);
+  const darker = Math.min(a, b);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 function applyThemeVariables(palette) {
   const root = document.documentElement.style;
   const accent = palette.accent.color;
@@ -110,6 +152,10 @@ function applyThemeVariables(palette) {
   root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
   root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
   root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+
+  root.setProperty("--font-ui", FONT_FAMILY_STACKS[palette.typography.font_family]);
+  root.setProperty("--primary-button-text", palette.typography.primary_button_text);
+  root.setProperty("--secondary-button-text", palette.typography.secondary_button_text);
 }
 
 function updateThemeLabels(palette) {
@@ -169,6 +215,12 @@ function setThemeEditorValues(palette) {
     if (color) color.value = entry.color;
     if (hex) hex.value = entry.color;
   });
+
+  if ($("#themeFontFamily")) $("#themeFontFamily").value = palette.typography.font_family;
+  if ($("#themePrimaryButtonTextColor")) $("#themePrimaryButtonTextColor").value = palette.typography.primary_button_text;
+  if ($("#themePrimaryButtonTextHex")) $("#themePrimaryButtonTextHex").value = palette.typography.primary_button_text;
+  if ($("#themeSecondaryButtonTextColor")) $("#themeSecondaryButtonTextColor").value = palette.typography.secondary_button_text;
+  if ($("#themeSecondaryButtonTextHex")) $("#themeSecondaryButtonTextHex").value = palette.typography.secondary_button_text;
 }
 
 function readThemeEditorValues(fallback) {
@@ -180,6 +232,21 @@ function readThemeEditorValues(fallback) {
       color: normalizeHex($(`#${prefix}Hex`)?.value || $(`#${prefix}Color`)?.value, palette[kind].color),
     };
   });
+
+  const selectedFont = String($("#themeFontFamily")?.value || palette.typography.font_family);
+  palette.typography = {
+    font_family: Object.prototype.hasOwnProperty.call(FONT_FAMILY_STACKS, selectedFont)
+      ? selectedFont
+      : palette.typography.font_family,
+    primary_button_text: normalizeHex(
+      $("#themePrimaryButtonTextHex")?.value || $("#themePrimaryButtonTextColor")?.value,
+      palette.typography.primary_button_text,
+    ),
+    secondary_button_text: normalizeHex(
+      $("#themeSecondaryButtonTextHex")?.value || $("#themeSecondaryButtonTextColor")?.value,
+      palette.typography.secondary_button_text,
+    ),
+  };
   return palette;
 }
 
@@ -192,6 +259,14 @@ function updateThemeWarning(palette) {
   }
   if (relativeLuminance(palette.accent.color) < 0.035) {
     messages.push("The selected accent color is very dark and may make highlighted controls difficult to distinguish.");
+  }
+  const primaryButtonBackground = palette.accent.color;
+  const secondaryButtonBackground = mixHex(palette.surface.color, "#ffffff", 0.08);
+  if (contrastRatio(palette.typography.primary_button_text, primaryButtonBackground) < 3) {
+    messages.push("Primary button font color has low contrast against the current accent color.");
+  }
+  if (contrastRatio(palette.typography.secondary_button_text, secondaryButtonBackground) < 3) {
+    messages.push("Secondary button font color has low contrast against the current surface color.");
   }
   warning.textContent = messages.join(" ");
   warning.classList.toggle("is-hidden", messages.length === 0);
@@ -293,6 +368,32 @@ function bindThemePalette(settings) {
     });
   });
 
+  $("#themeFontFamily")?.addEventListener("change", previewEditor);
+
+  const bindButtonTextColor = (colorId, hexId, fallbackKey) => {
+    const colorInput = $(`#${colorId}`);
+    const hexInput = $(`#${hexId}`);
+    colorInput?.addEventListener("input", () => {
+      if (hexInput) hexInput.value = colorInput.value;
+      previewEditor();
+    });
+    hexInput?.addEventListener("input", () => {
+      const normalized = normalizeHex(hexInput.value, "");
+      if (!normalized) return;
+      if (colorInput) colorInput.value = normalized;
+      previewEditor();
+    });
+    hexInput?.addEventListener("blur", () => {
+      const normalized = normalizeHex(hexInput.value, workingPalette.typography[fallbackKey]);
+      hexInput.value = normalized;
+      if (colorInput) colorInput.value = normalized;
+      previewEditor();
+    });
+  };
+
+  bindButtonTextColor("themePrimaryButtonTextColor", "themePrimaryButtonTextHex", "primary_button_text");
+  bindButtonTextColor("themeSecondaryButtonTextColor", "themeSecondaryButtonTextHex", "secondary_button_text");
+
   dialog.querySelectorAll(".theme-swatch").forEach((button) => {
     button.addEventListener("click", () => {
       const section = button.closest("[data-theme-kind]");
@@ -337,7 +438,7 @@ function bindThemePalette(settings) {
       workingPalette = clonePalette(savedPalette);
       savedDuringOpen = true;
       dialog.close("saved");
-      notify("Theme colors saved.");
+      notify("Theme saved.");
     } catch (error) {
       notify(error.message, "error");
     } finally {

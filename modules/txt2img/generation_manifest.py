@@ -531,6 +531,7 @@ class GenerationManifest:
         known_keys = {
             "manifest_version",
             "manifest_type",
+            "serialization_profile",
             "required_for_rerun",
             "optional_for_rerun",
             "runtime_info",

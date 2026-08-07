@@ -171,6 +171,15 @@ class SimpleEulerSampler(SamplerTraceMixin):
 
             dt = sigma_next - sigma
             x = x + noise * dt
+            x = self._apply_latent_step_hook(
+                state,
+                request=request,
+                latent=x,
+                step_index=i,
+                sigma=sigma,
+                sigma_next=sigma_next,
+                timestep=timestep,
+            )
             
             self._trace_step(
                 request,

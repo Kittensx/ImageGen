@@ -546,6 +546,15 @@ class KESSampler(SamplerTraceMixin):
             # Optional legacy clamp path retained for backward compatibility.
             if legacy_clamp_guidance:
                 x = torch.clamp(x, clamp_range[0], clamp_range[1])
+            x = self._apply_latent_step_hook(
+                state,
+                request=request,
+                latent=x,
+                step_index=i,
+                sigma=sigma,
+                sigma_next=sigma_next,
+                timestep=timestep,
+            )
             
             # Traceback
             integration_mode = "heun" if (sampler_type == "heun" and i < (sigmas.numel() - 2)) else "euler"

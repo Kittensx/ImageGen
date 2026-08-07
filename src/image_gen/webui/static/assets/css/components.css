@@ -315,15 +315,22 @@
 
 .primary-button {
   border: 1px solid #70d2ff;
-  color: white;
+  color: var(--primary-button-text);
   background: linear-gradient(180deg, var(--sky-400), var(--sky-600));
 }
 
 .secondary-button,
 .infinity-button {
   border: 1px solid #54718a;
-  color: var(--sky-100);
   background: var(--charcoal-800);
+}
+
+.secondary-button {
+  color: var(--secondary-button-text);
+}
+
+.infinity-button {
+  color: var(--sky-100);
 }
 
 .infinity-button.is-active {
@@ -2921,6 +2928,29 @@ body.is-resizing .center-splitter::before {
   border-color: var(--sky-300);
 }
 
+.theme-typography-section {
+  grid-column: 1 / -1;
+}
+
+.theme-button-text-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.theme-button-text-control {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--charcoal-850);
+}
+
+.theme-button-text-control > strong {
+  font-size: 0.78rem;
+}
+
 .theme-color-section > header {
   display: flex;
   align-items: flex-start;
@@ -3036,8 +3066,13 @@ body.is-resizing .center-splitter::before {
 }
 
 @media (max-width: 760px) {
-  .theme-palette-grid {
+  .theme-palette-grid,
+  .theme-button-text-grid {
     grid-template-columns: 1fr;
+  }
+
+  .theme-typography-section {
+    grid-column: auto;
   }
 
   .theme-swatch-grid {
@@ -3661,6 +3696,14 @@ body.is-resizing .center-splitter::before {
 
 .hires-size-grid .is-disabled {
   opacity: 0.55;
+}
+
+.hires-size-grid .is-calculated {
+  opacity: 1;
+}
+
+.hires-size-grid .is-calculated input {
+  border-style: dashed;
 }
 
 .hires-schedule-summary {

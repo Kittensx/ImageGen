@@ -216,10 +216,10 @@
   <form method="dialog">
     <div class="dialog-heading">
       <div>
-        <h2>Theme Colors</h2>
-        <p>Choose the accent and dark surface colors used throughout the WebUI. Names appear in the footer.</p>
+        <h2>Theme</h2>
+        <p>Choose colors and typography used throughout the WebUI. Accent and surface names appear in the footer.</p>
       </div>
-      <button class="icon-button" value="cancel" aria-label="Close theme colors">×</button>
+      <button class="icon-button" value="cancel" aria-label="Close theme">×</button>
     </div>
 
     <div class="theme-palette-grid">
@@ -282,6 +282,46 @@
           <button type="button" class="theme-swatch" data-theme-name="Espresso" data-theme-color="#251914" style="--swatch-color:#251914">Espresso</button>
           <button type="button" class="theme-swatch" data-theme-name="Plum" data-theme-color="#241625" style="--swatch-color:#241625">Plum</button>
           <button type="button" class="theme-swatch" data-theme-name="Forest" data-theme-color="#12251c" style="--swatch-color:#12251c">Forest</button>
+        </div>
+      </section>
+
+      <section class="theme-color-section theme-typography-section" id="themeTypographySection">
+        <header>
+          <div>
+            <h3>Typography and button text</h3>
+            <p>Choose the WebUI font family and independent text colors for primary and secondary buttons.</p>
+          </div>
+        </header>
+        <label class="field-block">
+          <span>Font type</span>
+          <select id="themeFontFamily">
+            <option value="Inter">Inter</option>
+            <option value="System UI">System UI</option>
+            <option value="Segoe UI">Segoe UI</option>
+            <option value="Arial">Arial</option>
+            <option value="Verdana">Verdana</option>
+            <option value="Tahoma">Tahoma</option>
+            <option value="Trebuchet MS">Trebuchet MS</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Monospace">Monospace</option>
+          </select>
+          <small>Fonts use local browser/system availability; no external font download is required.</small>
+        </label>
+        <div class="theme-button-text-grid">
+          <div class="theme-button-text-control">
+            <strong>Primary button font color</strong>
+            <div class="theme-color-input-row">
+              <label class="field-block"><span>Color picker</span><input id="themePrimaryButtonTextColor" type="color" value="#ffffff"></label>
+              <label class="field-block"><span>Hex color</span><input id="themePrimaryButtonTextHex" type="text" inputmode="text" maxlength="7" value="#ffffff"></label>
+            </div>
+          </div>
+          <div class="theme-button-text-control">
+            <strong>Secondary button font color</strong>
+            <div class="theme-color-input-row">
+              <label class="field-block"><span>Color picker</span><input id="themeSecondaryButtonTextColor" type="color" value="#d5f1ff"></label>
+              <label class="field-block"><span>Hex color</span><input id="themeSecondaryButtonTextHex" type="text" inputmode="text" maxlength="7" value="#d5f1ff"></label>
+            </div>
+          </div>
         </div>
       </section>
     </div>

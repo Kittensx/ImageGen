@@ -116,23 +116,35 @@
             <span>Hires size mode</span>
             <select id="hiresSizeMode" name="hires_size_mode">
               <option value="scale_from_base" selected>Scale from base</option>
-              <option value="explicit_dimensions">Explicit width and height</option>
+              <option value="explicit_dimensions">Exact target dimensions</option>
             </select>
           </label>
           <label class="field-block" id="hiresScaleField">
-            <span>Hires scale factor</span>
+            <span>Scale factor</span>
             <input id="hiresScale" name="hires_scale" type="number" min="1.01" max="8" step="0.05" value="1.5">
           </label>
           <label class="field-block" id="hiresWidthField">
-            <span>Hires width</span>
+            <span>Target width</span>
             <input id="hiresWidth" name="hires_width" type="number" min="64" max="16384" step="1" value="1280">
           </label>
           <label class="field-block" id="hiresHeightField">
-            <span>Hires height</span>
+            <span>Target height</span>
             <input id="hiresHeight" name="hires_height" type="number" min="64" max="16384" step="1" value="1920">
           </label>
         </div>
-        <small id="hiresSizeStatus" class="field-status subtle">Second-pass dimensions: calculated from the base image.</small>
+        <small id="hiresSizeStatus" class="field-status subtle">Requested target: calculated from the base image.</small>
+        <small id="hiresEffectiveScaleStatus" class="field-status subtle">Effective scaling: Uniform 1.500000x.</small>
+        <small id="hiresAlignmentStatus" class="field-status subtle">Dimension plan: requested, internal aligned, and final target dimensions are synchronized before generation.</small>
+        <label class="inline-checkbox diagnostic-toggle">
+          <input id="hiresPlannerParityDiagnostics" type="checkbox">
+          <span>Advanced planner parity diagnostic (extra request while editing)</span>
+        </label>
+        <small id="hiresPlannerParityStatus" class="field-status subtle">Planner parity diagnostic is off.</small>
+        <label class="inline-checkbox diagnostic-toggle">
+          <input id="hiresCorrectionFingerprintDiagnostics" name="hires_correction_fingerprint_enabled" type="checkbox">
+          <span>Advanced deterministic correction fingerprint (optional metadata hash)</span>
+        </label>
+        <small id="hiresCorrectionFingerprintStatus" class="field-status subtle">Correction fingerprint is off. Enabling it hashes only the deterministic correction contract; it does not add an image-processing pass.</small>
         <div class="prompt-parser-grid hires-quality-grid">
           <label class="field-block">
             <span>Hires refinement steps</span>
@@ -176,9 +188,27 @@
             <input id="hiresTileBatchSize" name="hires_tile_batch_size" type="number" min="1" max="64" step="1" value="1">
           </label>
           <label class="field-block">
-            <span>Exact resize filter</span>
-            <select id="hiresExactResizeFilter" name="hires_exact_resize_filter">
-              <option value="bicubic" selected>Bicubic</option>
+            <span>Aspect handling</span>
+            <select id="hiresAspectPolicy" name="hires_aspect_policy">
+              <option value="stretch" selected>Stretch to target</option>
+              <option value="crop_to_fill">Centered crop to fill</option>
+              <option value="pad_to_fit">Pad to fit</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Padding mode</span>
+            <select id="hiresPaddingMode" name="hires_padding_mode">
+              <option value="reflect" selected>Reflect</option>
+              <option value="replicate">Replicate edge</option>
+              <option value="blurred_edge">Blurred edge (optional extra work)</option>
+              <option value="black">Black</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span>Final size correction filter</span>
+            <select id="hiresFinalSizeCorrectionFilter" name="hires_final_size_correction_filter">
+              <option value="auto" selected>Auto (Area down / Bicubic up)</option>
+              <option value="bicubic">Bicubic</option>
               <option value="bilinear">Bilinear</option>
               <option value="nearest">Nearest</option>
               <option value="area">Area</option>
@@ -189,6 +219,9 @@
           <button class="secondary-button" id="refreshUpscalersButton" type="button">Refresh upscalers</button>
           <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
         </div>
+        <small id="hiresNativePlanStatus" class="field-status subtle">Native upscaler target plan is unavailable until a supported model is selected.</small>
+        <small id="hiresCorrectionSeverityStatus" class="field-status subtle">Correction severity: unavailable.</small>
+        <small id="hiresTilingStatus" class="field-status subtle">Tiling capability follows the selected model descriptor.</small>
         <details id="hiresUpscalerDiagnostics">
           <summary>Upscaler discovery diagnostics</summary>
           <pre id="hiresUpscalerDiagnosticsText" class="metadata-pre">No unsupported upscaler files were reported.</pre>
@@ -327,6 +360,137 @@
       </button>
       <label><span>Height</span><input id="height" name="height" type="number" min="64" step="1" title="Exact output height. The runtime uses a model-compatible canvas and center-crops to this size."></label>
     </div>
+
+    <details class="advanced-section outpaint-prototype-section" id="outpaintPrototypeSection">
+      <summary>Expand Existing Image</summary>
+      <label class="checkbox-row">
+        <input id="outpaintPrototypeEnabled" name="outpaint_prototype_enabled" type="checkbox">
+        <span>Expand selected image</span>
+      </label>
+      <small class="field-status subtle">Expands the selected image directly. Hires/upscaling is disabled while this mode is active. Width and Height above define the final canvas.</small>
+      <label class="field-block">
+        <span>Source image</span>
+        <input id="outpaintSourceFile" type="file" accept="image/png,image/jpeg,image/webp,image/bmp">
+        <input id="outpaintSourceImage" name="outpaint_source_image" type="hidden" value="">
+      </label>
+      <small id="outpaintSourceStatus" class="field-status subtle">Choose an existing image to preserve and expand.</small>
+      <div class="field-grid two-column">
+        <label><span>Image placement</span>
+          <select id="outpaintAnchor" name="outpaint_anchor">
+            <option value="center" selected>Center</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+          </select>
+        </label>
+        <label><span>Blend width</span><input id="outpaintFeatherPx" name="outpaint_feather_px" type="number" min="0" max="64" step="1" value="24"></label>
+        <label><span>Expansion denoise</span><input id="outpaintDenoisingStrength" name="outpaint_denoising_strength" type="number" min="0.01" max="0.999" step="0.01" value="0.70"></label>
+        <label><span>Edge initialization</span>
+          <select id="outpaintContextSeedMode" name="outpaint_context_seed_mode">
+            <option value="edge_pad_v1" selected>Extend edge pixels — recommended</option>
+            <option value="reflect_pad_v1">Mirror edge pixels — advanced</option>
+            <option value="neutral_gray_v1" hidden>Legacy neutral fill — replay/debug only</option>
+          </select>
+        </label>
+        <label><span>New-area initialization</span>
+          <select id="outpaintLatentStrategy" name="outpaint_latent_strategy">
+            <option value="noise_only_new_regions_v1" selected>Fresh noise in new area</option>
+            <option value="canvas_regional_noise_v1">Seeded canvas + regional noise</option>
+          </select>
+        </label>
+        <label><span>Extension prompt source</span>
+          <select id="outpaintPromptMode" name="outpaint_prompt_mode">
+            <option value="overlay_only_v1" selected>Extension prompt only</option>
+            <option value="source_plus_overlay_v1">Original + extension prompt</option>
+            <option value="source_prompt_v1">Original prompt only</option>
+          </select>
+        </label>
+      </div>
+      <label class="field-block">
+        <span>Extension prompt</span>
+        <textarea id="outpaintOverlayPositivePrompt" name="outpaint_overlay_positive_prompt" rows="3" placeholder="Describe what the newly exposed canvas should continue or contain, e.g. continue the existing dark studio background, empty background space, same lighting."></textarea>
+      </label>
+      <label class="field-block">
+        <span>Extension negative prompt</span>
+        <textarea id="outpaintOverlayNegativePrompt" name="outpaint_overlay_negative_prompt" rows="2" placeholder="Exclude unwanted extension content, e.g. extra person, duplicate body, doorway, furniture."></textarea>
+      </label>
+      <small id="outpaintPromptModeStatus" class="field-status subtle">Extension prompt only applies one prompt pair to the generated canvas area while the uploaded image remains protected.</small>
+      <small id="outpaintContextSeedStatus" class="field-status subtle">Extending edge pixels is recommended for most images. Mirroring can duplicate subjects or objects near the image edge.</small>
+      <label class="checkbox-row">
+        <input id="outpaintDiagnosticArtifacts" name="outpaint_diagnostic_artifacts" type="checkbox">
+        <span>Save expansion diagnostics</span>
+      </label>
+      <small class="field-status subtle">Optional and off by default. Saves source/canvas/mask/pre-composite/final images plus JSON, adding disk I/O and storage.</small>
+      <div id="outpaintPlanStatus" class="field-status subtle">Upload a source image to preview preserve / feather / generate geometry.</div>
+      <canvas id="outpaintMaskPreview" width="320" height="180" aria-label="Outpaint mask preview" style="width:100%;max-height:180px;border:1px solid var(--border-color);border-radius:6px;"></canvas>
+      <small class="field-status subtle">Mask preview: dark = protected source, middle = blend zone, light = generated extension.</small>
+    </details>
+
+    <details class="advanced-section outpaint-shape-expansion-section" id="outpaintShapeExpansionSection">
+      <summary>Expand After Generation</summary>
+      <label class="checkbox-row">
+        <input id="outpaintShapeExpansionEnabled" name="outpaint_shape_expansion_enabled" type="checkbox">
+        <span>Expand generated image before saving</span>
+      </label>
+      <small class="field-status subtle">Width and Height above define the base generation. After generation, the result stays in memory and is expanded to the target canvas before the primary image is saved.</small>
+      <div class="field-grid two-column">
+        <label><span>Target shape</span>
+          <select id="outpaintShapeTargetMode" name="outpaint_shape_target_mode">
+            <option value="square" selected>Square</option>
+            <option value="landscape">Landscape</option>
+            <option value="portrait">Portrait</option>
+            <option value="custom">Custom dimensions</option>
+          </select>
+        </label>
+        <label><span>Image placement</span>
+          <select id="outpaintShapeAnchor" name="outpaint_shape_anchor">
+            <option value="center" selected>Center</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+          </select>
+        </label>
+        <label><span>Target width</span><input id="outpaintShapeTargetWidth" name="outpaint_shape_target_width" type="number" min="64" step="8" value="512"></label>
+        <label><span>Target height</span><input id="outpaintShapeTargetHeight" name="outpaint_shape_target_height" type="number" min="64" step="8" value="512"></label>
+        <label><span>Edge initialization</span>
+          <select id="outpaintShapeContextSeedMode" name="outpaint_shape_context_seed_mode">
+            <option value="edge_pad_v1" selected>Extend edge pixels — recommended</option>
+            <option value="reflect_pad_v1">Mirror edge pixels — advanced</option>
+          </select>
+        </label>
+        <label><span>Source reuse</span>
+          <select id="outpaintShapeSourceHandoff" name="outpaint_shape_source_handoff">
+            <option value="auto" selected>Automatic — reuse live generation data when possible</option>
+            <option value="live_latent">Live generation data — require exact alignment</option>
+            <option value="pixel_vae_reencode">Re-encode image — compatibility baseline</option>
+          </select>
+        </label>
+        <label><span>Expansion denoise</span><input id="outpaintShapeDenoisingStrength" name="outpaint_shape_denoising_strength" type="number" min="0.01" max="0.999" step="0.01" value="0.40"></label>
+        <label><span>Extension prompt source</span>
+          <select id="outpaintShapePromptMode" name="outpaint_shape_prompt_mode">
+            <option value="overlay_only_v1" selected>Extension prompt only</option>
+            <option value="source_plus_overlay_v1">Original + extension prompt</option>
+            <option value="source_prompt_v1">Original prompt only</option>
+          </select>
+        </label>
+      </div>
+      <label class="field-block">
+        <span>Extension prompt</span>
+        <textarea id="outpaintShapeOverlayPositivePrompt" name="outpaint_shape_overlay_positive_prompt" rows="3" placeholder="Describe how Stable Diffusion should continue the newly exposed scene area."></textarea>
+      </label>
+      <label class="field-block">
+        <span>Extension negative prompt</span>
+        <textarea id="outpaintShapeOverlayNegativePrompt" name="outpaint_shape_overlay_negative_prompt" rows="2" placeholder="Exclude duplicate subjects, extra limbs, unwanted structures, or other extension artifacts."></textarea>
+      </label>
+      <label class="checkbox-row">
+        <input id="outpaintShapeSaveBase" name="outpaint_shape_save_base" type="checkbox">
+        <span>Also save the smaller pre-expansion base image</span>
+      </label>
+      <small class="field-status subtle">Off by default. The expanded image is the primary saved result; the smaller base is provisional unless you request this auxiliary artifact.</small>
+      <div id="outpaintShapeStatus" class="field-status subtle">Post-generation expansion is off.</div>
+    </details>
 
     <div class="field-grid two-column">
       <label><span>Steps</span><input id="steps" name="steps" type="number" min="1" max="200"></label>
@@ -508,6 +672,9 @@
       <div class="advanced-content compact-fields">
         <label><span>Output Folder</span><input id="outputDir" name="output_dir" type="text"></label>
         <label><span>Filename Pattern</span><input id="outputPrefix" name="output_prefix" type="text"></label>
+        <label class="checkbox-row"><input id="saveTxt" name="save_txt" type="checkbox" checked><span>Save TXT metadata</span></label>
+        <label class="checkbox-row"><input id="saveJson" name="save_json" type="checkbox" checked><span>Save compact replay JSON</span></label>
+        <label class="checkbox-row"><input id="saveDiagnosticsJson" name="save_diagnostics_json" type="checkbox"><span>Save pruned diagnostics JSON</span></label>
         <div class="output-pattern-builder-panel">
           <div class="output-pattern-toolbar">
             <label class="output-pattern-default-spacer"><span>Default spacer</span><input id="outputPatternDefaultSpacer" type="text" value="_"></label>

@@ -185,6 +185,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--hires-exact-resize-filter",
         choices=("nearest", "bilinear", "bicubic", "area"),
     )
+    run_parser.add_argument(
+        "--hires-final-size-correction-filter",
+        choices=("auto", "nearest", "bilinear", "bicubic", "area"),
+        help="Bounded post-.pth target-correction filter; auto uses Area down / Bicubic up.",
+    )
+    run_parser.add_argument(
+        "--hires-aspect-policy",
+        choices=("stretch", "crop_to_fill", "pad_to_fit"),
+    )
+    run_parser.add_argument(
+        "--hires-padding-mode",
+        choices=("reflect", "replicate", "blurred_edge", "black"),
+    )
+    hires_correction_fingerprint_group = run_parser.add_mutually_exclusive_group()
+    hires_correction_fingerprint_group.add_argument(
+        "--hires-correction-fingerprint",
+        dest="hires_correction_fingerprint_enabled",
+        action="store_true",
+        default=None,
+        help="Enable the optional deterministic hires correction fingerprint diagnostic.",
+    )
+    hires_correction_fingerprint_group.add_argument(
+        "--no-hires-correction-fingerprint",
+        dest="hires_correction_fingerprint_enabled",
+        action="store_false",
+    )
     hires_pre_denoise_group = run_parser.add_mutually_exclusive_group()
     hires_pre_denoise_group.add_argument(
         "--hires-save-upscaled-pre-denoise",
@@ -253,6 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.set_defaults(save_images=None)
     run_parser.add_argument("--no-txt", action="store_true")
     run_parser.add_argument("--no-json", action="store_true")
+    run_parser.add_argument(
+        "--no-diagnostics-json",
+        action="store_true",
+        help="Do not write the optional pruned *.diagnostics.json sidecar.",
+    )
     run_parser.add_argument(
         "--verbose",
         action="store_true",
@@ -397,6 +428,10 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "hires_tile_overlap": args.hires_tile_overlap,
         "hires_tile_batch_size": args.hires_tile_batch_size,
         "hires_exact_resize_filter": args.hires_exact_resize_filter,
+        "hires_final_size_correction_filter": args.hires_final_size_correction_filter,
+        "hires_aspect_policy": args.hires_aspect_policy,
+        "hires_padding_mode": args.hires_padding_mode,
+        "hires_correction_fingerprint_enabled": args.hires_correction_fingerprint_enabled,
         "hires_save_upscaled_pre_denoise": args.hires_save_upscaled_pre_denoise,
         "hires_save_vae_roundtrip": args.hires_save_vae_roundtrip,
         "hires_save_lowres": args.hires_save_lowres,
@@ -832,10 +867,18 @@ def _run_generation(args: argparse.Namespace) -> int:
                 hires_positive_prompt=str(request.hires_positive_prompt or request.positive_prompt),
                 hires_negative_prompt=str(request.hires_negative_prompt if request.hires_negative_prompt is not None else request.negative_prompt),
                 hires_size_mode=str(request.hires_size_mode or "same_as_base"),
-                hires_scale=float(request.hires_scale or 2.0),
+                hires_scale=(float(request.hires_scale) if request.hires_scale is not None else None),
                 hires_width=int(request.hires_width or 0),
                 hires_height=int(request.hires_height or 0),
                 hires_dimension_plan=dict(request.hires_dimension_plan),
+                hires_axis_scale_width=float(request.hires_axis_scale_width),
+                hires_axis_scale_height=float(request.hires_axis_scale_height),
+                hires_uniform_scale=(
+                    float(request.hires_uniform_scale)
+                    if request.hires_uniform_scale is not None
+                    else None
+                ),
+                hires_aspect_ratio_changed=bool(request.hires_aspect_ratio_changed),
                 prompt_preflight=dict(request.prompt_preflight),
                 prompt_shadow_compare=bool(request.prompt_shadow_compare),
                 prompt_route_plan=dict(request.prompt_route_plan),
@@ -873,6 +916,7 @@ def _run_generation(args: argparse.Namespace) -> int:
                 batch_extras,
                 save_txt=not args.no_txt,
                 save_json=not args.no_json,
+                save_diagnostics_json=not args.no_diagnostics_json,
             )
 
             live_preview_summary = dict(
@@ -982,6 +1026,8 @@ def _run_generation(args: argparse.Namespace) -> int:
                         print(f"  TXT:   {record.txt_path}")
                     if record.json_path:
                         print(f"  JSON:  {record.json_path}")
+                    if record.diagnostics_json_path:
+                        print(f"  DIAG:  {record.diagnostics_json_path}")
             else:
                 print("Saving disabled; generation remained in memory only.")
     except KeyboardInterrupt:

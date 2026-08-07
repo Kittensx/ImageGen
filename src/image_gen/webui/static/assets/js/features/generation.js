@@ -461,8 +461,13 @@ function renderQueue(jobs) {
     if (job.error) {
       const error = document.createElement("small");
       error.className = "queue-error";
-      error.textContent = shortText(job.error, 100);
-      error.title = job.error;
+      const failurePrefix = job.failure_stage_label
+        ? (job.failure_stage_domain === "outpaint"
+          ? `Outpaint failed during ${job.failure_stage_label}: `
+          : `Hires failed during ${job.failure_stage_label}: `)
+        : "";
+      error.textContent = shortText(`${failurePrefix}${job.error}`, 140);
+      error.title = `${failurePrefix}${job.error}`;
       card.append(error);
 
       if (job.failure_bundle_path) {

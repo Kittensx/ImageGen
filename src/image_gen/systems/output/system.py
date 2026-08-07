@@ -41,9 +41,10 @@ def _record_artifact_hash_sidecar(
     role: str,
     sha256: str,
 ) -> None:
-    if not record.json_path:
+    target_path = record.diagnostics_json_path
+    if not target_path:
         return
-    path = Path(record.json_path)
+    path = Path(target_path)
     if not path.is_file():
         return
     try:
@@ -181,6 +182,7 @@ class PreparedOutputSaveRequest:
     manifest: Any | None = None
     save_txt: bool = True
     save_json: bool = True
+    save_diagnostics_json: bool = True
     lowres_prefix: str | None = None
     lowres_images: list[Image.Image] = field(default_factory=list)
     lowres_manifest: Any | None = None
@@ -210,15 +212,31 @@ class OutputSystem:
             seed = resolved[0] if resolved else -1
         hires_dimension_plan = dict(getattr(request, "hires_dimension_plan", {}) or {})
         hires_enabled = bool(getattr(request, "hires_enabled", False))
-        manifest_width = int(
-            hires_dimension_plan.get("effective_width") or request.width
-            if hires_enabled
-            else request.width
+        # required_for_rerun describes the base generation request. Hires has
+        # its own explicit target/internal/final dimensions in the replay block.
+        # Keeping these semantics distinct removes the need for loaders to infer
+        # base size from a hires output size.
+        manifest_width = int(request.width)
+        manifest_height = int(request.height)
+        internal_output_width = int(
+            hires_dimension_plan.get("internal_width")
+            or hires_dimension_plan.get("effective_width")
+            or request.width
         )
-        manifest_height = int(
-            hires_dimension_plan.get("effective_height") or request.height
-            if hires_enabled
-            else request.height
+        internal_output_height = int(
+            hires_dimension_plan.get("internal_height")
+            or hires_dimension_plan.get("effective_height")
+            or request.height
+        )
+        final_output_width = int(
+            hires_dimension_plan.get("final_width")
+            or hires_dimension_plan.get("requested_width")
+            or internal_output_width
+        )
+        final_output_height = int(
+            hires_dimension_plan.get("final_height")
+            or hires_dimension_plan.get("requested_height")
+            or internal_output_height
         )
 
         manifest = build_generation_manifest(
@@ -309,9 +327,13 @@ class OutputSystem:
                 "width": int(request.width),
                 "height": int(request.height),
             }
+            manifest.extra["internal_dimensions"] = {
+                "width": internal_output_width,
+                "height": internal_output_height,
+            }
             manifest.extra["output_dimensions"] = {
-                "width": manifest_width,
-                "height": manifest_height,
+                "width": final_output_width,
+                "height": final_output_height,
             }
         pipeline_metadata = json_safe(pipeline_result.metadata or {})
         denoising_contract = dict(
@@ -478,9 +500,13 @@ class OutputSystem:
             "width": int(request.width),
             "height": int(request.height),
         }
+        raw_uniform_scale = getattr(request, "hires_uniform_scale", None)
         lowres.extra["hires_parent"] = {
             "enabled": True,
-            "scale": float(getattr(request, "hires_scale", 1.5) or 1.5),
+            "scale": float(raw_uniform_scale) if raw_uniform_scale is not None else None,
+            "axis_scale_width": float(getattr(request, "hires_axis_scale_width", 1.0) or 1.0),
+            "axis_scale_height": float(getattr(request, "hires_axis_scale_height", 1.0) or 1.0),
+            "aspect_ratio_changed": bool(getattr(request, "hires_aspect_ratio_changed", False)),
             "upscaler": str(getattr(request, "hires_upscaler", "") or ""),
         }
         return lowres
@@ -499,18 +525,36 @@ class OutputSystem:
         source = manifest.to_dict() if hasattr(manifest, "to_dict") else dict(manifest)
         auxiliary = GenerationManifest.from_dict(json_safe(source))
         auxiliary.extra["artifact_role"] = str(role)
-        auxiliary.extra["artifact_source"] = "phase14n5_pixel_neural_hires"
+        if str(role) == "outpaint_pre_expansion_base":
+            auxiliary.extra["artifact_source"] = "phase14n13p3_live_txt2img_shape_expansion"
+            base_width = int(getattr(request, "outpaint_shape_base_width", 0) or 0)
+            base_height = int(getattr(request, "outpaint_shape_base_height", 0) or 0)
+            auxiliary.extra["outpaint_shape_parent"] = {
+                "enabled": bool(getattr(request, "outpaint_shape_expansion_enabled", False)),
+                "base_width": base_width,
+                "base_height": base_height,
+                "target_width": int(getattr(request, "outpaint_shape_target_width", 0) or request.width),
+                "target_height": int(getattr(request, "outpaint_shape_target_height", 0) or request.height),
+                "source_handoff": str(getattr(request, "outpaint_shape_source_handoff", "auto") or "auto"),
+            }
+            if base_width > 0 and base_height > 0:
+                auxiliary.required_for_rerun.width = base_width
+                auxiliary.required_for_rerun.height = base_height
+            auxiliary.optional_for_rerun.extra["outpaint_shape_expansion_enabled"] = False
+            auxiliary.optional_for_rerun.extra["outpaint_shape_runtime_record"] = {}
+        else:
+            auxiliary.extra["artifact_source"] = "phase14n5_pixel_neural_hires"
+            auxiliary.extra["hires_parent"] = {
+                "enabled": bool(getattr(request, "hires_enabled", False)),
+                "strategy": str(getattr(request, "hires_strategy", "latent") or "latent"),
+                "upscaler_id": str(getattr(request, "hires_upscaler_id", "") or ""),
+                "legacy_upscaler": str(getattr(request, "hires_upscaler", "") or ""),
+            }
         if images:
             auxiliary.extra["output_dimensions"] = {
                 "width": int(images[0].width),
                 "height": int(images[0].height),
             }
-        auxiliary.extra["hires_parent"] = {
-            "enabled": bool(getattr(request, "hires_enabled", False)),
-            "strategy": str(getattr(request, "hires_strategy", "latent") or "latent"),
-            "upscaler_id": str(getattr(request, "hires_upscaler_id", "") or ""),
-            "legacy_upscaler": str(getattr(request, "hires_upscaler", "") or ""),
-        }
         return auxiliary
 
 
@@ -530,6 +574,7 @@ class OutputSystem:
         output_dir: str,
         save_txt: bool = True,
         save_json: bool = True,
+        save_diagnostics_json: bool = True,
     ) -> PreparedOutputSaveRequest:
         if pipeline_result.images is None:
             raise ValueError("Cannot save images because GenerationResult.images is None.")
@@ -541,6 +586,7 @@ class OutputSystem:
             manifest=self._copy_manifest(manifest),
             save_txt=bool(save_txt),
             save_json=bool(save_json),
+            save_diagnostics_json=bool(save_diagnostics_json),
             expected_count=len(final_images),
             artifact_disk_budget_mb=max(0, int(
                 getattr(request, "hires_artifact_disk_budget_mb", 0) or 0
@@ -556,10 +602,15 @@ class OutputSystem:
             prepared.lowres_images = GenerationOutputSaver._coerce_pil_images(lowres_images)
             prepared.lowres_manifest = self._build_lowres_manifest(manifest, request)
             prepared.expected_count += len(prepared.lowres_images)
-        for role, prefix in (
+        auxiliary_roles = [
             ("hires_upscaled_pre_denoise", f"upscaled-pre-denoise-{request.output_prefix}"),
             ("hires_vae_roundtrip", f"vae-roundtrip-{request.output_prefix}"),
-        ):
+        ]
+        if bool(getattr(request, "outpaint_shape_save_base", False)):
+            auxiliary_roles.append(
+                ("outpaint_pre_expansion_base", f"pre-expansion-{request.output_prefix}")
+            )
+        for role, prefix in auxiliary_roles:
             values = pipeline_result.auxiliary_images.get(role)
             if values is None:
                 continue
@@ -583,7 +634,11 @@ class OutputSystem:
         for batch in prepared.auxiliary_batches:
             images.extend(batch.images)
         raw_rgb = sum(int(image.width) * int(image.height) * 3 for image in images)
-        sidecar_count = len(images) * int(bool(prepared.save_txt) + bool(prepared.save_json))
+        sidecar_count = len(images) * int(
+            bool(prepared.save_txt)
+            + bool(prepared.save_json)
+            + bool(prepared.save_diagnostics_json)
+        )
         # Reserve space for atomic temporary files and noisy PNGs that compress poorly.
         return int(raw_rgb * 2.20 + sidecar_count * 1024 * 1024)
 
@@ -627,6 +682,7 @@ class OutputSystem:
                     manifest=self._copy_manifest(prepared.lowres_manifest),
                     save_txt=prepared.save_txt,
                     save_json=prepared.save_json,
+                    save_diagnostics_json=prepared.save_diagnostics_json,
                 )
                 records.extend(lowres_records)
                 for record in lowres_records:
@@ -646,6 +702,7 @@ class OutputSystem:
                     manifest=self._copy_manifest(batch.manifest),
                     save_txt=prepared.save_txt,
                     save_json=prepared.save_json,
+                    save_diagnostics_json=prepared.save_diagnostics_json,
                 )
                 # Register the committed batch before post-commit sidecar hashing
                 # so a hash/sidecar failure rolls back every file in this batch.
@@ -667,6 +724,7 @@ class OutputSystem:
                 manifest=self._copy_manifest(prepared.manifest),
                 save_txt=prepared.save_txt,
                 save_json=prepared.save_json,
+                save_diagnostics_json=prepared.save_diagnostics_json,
             )
             records.extend(final_records)
             return records
@@ -676,7 +734,12 @@ class OutputSystem:
             # cancellation or a later-batch failure cannot leave a misleading
             # partial diagnostic set behind.
             for record in reversed(records):
-                for raw_path in (record.image_path, record.txt_path, record.json_path):
+                for raw_path in (
+                    record.image_path,
+                    record.txt_path,
+                    record.json_path,
+                    record.diagnostics_json_path,
+                ):
                     if not raw_path:
                         continue
                     try:
@@ -694,6 +757,7 @@ class OutputSystem:
         output_dir: str,
         save_txt: bool = True,
         save_json: bool = True,
+        save_diagnostics_json: bool = True,
     ) -> list[SavedImageRecord]:
         prepared = self.prepare_save_request(
             pipeline_result=pipeline_result,
@@ -702,6 +766,7 @@ class OutputSystem:
             output_dir=output_dir,
             save_txt=save_txt,
             save_json=save_json,
+            save_diagnostics_json=save_diagnostics_json,
         )
         records = self.save_prepared(prepared)
         if prepared.lowres_images:

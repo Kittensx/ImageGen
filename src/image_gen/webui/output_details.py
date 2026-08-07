@@ -67,7 +67,12 @@ _FORM_REPLAY_FIELDS = {
     "hires_scale",
     "hires_width",
     "hires_height",
+    "hires_dimension_plan_version",
     "hires_dimension_plan",
+    "hires_axis_scale_width",
+    "hires_axis_scale_height",
+    "hires_uniform_scale",
+    "hires_aspect_ratio_changed",
     "hires_enabled",
     "hires_steps",
     "hires_denoising_strength",
@@ -78,6 +83,35 @@ _FORM_REPLAY_FIELDS = {
     "hires_cfg_rescale",
     "hires_upscaler",
     "hires_save_lowres",
+    "outpaint_prototype_enabled",
+    "outpaint_source_image",
+    "outpaint_anchor",
+    "outpaint_source_x",
+    "outpaint_source_y",
+    "outpaint_feather_px",
+    "outpaint_context_seed_mode",
+    "outpaint_denoising_strength",
+    "outpaint_latent_strategy",
+    "outpaint_prompt_mode",
+    "outpaint_overlay_positive_prompt",
+    "outpaint_overlay_negative_prompt",
+    "outpaint_diagnostic_artifacts",
+    "outpaint_prototype_record",
+    "outpaint_shape_expansion_enabled",
+    "outpaint_shape_target_mode",
+    "outpaint_shape_target_width",
+    "outpaint_shape_target_height",
+    "outpaint_shape_base_width",
+    "outpaint_shape_base_height",
+    "outpaint_shape_anchor",
+    "outpaint_shape_context_seed_mode",
+    "outpaint_shape_source_handoff",
+    "outpaint_shape_prompt_mode",
+    "outpaint_shape_overlay_positive_prompt",
+    "outpaint_shape_overlay_negative_prompt",
+    "outpaint_shape_denoising_strength",
+    "outpaint_shape_save_base",
+    "outpaint_shape_runtime_record",
     "prompt_preflight",
     "prompt_shadow_compare",
     "prompt_route_plan",
@@ -118,7 +152,12 @@ _BACKEND_REPLAY_EXTRA_FIELDS = {
     "hires_scale",
     "hires_width",
     "hires_height",
+    "hires_dimension_plan_version",
     "hires_dimension_plan",
+    "hires_axis_scale_width",
+    "hires_axis_scale_height",
+    "hires_uniform_scale",
+    "hires_aspect_ratio_changed",
     "hires_enabled",
     "hires_steps",
     "hires_denoising_strength",
@@ -127,7 +166,50 @@ _BACKEND_REPLAY_EXTRA_FIELDS = {
     "hires_scheduler_name",
     "hires_cfg_scale",
     "hires_cfg_rescale",
+    "hires_strategy",
     "hires_upscaler",
+    "hires_upscaler_id",
+    "hires_expected_upscaler_sha256",
+    "hires_expected_native_scale",
+    "hires_final_size_correction_filter",
+    "hires_aspect_policy",
+    "hires_padding_mode",
+    "hires_recorded_target_correction",
+    "hires_correction_fingerprint_enabled",
+    "hires_recorded_correction_fingerprint",
+    "outpaint_prototype_enabled",
+    "outpaint_source_image",
+    "outpaint_anchor",
+    "outpaint_source_x",
+    "outpaint_source_y",
+    "outpaint_feather_px",
+    "outpaint_context_seed_mode",
+    "outpaint_denoising_strength",
+    "outpaint_latent_strategy",
+    "outpaint_prompt_mode",
+    "outpaint_overlay_positive_prompt",
+    "outpaint_overlay_negative_prompt",
+    "outpaint_diagnostic_artifacts",
+    "outpaint_prototype_record",
+    "outpaint_shape_expansion_enabled",
+    "outpaint_shape_target_mode",
+    "outpaint_shape_target_width",
+    "outpaint_shape_target_height",
+    "outpaint_shape_base_width",
+    "outpaint_shape_base_height",
+    "outpaint_shape_anchor",
+    "outpaint_shape_context_seed_mode",
+    "outpaint_shape_source_handoff",
+    "outpaint_shape_prompt_mode",
+    "outpaint_shape_overlay_positive_prompt",
+    "outpaint_shape_overlay_negative_prompt",
+    "outpaint_shape_denoising_strength",
+    "outpaint_shape_save_base",
+    "outpaint_shape_runtime_record",
+    "hires_expected_vae_sha256",
+    "hires_expected_vae_source_kind",
+    "hires_recorded_schedule_replay",
+    "hires_recorded_schedule_fingerprint",
     "hires_save_lowres",
     "prompt_preflight",
     "prompt_shadow_compare",
@@ -882,9 +964,11 @@ def _metadata_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
 def _load_details_for_image_path(context: ProjectContext, image_path: Path, normalized_id: str) -> OutputMetadataDetails:
     root = context.txt2img_output_root.resolve()
     json_path = image_path.with_suffix(".json")
+    diagnostics_json_path = image_path.with_name(f"{image_path.stem}.diagnostics.json")
     txt_path = image_path.with_suffix(".txt")
     warnings: list[str] = []
     manifest: dict[str, Any] | None = None
+    replay_manifest: dict[str, Any] | None = None
     metadata_source = "partial_summary"
 
     image_info: dict[str, Any] = {}
@@ -897,11 +981,27 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
             loaded = json.loads(json_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 manifest = loaded
+                replay_manifest = loaded
                 metadata_source = "json_sidecar"
             else:
                 warnings.append("The JSON sidecar did not contain an object and was skipped.")
         except (OSError, json.JSONDecodeError) as exc:
             warnings.append(f"The JSON sidecar could not be read: {exc}")
+
+    if diagnostics_json_path.is_file():
+        try:
+            loaded = json.loads(diagnostics_json_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                manifest = loaded
+                metadata_source = (
+                    "json_sidecar+diagnostics"
+                    if replay_manifest is not None
+                    else "diagnostics_json_sidecar"
+                )
+            else:
+                warnings.append("The diagnostics JSON sidecar did not contain an object and was skipped.")
+        except (OSError, json.JSONDecodeError) as exc:
+            warnings.append(f"The diagnostics JSON sidecar could not be read: {exc}")
 
     if manifest is None and image_info.get("image_gen_manifest"):
         try:
@@ -929,7 +1029,10 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
         manifest = _empty_manifest()
         warnings.append("No JSON, embedded PNG, or TXT generation metadata was found.")
 
-    replay, unsupported = manifest_to_replay_payload(manifest, context=context)
+    replay, unsupported = manifest_to_replay_payload(
+        replay_manifest or manifest,
+        context=context,
+    )
     summary = _metadata_summary(manifest)
     timestamp = summary.get("timestamp")
     if not timestamp:
@@ -958,6 +1061,14 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
         "json_sidecar": {
             "available": json_path.is_file(),
             "path": _safe_relative_sidecar(root, json_path) if json_path.is_file() else "",
+        },
+        "diagnostics_json_sidecar": {
+            "available": diagnostics_json_path.is_file(),
+            "path": (
+                _safe_relative_sidecar(root, diagnostics_json_path)
+                if diagnostics_json_path.is_file()
+                else ""
+            ),
         },
         "txt_sidecar": {
             "available": txt_path.is_file(),

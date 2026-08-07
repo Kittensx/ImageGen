@@ -114,8 +114,41 @@ def _fingerprint_conformance_snapshot(snapshot: Mapping[str, Any]) -> dict[str, 
 def runtime_execution_fingerprint(
     record: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    source = _mapping(record)
+    # Compact replay manifests retain the exact conformance SHA but omit the
+    # bulky snapshot. Honor that authoritative fingerprint instead of hashing
+    # the intentionally reduced runtime record.
+    existing = _mapping(source.get("conformance_fingerprint"))
+    if (
+        existing.get("format") == RUNTIME_CONFORMANCE_FORMAT
+        and str(existing.get("sha256") or "")
+    ):
+        output = {
+            "schema_version": int(
+                existing.get("schema_version") or RUNTIME_CONFORMANCE_SCHEMA_VERSION
+            ),
+            "format": RUNTIME_CONFORMANCE_FORMAT,
+            "sha256": str(existing.get("sha256") or ""),
+        }
+        if isinstance(existing.get("snapshot"), Mapping):
+            output["snapshot"] = _mapping(existing.get("snapshot"))
+        return output
+    if (
+        source.get("format") == RUNTIME_CONFORMANCE_FORMAT
+        and str(source.get("sha256") or "")
+    ):
+        output = {
+            "schema_version": int(
+                source.get("schema_version") or RUNTIME_CONFORMANCE_SCHEMA_VERSION
+            ),
+            "format": RUNTIME_CONFORMANCE_FORMAT,
+            "sha256": str(source.get("sha256") or ""),
+        }
+        if isinstance(source.get("snapshot"), Mapping):
+            output["snapshot"] = _mapping(source.get("snapshot"))
+        return output
     return _fingerprint_conformance_snapshot(
-        runtime_execution_conformance_snapshot(record)
+        runtime_execution_conformance_snapshot(source)
     )
 
 
@@ -145,24 +178,25 @@ def compare_runtime_execution_records(
 ) -> dict[str, Any]:
     """Compare original and replayed runtime paths using stable fingerprints."""
 
-    original_fp = (
-        _fingerprint_conformance_snapshot(original.get("snapshot") or {})
-        if isinstance(original, Mapping)
-        and original.get("format") == RUNTIME_CONFORMANCE_FORMAT
-        and isinstance(original.get("snapshot"), Mapping)
-        else runtime_execution_fingerprint(original)
-    )
-    replay_fp = (
-        _fingerprint_conformance_snapshot(replayed.get("snapshot") or {})
-        if isinstance(replayed, Mapping)
-        and replayed.get("format") == RUNTIME_CONFORMANCE_FORMAT
-        and isinstance(replayed.get("snapshot"), Mapping)
-        else runtime_execution_fingerprint(replayed)
-    )
-    differences = _conformance_differences(
-        _mapping(original_fp.get("snapshot")),
-        _mapping(replay_fp.get("snapshot")),
-    )
+    original_fp = runtime_execution_fingerprint(original)
+    replay_fp = runtime_execution_fingerprint(replayed)
+    original_sha = str(original_fp.get("sha256") or "")
+    replay_sha = str(replay_fp.get("sha256") or "")
+    if original_sha and original_sha == replay_sha:
+        differences: list[dict[str, Any]] = []
+    elif isinstance(original_fp.get("snapshot"), Mapping) and isinstance(
+        replay_fp.get("snapshot"), Mapping
+    ):
+        differences = _conformance_differences(
+            _mapping(original_fp.get("snapshot")),
+            _mapping(replay_fp.get("snapshot")),
+        )
+    else:
+        differences = [{
+            "path": "runtime_conformance_fingerprint",
+            "original": original_sha,
+            "replayed": replay_sha,
+        }]
     categories = sorted({item["path"].split(".", 1)[0] for item in differences if item.get("path")})
     return {
         "schema_version": RUNTIME_CONFORMANCE_SCHEMA_VERSION,

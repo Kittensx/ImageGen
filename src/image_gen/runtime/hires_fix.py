@@ -9,7 +9,13 @@ import torch
 from image_gen.contracts import GenerationRequest, SchedulerOutput
 from image_gen.runtime.hires_sizing import HiresDimensionPlan, resolve_hires_dimensions
 from image_gen.systems.image_conditioning import VAEEncodeResult, VAERoundTripResult
-from image_gen.systems.upscaling import UpscalerDescriptor
+from image_gen.systems.upscaling import (
+    SUPPORTED_ASPECT_POLICIES,
+    SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS,
+    SUPPORTED_PADDING_MODES,
+    UpscalerDescriptor,
+    compute_native_output_dimensions,
+)
 from image_gen.systems.image_conditioning import (
     A1111_FIXED_STEPS_V1,
     DEFAULT_HIRES_STEP_POLICY,
@@ -48,6 +54,15 @@ class HiresUpscalePlan:
     target_width: int
     target_height: int
     exact_resize_filter: str
+    final_size_correction_filter: str
+    aspect_policy: str
+    padding_mode: str
+    allow_tiling: bool
+    native_scale: int
+    predicted_native_width: int
+    predicted_native_height: int
+    requested_final_width: int
+    requested_final_height: int
     tile_size: int
     tile_overlap: int
     tile_batch_size: int
@@ -62,6 +77,15 @@ class HiresUpscalePlan:
             "target_width": int(self.target_width),
             "target_height": int(self.target_height),
             "exact_resize_filter": self.exact_resize_filter,
+            "final_size_correction_filter": self.final_size_correction_filter,
+            "aspect_policy": self.aspect_policy,
+            "padding_mode": self.padding_mode,
+            "allow_tiling": bool(self.allow_tiling),
+            "native_scale": int(self.native_scale),
+            "predicted_native_width": int(self.predicted_native_width),
+            "predicted_native_height": int(self.predicted_native_height),
+            "requested_final_width": int(self.requested_final_width),
+            "requested_final_height": int(self.requested_final_height),
             "tile_size": int(self.tile_size),
             "tile_overlap": int(self.tile_overlap),
             "tile_batch_size": int(self.tile_batch_size),
@@ -162,6 +186,27 @@ def resolve_hires_upscale_plan(
         else:
             raise ValueError("hires_strategy must be 'pixel_neural'.")
 
+    legacy_filter = str(
+        getattr(request, "hires_exact_resize_filter", "bicubic") or "bicubic"
+    ).strip().casefold()
+    final_filter = str(
+        getattr(request, "hires_final_size_correction_filter", "") or legacy_filter
+    ).strip().casefold()
+    aspect_policy = str(
+        getattr(request, "hires_aspect_policy", "stretch") or "stretch"
+    ).strip().casefold()
+    padding_mode = str(
+        getattr(request, "hires_padding_mode", "reflect") or "reflect"
+    ).strip().casefold()
+    if not bool(getattr(dimensions, "aspect_ratio_changed", False)):
+        aspect_policy = "stretch"
+    if final_filter not in SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS:
+        raise ValueError("hires_final_size_correction_filter must be auto, nearest, bilinear, bicubic, or area.")
+    if aspect_policy not in SUPPORTED_ASPECT_POLICIES:
+        raise ValueError("hires_aspect_policy must be stretch, crop_to_fill, or pad_to_fit.")
+    if padding_mode not in SUPPORTED_PADDING_MODES:
+        raise ValueError("hires_padding_mode must be reflect, replicate, blurred_edge, or black.")
+
     common = {
         "strategy": "pixel_neural",
         "legacy_value": selected_id,
@@ -169,9 +214,16 @@ def resolve_hires_upscale_plan(
         "upscaler_id": selected_id or None,
         "target_width": int(dimensions.effective_width),
         "target_height": int(dimensions.effective_height),
-        "exact_resize_filter": str(
-            getattr(request, "hires_exact_resize_filter", "bicubic") or "bicubic"
-        ).casefold(),
+        "exact_resize_filter": legacy_filter,
+        "final_size_correction_filter": final_filter,
+        "aspect_policy": aspect_policy,
+        "padding_mode": padding_mode,
+        "allow_tiling": False,
+        "native_scale": 0,
+        "predicted_native_width": 0,
+        "predicted_native_height": 0,
+        "requested_final_width": int(getattr(dimensions, "final_width", dimensions.effective_width)),
+        "requested_final_height": int(getattr(dimensions, "final_height", dimensions.effective_height)),
         "tile_size": int(getattr(request, "hires_tile_size", 0) or 0),
         "tile_overlap": int(getattr(request, "hires_tile_overlap", 16) or 0),
         "tile_batch_size": int(getattr(request, "hires_tile_batch_size", 1) or 1),
@@ -217,7 +269,25 @@ def resolve_hires_upscale_plan(
                 f"Recorded neural upscaler hash mismatch for {selected_id!r}: "
                 f"expected {expected_sha256}, found {descriptor.sha256.casefold()}."
             )
-    return HiresUpscalePlan(descriptor=descriptor, **common)
+    expected_native_scale = int(getattr(request, "hires_expected_native_scale", 0) or 0)
+    if expected_native_scale and int(descriptor.native_scale) != expected_native_scale:
+        raise ValueError(
+            f"Recorded neural upscaler native scale mismatch for {selected_id!r}: "
+            f"expected x{expected_native_scale}, found x{int(descriptor.native_scale)}."
+        )
+    native_width, native_height = compute_native_output_dimensions(
+        source_width=int(getattr(dimensions, "base_width", getattr(request, "width", 512))),
+        source_height=int(getattr(dimensions, "base_height", getattr(request, "height", 512))),
+        native_scale=int(descriptor.native_scale),
+    )
+    resolved_common = dict(common)
+    resolved_common.update(
+        allow_tiling=bool(descriptor.tile_supported),
+        native_scale=int(descriptor.native_scale),
+        predicted_native_width=native_width,
+        predicted_native_height=native_height,
+    )
+    return HiresUpscalePlan(descriptor=descriptor, **resolved_common)
 
 
 @dataclass(frozen=True)

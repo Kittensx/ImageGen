@@ -252,6 +252,9 @@ class PromptProcessingPreflight:
         batch_size: int,
         width: int,
         height: int,
+        coordinate_reference_slots: list[Mapping[str, Any]] | None = None,
+        coordinate_reference_width: int | None = None,
+        coordinate_reference_height: int | None = None,
         prompt_expansion_recorded: Mapping[str, Any] | None = None,
         prompt_expansion_replay_mode: str = "reconstruct",
         defer_prompt_expansion: bool = False,
@@ -358,7 +361,15 @@ class PromptProcessingPreflight:
         if not defer_prompt_expansion and expansion_error is None:
             try:
                 base_prompts: list[str] = []
+                reference_slots = [
+                    dict(item or {}) for item in list(coordinate_reference_slots or [])
+                ]
                 for slot_index, prompt in enumerate(expanded_positive_slots):
+                    coordinate_reference_slot = None
+                    if slot_index < len(reference_slots):
+                        candidate = reference_slots[slot_index]
+                        if str(candidate.get("source_prompt") or "") == str(prompt or ""):
+                            coordinate_reference_slot = candidate
                     base_prompt, _runtime_specs, region_slot = extract_superhybrid_region_slot(
                         prompt,
                         slot_index=slot_index,
@@ -366,6 +377,9 @@ class PromptProcessingPreflight:
                         seed=int(parser_slot_seeds[slot_index]),
                         width=int(width),
                         height=int(height),
+                        coordinate_reference_slot=coordinate_reference_slot,
+                        coordinate_reference_width=coordinate_reference_width if coordinate_reference_slot else None,
+                        coordinate_reference_height=coordinate_reference_height if coordinate_reference_slot else None,
                     )
                     base_prompts.append(base_prompt)
                     region_slots.append(region_slot)
@@ -758,6 +772,11 @@ class PromptProcessingPreflight:
             batch_size=batch_size,
             width=hires_width,
             height=hires_height,
+            coordinate_reference_slots=list(
+                (base.get("regional_prompting") or {}).get("slots") or []
+            ),
+            coordinate_reference_width=base_width,
+            coordinate_reference_height=base_height,
             prompt_expansion_recorded=prompt_expansion_recorded,
             prompt_expansion_replay_mode=prompt_expansion_replay_mode,
             defer_prompt_expansion=defer_hires_prompt_expansion,

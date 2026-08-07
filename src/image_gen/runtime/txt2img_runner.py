@@ -6,7 +6,7 @@ import gc
 import inspect
 import time
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 import torch
@@ -25,6 +25,11 @@ from image_gen.systems.model_loading import ModelLoadingSystem
 from image_gen.contracts.vae_provenance import read_vae_provenance
 from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
 from image_gen.systems.output import OutputSystem, PreparedOutputSaveRequest
+from image_gen.systems.outpainting import (
+    OUTPAINT_SHAPE_EXPANSION_CONTRACT_VERSION,
+    format_outpaint_failure,
+    resolve_outpaint_shape_target,
+)
 from image_gen.systems.upscaling import (
     StandaloneNeuralUpscaler,
     UpscalerModelRegistry,
@@ -1146,6 +1151,160 @@ class Txt2ImgRunner:
             session.request_extras["hires_upscaler_discovery"] = discovery_record
         return pipeline
 
+    def _generate_with_optional_shape_expansion(
+        self,
+        *,
+        pipeline: Any,
+        request: GenerationRequest,
+        session: DiagnosticSession,
+    ) -> GenerationResult:
+        if not bool(getattr(request, "outpaint_shape_expansion_enabled", False)):
+            return pipeline.generate(request, diagnostic_session=session)
+
+        base_width = int(getattr(request, "outpaint_shape_base_width", 0) or request.width)
+        base_height = int(getattr(request, "outpaint_shape_base_height", 0) or request.height)
+        request.outpaint_shape_base_width = base_width
+        request.outpaint_shape_base_height = base_height
+        try:
+            target = resolve_outpaint_shape_target(
+                base_width=base_width,
+                base_height=base_height,
+                target_mode=str(getattr(request, "outpaint_shape_target_mode", "square") or "square"),
+                target_width=int(getattr(request, "outpaint_shape_target_width", 0) or 0),
+                target_height=int(getattr(request, "outpaint_shape_target_height", 0) or 0),
+            )
+        except Exception as exc:
+            raise RuntimeError(format_outpaint_failure("outpaint_source_handoff", str(exc))) from exc
+
+        base_request = replace(
+            request,
+            width=base_width,
+            height=base_height,
+            outpaint_prototype_enabled=False,
+        )
+        base_request.outpaint_shape_base_width = base_width
+        base_request.outpaint_shape_base_height = base_height
+        base_result = pipeline.generate(base_request, diagnostic_session=session)
+        if not torch.is_tensor(base_result.images):
+            raise RuntimeError(format_outpaint_failure(
+                "outpaint_live_source_capture",
+                "Fresh txt2img base generation did not return an image tensor for P-3 shape expansion.",
+            ))
+        if not torch.is_tensor(base_result.latents):
+            raise RuntimeError(format_outpaint_failure(
+                "outpaint_live_source_capture",
+                "Fresh txt2img base generation did not return a sampled latent for P-3 shape expansion.",
+            ))
+
+        expansion_request = replace(
+            base_request,
+            width=int(target["target_width"]),
+            height=int(target["target_height"]),
+            outpaint_prototype_enabled=True,
+            outpaint_source_image="",
+            outpaint_anchor=str(getattr(request, "outpaint_shape_anchor", "center") or "center"),
+            outpaint_source_x=-1,
+            outpaint_source_y=-1,
+            outpaint_context_seed_mode=str(
+                getattr(request, "outpaint_shape_context_seed_mode", "edge_pad_v1") or "edge_pad_v1"
+            ),
+            outpaint_denoising_strength=float(
+                getattr(request, "outpaint_shape_denoising_strength", 0.40) or 0.40
+            ),
+            # P-2 demonstrated that a provisional context seed is useful only
+            # when the encoded provisional canvas participates in the new area.
+            outpaint_latent_strategy="canvas_regional_noise_v1",
+            outpaint_prompt_mode=str(
+                getattr(request, "outpaint_shape_prompt_mode", "overlay_only_v1") or "overlay_only_v1"
+            ),
+            outpaint_overlay_positive_prompt=str(
+                getattr(request, "outpaint_shape_overlay_positive_prompt", "") or ""
+            ),
+            outpaint_overlay_negative_prompt=str(
+                getattr(request, "outpaint_shape_overlay_negative_prompt", "") or ""
+            ),
+        )
+        expansion_request.outpaint_shape_expansion_enabled = True
+        expansion_request.outpaint_shape_target_width = int(target["target_width"])
+        expansion_request.outpaint_shape_target_height = int(target["target_height"])
+        expansion_request.outpaint_shape_base_width = base_width
+        expansion_request.outpaint_shape_base_height = base_height
+        setattr(expansion_request, "_outpaint_runtime_source_tensor", base_result.images)
+        setattr(expansion_request, "_outpaint_runtime_source_latent", base_result.latents)
+        setattr(
+            expansion_request,
+            "_outpaint_runtime_source_handoff_requested",
+            str(getattr(request, "outpaint_shape_source_handoff", "auto") or "auto"),
+        )
+
+        expanded_result = pipeline.generate(expansion_request, diagnostic_session=session)
+        if bool(getattr(request, "outpaint_shape_save_base", False)):
+            expanded_result.auxiliary_images["outpaint_pre_expansion_base"] = (
+                base_result.images.detach().clone()
+            )
+
+        outpaint_record = dict(expanded_result.metadata.get("outpaint_prototype") or {})
+        source_handoff = dict(outpaint_record.get("source_handoff") or {})
+        runtime_record = {
+            "contract_version": OUTPAINT_SHAPE_EXPANSION_CONTRACT_VERSION,
+            "enabled": True,
+            "source_kind": "fresh_txt2img_generation",
+            "disk_round_trip": False,
+            "base_generation_width": base_width,
+            "base_generation_height": base_height,
+            "base_latent_shape": list(base_result.latents.shape),
+            "base_latent_dtype": str(base_result.latents.dtype),
+            "base_latent_device_at_handoff": str(base_result.latents.device),
+            "target_mode": str(target["target_mode"]),
+            "target_width": int(target["target_width"]),
+            "target_height": int(target["target_height"]),
+            "anchor": str(expansion_request.outpaint_anchor),
+            "context_seed_mode": str(expansion_request.outpaint_context_seed_mode),
+            "source_handoff_requested": str(
+                getattr(request, "outpaint_shape_source_handoff", "auto") or "auto"
+            ),
+            "source_handoff_actual": str(source_handoff.get("actual") or ""),
+            "source_handoff_fallback_reason": str(source_handoff.get("fallback_reason") or ""),
+            "latent_grid_alignment": dict(source_handoff.get("alignment") or {}),
+            "preservation_reference_source": str(
+                source_handoff.get("preservation_reference_source") or ""
+            ),
+            "source_was_vae_reencoded_for_protected_latent": bool(
+                source_handoff.get("source_was_vae_reencoded_for_protected_latent", True)
+            ),
+            "live_source_latent_reused": bool(source_handoff.get("live_source_latent_reused", False)),
+            "outpaint_prompt_mode": str(expansion_request.outpaint_prompt_mode),
+            "outpaint_overlay_positive_prompt": str(expansion_request.outpaint_overlay_positive_prompt),
+            "outpaint_overlay_negative_prompt": str(expansion_request.outpaint_overlay_negative_prompt),
+            "outpaint_denoising_strength": float(expansion_request.outpaint_denoising_strength),
+            "provisional_base_saved": bool(getattr(request, "outpaint_shape_save_base", False)),
+            "expanded_result_is_primary": True,
+        }
+        runtime_record["runtime_handoff_tensors_released_after_expansion"] = True
+        expansion_request.outpaint_shape_runtime_record = dict(runtime_record)
+        for transient_name in (
+            "_outpaint_runtime_source_tensor",
+            "_outpaint_runtime_source_latent",
+            "_outpaint_runtime_source_handoff_requested",
+        ):
+            if hasattr(expansion_request, transient_name):
+                delattr(expansion_request, transient_name)
+        # The prototype flag is an internal implementation detail of the second
+        # in-job pass. Persist only the P-3 shape-expansion contract so replay
+        # regenerates the base first instead of trying to load an uploaded source.
+        expansion_request.outpaint_prototype_enabled = False
+        expansion_request.outpaint_source_image = ""
+        expanded_result.request = expansion_request
+        expanded_result.metadata["outpaint_shape_expansion"] = dict(runtime_record)
+        expanded_result.metadata["base_generation"] = {
+            "width": base_width,
+            "height": base_height,
+            "latent_shape": list(base_result.latents.shape),
+            "output_dimensions": dict(base_result.metadata.get("output_dimensions") or {}),
+        }
+        return expanded_result
+
+
     def run_request(
         self,
         request: GenerationRequest,
@@ -1154,6 +1313,7 @@ class Txt2ImgRunner:
         save_images: bool | None = None,
         save_txt: bool = True,
         save_json: bool = True,
+        save_diagnostics_json: bool = True,
         defer_output_save: bool = False,
     ) -> Txt2ImgRunResult:
         should_save = request.save_images if save_images is None else bool(save_images)
@@ -1243,7 +1403,9 @@ class Txt2ImgRunner:
             started = time.perf_counter()
             generation_time_sec = 0.0
             try:
-                pipeline_result = pipeline.generate(request, diagnostic_session=session)
+                pipeline_result = self._generate_with_optional_shape_expansion(
+                    pipeline=pipeline, request=request, session=session
+                )
             finally:
                 generation_time_sec = time.perf_counter() - started
                 if performance_matrix_enabled:
@@ -1259,6 +1421,7 @@ class Txt2ImgRunner:
                         ),
                         flush=True,
                     )
+            request = pipeline_result.request or request
             pipeline_result.metadata["model_provenance"] = dict(
                 extras.get("model_provenance") or {}
             )
@@ -1301,6 +1464,7 @@ class Txt2ImgRunner:
                             output_dir=str(output_dir),
                             save_txt=save_txt,
                             save_json=save_json,
+                            save_diagnostics_json=save_diagnostics_json,
                         ),
                     )
                     expected_saved_count = int(prepared_save_request.expected_count or 0)
@@ -1314,6 +1478,7 @@ class Txt2ImgRunner:
                             output_dir=str(output_dir),
                             save_txt=save_txt,
                             save_json=save_json,
+                            save_diagnostics_json=save_diagnostics_json,
                         )
                         return _verify_saved_records(records)
 
@@ -1363,6 +1528,7 @@ class Txt2ImgRunner:
         extras: dict[str, Any] | None = None,
         save_txt: bool = True,
         save_json: bool = True,
+        save_diagnostics_json: bool = True,
     ) -> Txt2ImgRunResult:
         payload = load_request_payload(
             config_path=config_path,
@@ -1374,4 +1540,10 @@ class Txt2ImgRunner:
         request, payload_extras = payload_to_generation_request(payload)
         merged_extras = dict(extras or {})
         merged_extras.update(payload_extras)
-        return self.run_request(request, merged_extras, save_txt=save_txt, save_json=save_json)
+        return self.run_request(
+            request,
+            merged_extras,
+            save_txt=save_txt,
+            save_json=save_json,
+            save_diagnostics_json=save_diagnostics_json,
+        )

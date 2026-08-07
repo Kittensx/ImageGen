@@ -579,7 +579,34 @@ class PromptConditioningAdapter(PromptAdapter):
                 error_kind="invalid_region_replay_mode",
             )
         try:
+            base_region_reference = {}
+            if pass_name == "hires":
+                if region_replay_mode == "recorded_exact":
+                    # Exact replay honors the recorded hires geometry itself.
+                    # This preserves older manifests generated before hires
+                    # REGION scaling was corrected, while new manifests replay
+                    # their corrected geometry exactly.
+                    base_region_reference = dict(
+                        (getattr(request, "region_recorded", {}) or {}).get("hires") or {}
+                    )
+                if not base_region_reference:
+                    base_region_reference = dict(
+                        (getattr(request, "region_pass_records", {}) or {}).get("base") or {}
+                    )
+            base_reference_slots = [
+                dict(item or {}) for item in list(base_region_reference.get("slots") or [])
+            ]
+            base_reference_width = int(base_region_reference.get("width") or 0)
+            base_reference_height = int(base_region_reference.get("height") or 0)
             for slot_index, prompt in enumerate(list(expanded_positive_slots)):
+                coordinate_reference_slot = None
+                if slot_index < len(base_reference_slots):
+                    candidate = base_reference_slots[slot_index]
+                    # Only inherit resolved base geometry when hires is using the
+                    # same REGION source prompt. An explicitly different hires
+                    # prompt remains authoritative for its own coordinates.
+                    if str(candidate.get("source_prompt") or "") == str(prompt or ""):
+                        coordinate_reference_slot = candidate
                 base_prompt, runtime_specs, slot_record = extract_superhybrid_region_slot(
                     prompt,
                     slot_index=slot_index,
@@ -587,6 +614,9 @@ class PromptConditioningAdapter(PromptAdapter):
                     seed=int(parser_slot_seeds[slot_index]),
                     width=int(getattr(request, "generation_width", request.width)),
                     height=int(getattr(request, "generation_height", request.height)),
+                    coordinate_reference_slot=coordinate_reference_slot,
+                    coordinate_reference_width=base_reference_width if coordinate_reference_slot else None,
+                    coordinate_reference_height=base_reference_height if coordinate_reference_slot else None,
                 )
                 expanded_positive_slots[slot_index] = base_prompt
                 region_runtime_specs_by_slot[slot_index] = runtime_specs

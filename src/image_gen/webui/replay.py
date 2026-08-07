@@ -74,7 +74,12 @@ _EDITABLE_FIELDS = {
     "hires_scale",
     "hires_width",
     "hires_height",
+    "hires_dimension_plan_version",
     "hires_dimension_plan",
+    "hires_axis_scale_width",
+    "hires_axis_scale_height",
+    "hires_uniform_scale",
+    "hires_aspect_ratio_changed",
     "hires_enabled",
     "hires_steps",
     "hires_denoising_strength",
@@ -90,10 +95,42 @@ _EDITABLE_FIELDS = {
     "hires_tile_overlap",
     "hires_tile_batch_size",
     "hires_exact_resize_filter",
+    "hires_final_size_correction_filter",
+    "hires_aspect_policy",
+    "hires_padding_mode",
     "hires_save_upscaled_pre_denoise",
     "hires_save_vae_roundtrip",
     "hires_diagnostic_vae_execution_fingerprint",
     "hires_save_lowres",
+    "outpaint_prototype_enabled",
+    "outpaint_source_image",
+    "outpaint_anchor",
+    "outpaint_source_x",
+    "outpaint_source_y",
+    "outpaint_feather_px",
+    "outpaint_context_seed_mode",
+    "outpaint_denoising_strength",
+    "outpaint_latent_strategy",
+    "outpaint_prompt_mode",
+    "outpaint_overlay_positive_prompt",
+    "outpaint_overlay_negative_prompt",
+    "outpaint_diagnostic_artifacts",
+    "outpaint_prototype_record",
+    "outpaint_shape_expansion_enabled",
+    "outpaint_shape_target_mode",
+    "outpaint_shape_target_width",
+    "outpaint_shape_target_height",
+    "outpaint_shape_base_width",
+    "outpaint_shape_base_height",
+    "outpaint_shape_anchor",
+    "outpaint_shape_context_seed_mode",
+    "outpaint_shape_source_handoff",
+    "outpaint_shape_prompt_mode",
+    "outpaint_shape_overlay_positive_prompt",
+    "outpaint_shape_overlay_negative_prompt",
+    "outpaint_shape_denoising_strength",
+    "outpaint_shape_save_base",
+    "outpaint_shape_runtime_record",
     "prompt_preflight",
     "prompt_shadow_compare",
     "prompt_route_plan",
@@ -159,7 +196,12 @@ _PRESERVABLE_BACKEND_FIELDS = {
     "hires_scale",
     "hires_width",
     "hires_height",
+    "hires_dimension_plan_version",
     "hires_dimension_plan",
+    "hires_axis_scale_width",
+    "hires_axis_scale_height",
+    "hires_uniform_scale",
+    "hires_aspect_ratio_changed",
     "hires_enabled",
     "hires_steps",
     "hires_denoising_strength",
@@ -171,14 +213,50 @@ _PRESERVABLE_BACKEND_FIELDS = {
     "hires_strategy",
     "hires_upscaler",
     "hires_upscaler_id",
+    "hires_expected_native_scale",
     "hires_tile_size",
     "hires_tile_overlap",
     "hires_tile_batch_size",
     "hires_exact_resize_filter",
+    "hires_final_size_correction_filter",
+    "hires_aspect_policy",
+    "hires_padding_mode",
+    "hires_recorded_target_correction",
+    "hires_correction_fingerprint_enabled",
+    "hires_recorded_correction_fingerprint",
     "hires_save_upscaled_pre_denoise",
     "hires_save_vae_roundtrip",
     "hires_diagnostic_vae_execution_fingerprint",
     "hires_save_lowres",
+    "outpaint_prototype_enabled",
+    "outpaint_source_image",
+    "outpaint_anchor",
+    "outpaint_source_x",
+    "outpaint_source_y",
+    "outpaint_feather_px",
+    "outpaint_context_seed_mode",
+    "outpaint_denoising_strength",
+    "outpaint_latent_strategy",
+    "outpaint_prompt_mode",
+    "outpaint_overlay_positive_prompt",
+    "outpaint_overlay_negative_prompt",
+    "outpaint_diagnostic_artifacts",
+    "outpaint_prototype_record",
+    "outpaint_shape_expansion_enabled",
+    "outpaint_shape_target_mode",
+    "outpaint_shape_target_width",
+    "outpaint_shape_target_height",
+    "outpaint_shape_base_width",
+    "outpaint_shape_base_height",
+    "outpaint_shape_anchor",
+    "outpaint_shape_context_seed_mode",
+    "outpaint_shape_source_handoff",
+    "outpaint_shape_prompt_mode",
+    "outpaint_shape_overlay_positive_prompt",
+    "outpaint_shape_overlay_negative_prompt",
+    "outpaint_shape_denoising_strength",
+    "outpaint_shape_save_base",
+    "outpaint_shape_runtime_record",
     "prompt_preflight",
     "prompt_shadow_compare",
     "prompt_route_plan",
@@ -435,6 +513,13 @@ class ReplayService:
     def _recorded_hires_schedule(
         manifest: Mapping[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        optional = manifest.get("optional_for_rerun") if isinstance(manifest, Mapping) else {}
+        optional_extra = (optional or {}).get("extra") if isinstance(optional, Mapping) else {}
+        if isinstance(optional_extra, Mapping):
+            replay = optional_extra.get("hires_recorded_schedule_replay")
+            fingerprint = optional_extra.get("hires_recorded_schedule_fingerprint")
+            if isinstance(replay, Mapping) and replay and isinstance(fingerprint, Mapping) and fingerprint:
+                return dict(replay), dict(fingerprint)
         extra = manifest.get("extra") if isinstance(manifest, Mapping) else {}
         pipeline_metadata = (extra or {}).get("pipeline_metadata") if isinstance(extra, Mapping) else {}
         hires = (pipeline_metadata or {}).get("hires_fix") if isinstance(pipeline_metadata, Mapping) else {}
@@ -870,6 +955,27 @@ class ReplayService:
         cls,
         manifest: Mapping[str, Any],
     ) -> dict[str, Any]:
+        optional = cls._mapping(manifest.get("optional_for_rerun"))
+        optional_extra = cls._mapping(optional.get("extra"))
+        compact = {
+            "upscaler_id": str(
+                optional_extra.get("hires_upscaler_id")
+                or optional_extra.get("hires_upscaler")
+                or ""
+            ),
+            "upscaler_sha256": str(
+                optional_extra.get("hires_expected_upscaler_sha256") or ""
+            ).casefold(),
+            "upscaler_display_name": "",
+            "vae_sha256": str(
+                optional_extra.get("hires_expected_vae_sha256") or ""
+            ).casefold(),
+            "vae_source_kind": str(
+                optional_extra.get("hires_expected_vae_source_kind") or ""
+            ),
+        }
+        if any(compact.values()):
+            return compact
         extra = cls._mapping(manifest.get("extra"))
         pipeline = cls._mapping(extra.get("pipeline_metadata"))
         hires = cls._mapping(pipeline.get("hires_fix"))

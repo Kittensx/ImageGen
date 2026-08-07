@@ -15,6 +15,9 @@
   --text: #f4f9fd;
   --muted: #9db2c4;
   --input-text: #17202a;
+  --font-ui: Inter, "Segoe UI", Arial, sans-serif;
+  --primary-button-text: #ffffff;
+  --secondary-button-text: #d5f1ff;
   --success: #35c978;
   --warning: #f5b94b;
   --danger: #ef6262;

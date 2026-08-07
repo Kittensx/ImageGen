@@ -12,6 +12,43 @@ class SamplerTraceMixin:
         sampler_kwargs = getattr(request, "sampler_kwargs", {}) or {}
         return sampler_kwargs.get("trace_recorder")
 
+    def _apply_latent_step_hook(
+        self,
+        state: Any | None,
+        *,
+        request: Any,
+        latent: torch.Tensor,
+        step_index: int,
+        sigma: Any = None,
+        sigma_next: Any = None,
+        timestep: Any = None,
+    ) -> torch.Tensor:
+        """Apply an optional pipeline-owned latent constraint after one transition.
+
+        The hook is deliberately generic: samplers do not import outpaint code.
+        Phase 14N-13P uses it for strict protected-latent restoration; future
+        image-conditioned workflows may reuse the same narrow extension point.
+        """
+        extra = getattr(state, "extra", None) if state is not None else None
+        hook = extra.get("sampling_latent_step_hook") if isinstance(extra, dict) else None
+        if not callable(hook):
+            return latent
+        constrained = hook(
+            latent,
+            request=request,
+            step_index=int(step_index),
+            sigma=sigma,
+            sigma_next=sigma_next,
+            timestep=timestep,
+        )
+        if not torch.is_tensor(constrained):
+            raise TypeError("sampling_latent_step_hook must return a torch.Tensor.")
+        if constrained.shape != latent.shape:
+            raise ValueError("sampling_latent_step_hook changed the latent tensor shape.")
+        if not bool(torch.isfinite(constrained).all()):
+            raise ValueError("sampling_latent_step_hook returned NaN or Inf values.")
+        return constrained
+
     def _trace_step(
         self,
         request,

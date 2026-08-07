@@ -1,13 +1,10 @@
 import { $, numberValue } from "../utils.js";
 import { readAdvancedValues } from "./advanced-editor.js";
 import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js";
+import { normalizeHiresSizeMode, planHiresDimensions } from "./hires-dimensions.js";
 
 function normalizedHiresSizeMode(value, enabled = true) {
-  const mode = String(value || "scale_from_base").trim().toLowerCase();
-  if (enabled && mode === "same_as_base") return "scale_from_base";
-  return ["same_as_base", "scale_from_base", "explicit_dimensions"].includes(mode)
-    ? mode
-    : "scale_from_base";
+  return normalizeHiresSizeMode(value, enabled);
 }
 
 function jsonValue(selector, fallback = {}) {
@@ -25,6 +22,16 @@ export function collectGenerationValues(selectionMetadata = {}) {
   const seed = numberValue($("#seed"), null);
   const cfgLab = readCfgLabValues();
   const advancedSampler = readAdvancedValues($("#samplerAdvancedContent"));
+  const hiresEnabled = Boolean($("#hiresEnabled")?.checked);
+  const hiresPlan = planHiresDimensions({
+    baseWidth: numberValue($("#width"), 640),
+    baseHeight: numberValue($("#height"), 960),
+    mode: normalizedHiresSizeMode($("#hiresSizeMode")?.value, hiresEnabled),
+    scale: numberValue($("#hiresScale"), 1.5),
+    targetWidth: numberValue($("#hiresWidth"), 0),
+    targetHeight: numberValue($("#hiresHeight"), 0),
+    enabled: hiresEnabled,
+  });
   return {
     positive_prompt: $("#positivePrompt").value,
     negative_prompt: $("#negativePrompt").value,
@@ -56,16 +63,19 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_shortcut_profile_mode: $("#hiresShortcutProfileMode")?.value || "same_as_base",
     hires_shortcut_profile_name: $("#hiresShortcutProfileName")?.value || $("#promptShortcutProfileName")?.value || "legacy_default",
     hires_shortcut_profile_snapshot: jsonValue("#hiresShortcutProfileSnapshot"),
-    hires_enabled: Boolean($("#hiresEnabled")?.checked),
+    hires_enabled: hiresEnabled,
     hires_positive_prompt: $("#hiresPositivePrompt")?.value || "",
     hires_negative_prompt: $("#hiresNegativePrompt")?.value || "",
-    hires_size_mode: normalizedHiresSizeMode(
-      $("#hiresSizeMode")?.value,
-      Boolean($("#hiresEnabled")?.checked),
-    ),
-    hires_scale: numberValue($("#hiresScale"), 1.5),
-    hires_width: numberValue($("#hiresWidth"), 0),
-    hires_height: numberValue($("#hiresHeight"), 0),
+    hires_size_mode: hiresPlan.mode,
+    hires_scale: hiresPlan.requested_scale,
+    hires_width: hiresPlan.requested_width,
+    hires_height: hiresPlan.requested_height,
+    hires_axis_scale_width: hiresPlan.axis_scale_width,
+    hires_axis_scale_height: hiresPlan.axis_scale_height,
+    hires_uniform_scale: hiresPlan.uniform_scale,
+    hires_aspect_ratio_changed: hiresPlan.aspect_ratio_changed,
+    hires_dimension_plan_version: hiresPlan.contract_version || "",
+    hires_dimension_plan: hiresPlan,
     hires_steps: numberValue($("#hiresSteps"), 20),
     hires_denoising_strength: numberValue($("#hiresDenoisingStrength"), 0.4),
     hires_step_policy: $("#hiresStepPolicy")?.value || "a1111_fixed_steps_v1",
@@ -79,13 +89,47 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_tile_size: numberValue($("#hiresTileSize"), 0),
     hires_tile_overlap: numberValue($("#hiresTileOverlap"), 16),
     hires_tile_batch_size: numberValue($("#hiresTileBatchSize"), 1),
-    hires_exact_resize_filter: $("#hiresExactResizeFilter")?.value || "bicubic",
+    hires_exact_resize_filter: "bicubic",
+    hires_final_size_correction_filter: $("#hiresFinalSizeCorrectionFilter")?.value || "auto",
+    hires_aspect_policy: $("#hiresAspectPolicy")?.value || "stretch",
+    hires_padding_mode: $("#hiresPaddingMode")?.value || "reflect",
+    hires_correction_fingerprint_enabled: Boolean($("#hiresCorrectionFingerprintDiagnostics")?.checked),
     hires_save_upscaled_pre_denoise: Boolean($("#hiresSaveUpscaledPreDenoise")?.checked),
     hires_save_vae_roundtrip: Boolean($("#hiresSaveVaeRoundtrip")?.checked),
     hires_save_lowres: Boolean($("#hiresSaveLowres")?.checked),
+    outpaint_prototype_enabled: Boolean($("#outpaintPrototypeEnabled")?.checked),
+    outpaint_source_image: $("#outpaintSourceImage")?.value || "",
+    outpaint_anchor: $("#outpaintAnchor")?.value || "center",
+    outpaint_source_x: -1,
+    outpaint_source_y: -1,
+    outpaint_feather_px: numberValue($("#outpaintFeatherPx"), 24),
+    outpaint_context_seed_mode: $("#outpaintContextSeedMode")?.value || "edge_pad_v1",
+    outpaint_denoising_strength: numberValue($("#outpaintDenoisingStrength"), 0.70),
+    outpaint_latent_strategy: $("#outpaintLatentStrategy")?.value || "noise_only_new_regions_v1",
+    outpaint_prompt_mode: $("#outpaintPromptMode")?.value || "overlay_only_v1",
+    outpaint_overlay_positive_prompt: $("#outpaintOverlayPositivePrompt")?.value || "",
+    outpaint_overlay_negative_prompt: $("#outpaintOverlayNegativePrompt")?.value || "",
+    outpaint_diagnostic_artifacts: Boolean($("#outpaintDiagnosticArtifacts")?.checked),
+    outpaint_shape_expansion_enabled: Boolean($("#outpaintShapeExpansionEnabled")?.checked),
+    outpaint_shape_target_mode: $("#outpaintShapeTargetMode")?.value || "square",
+    outpaint_shape_target_width: numberValue($("#outpaintShapeTargetWidth"), 0),
+    outpaint_shape_target_height: numberValue($("#outpaintShapeTargetHeight"), 0),
+    outpaint_shape_base_width: 0,
+    outpaint_shape_base_height: 0,
+    outpaint_shape_anchor: $("#outpaintShapeAnchor")?.value || "center",
+    outpaint_shape_context_seed_mode: $("#outpaintShapeContextSeedMode")?.value || "edge_pad_v1",
+    outpaint_shape_source_handoff: $("#outpaintShapeSourceHandoff")?.value || "auto",
+    outpaint_shape_prompt_mode: $("#outpaintShapePromptMode")?.value || "overlay_only_v1",
+    outpaint_shape_overlay_positive_prompt: $("#outpaintShapeOverlayPositivePrompt")?.value || "",
+    outpaint_shape_overlay_negative_prompt: $("#outpaintShapeOverlayNegativePrompt")?.value || "",
+    outpaint_shape_denoising_strength: numberValue($("#outpaintShapeDenoisingStrength"), 0.40),
+    outpaint_shape_save_base: Boolean($("#outpaintShapeSaveBase")?.checked),
     output_dir: $("#outputDir").value,
     output_prefix: $("#outputPrefix").value || "{index:05d}-{seed}",
     save_images: true,
+    save_txt: Boolean($("#saveTxt")?.checked),
+    save_json: Boolean($("#saveJson")?.checked),
+    save_diagnostics_json: Boolean($("#saveDiagnosticsJson")?.checked),
     ...selectionMetadata,
   };
 }
@@ -98,6 +142,10 @@ export function applyGenerationValues(values = {}) {
       values.hires_size_mode,
       Boolean(values.hires_enabled),
     ),
+    hires_final_size_correction_filter: values.hires_final_size_correction_filter || values.hires_exact_resize_filter || "auto",
+    hires_aspect_policy: values.hires_aspect_policy || "stretch",
+    hires_padding_mode: values.hires_padding_mode || "reflect",
+    hires_correction_fingerprint_enabled: Boolean(values.hires_correction_fingerprint_enabled),
   };
   const mapping = {
     positive_prompt: "#positivePrompt",
@@ -140,7 +188,28 @@ export function applyGenerationValues(values = {}) {
     hires_tile_size: "#hiresTileSize",
     hires_tile_overlap: "#hiresTileOverlap",
     hires_tile_batch_size: "#hiresTileBatchSize",
-    hires_exact_resize_filter: "#hiresExactResizeFilter",
+    hires_final_size_correction_filter: "#hiresFinalSizeCorrectionFilter",
+    hires_aspect_policy: "#hiresAspectPolicy",
+    hires_padding_mode: "#hiresPaddingMode",
+    outpaint_source_image: "#outpaintSourceImage",
+    outpaint_anchor: "#outpaintAnchor",
+    outpaint_feather_px: "#outpaintFeatherPx",
+    outpaint_context_seed_mode: "#outpaintContextSeedMode",
+    outpaint_denoising_strength: "#outpaintDenoisingStrength",
+    outpaint_latent_strategy: "#outpaintLatentStrategy",
+    outpaint_prompt_mode: "#outpaintPromptMode",
+    outpaint_overlay_positive_prompt: "#outpaintOverlayPositivePrompt",
+    outpaint_overlay_negative_prompt: "#outpaintOverlayNegativePrompt",
+    outpaint_shape_target_mode: "#outpaintShapeTargetMode",
+    outpaint_shape_target_width: "#outpaintShapeTargetWidth",
+    outpaint_shape_target_height: "#outpaintShapeTargetHeight",
+    outpaint_shape_anchor: "#outpaintShapeAnchor",
+    outpaint_shape_context_seed_mode: "#outpaintShapeContextSeedMode",
+    outpaint_shape_source_handoff: "#outpaintShapeSourceHandoff",
+    outpaint_shape_prompt_mode: "#outpaintShapePromptMode",
+    outpaint_shape_overlay_positive_prompt: "#outpaintShapeOverlayPositivePrompt",
+    outpaint_shape_overlay_negative_prompt: "#outpaintShapeOverlayNegativePrompt",
+    outpaint_shape_denoising_strength: "#outpaintShapeDenoisingStrength",
     output_dir: "#outputDir",
     output_prefix: "#outputPrefix",
   };
@@ -155,13 +224,33 @@ export function applyGenerationValues(values = {}) {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
   });
+  if ($("#outpaintPrototypeEnabled")) {
+    $("#outpaintPrototypeEnabled").checked = Boolean(values.outpaint_prototype_enabled);
+    $("#outpaintPrototypeEnabled").dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  if ($("#outpaintDiagnosticArtifacts")) $("#outpaintDiagnosticArtifacts").checked = Boolean(values.outpaint_diagnostic_artifacts);
+  if ($("#outpaintShapeExpansionEnabled")) {
+    $("#outpaintShapeExpansionEnabled").checked = Boolean(values.outpaint_shape_expansion_enabled);
+    if (values.outpaint_shape_expansion_enabled) {
+      const replayBaseWidth = Number(values.outpaint_shape_base_width || 0);
+      const replayBaseHeight = Number(values.outpaint_shape_base_height || 0);
+      if (replayBaseWidth > 0 && $("#width")) $("#width").value = String(replayBaseWidth);
+      if (replayBaseHeight > 0 && $("#height")) $("#height").value = String(replayBaseHeight);
+    }
+    $("#outpaintShapeExpansionEnabled").dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  if ($("#outpaintShapeSaveBase")) $("#outpaintShapeSaveBase").checked = Boolean(values.outpaint_shape_save_base);
   if ($("#hiresEnabled")) {
     $("#hiresEnabled").checked = Boolean(values.hires_enabled);
     $("#hiresEnabled").dispatchEvent(new Event("change", { bubbles: true }));
   }
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = values.hires_save_lowres !== false;
+  if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(values.hires_correction_fingerprint_enabled);
   if ($("#hiresSaveUpscaledPreDenoise")) $("#hiresSaveUpscaledPreDenoise").checked = Boolean(values.hires_save_upscaled_pre_denoise);
   if ($("#hiresSaveVaeRoundtrip")) $("#hiresSaveVaeRoundtrip").checked = Boolean(values.hires_save_vae_roundtrip);
+  if ($("#saveTxt")) $("#saveTxt").checked = values.save_txt !== false;
+  if ($("#saveJson")) $("#saveJson").checked = values.save_json !== false;
+  if ($("#saveDiagnosticsJson")) $("#saveDiagnosticsJson").checked = Boolean(values.save_diagnostics_json);
   if ($("#promptParserKwargs")) $("#promptParserKwargs").value = JSON.stringify(values.prompt_parser_kwargs || {});
   if ($("#promptShadowCompare")) $("#promptShadowCompare").checked = Boolean(values.prompt_shadow_compare);
   if ($("#promptShortcutProfileSnapshot")) $("#promptShortcutProfileSnapshot").value = JSON.stringify(values.prompt_shortcut_profile_snapshot || {});

@@ -9,6 +9,7 @@ from PIL.PngImagePlugin import PngInfo
 
 from image_gen.systems.diagnostics.serialization import json_safe
 from modules.txt2img.generation_manifest import GenerationManifest
+from modules.txt2img.manifest_io import manifest_to_replay_dict
 
 
 _LORA_INFOTEXT_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -226,7 +227,10 @@ def manifest_to_civitai_parameters(manifest: GenerationManifest) -> str:
 
 
 def build_png_text_chunks(manifest: GenerationManifest) -> dict[str, str]:
-    payload = json_safe(manifest.to_dict())
+    # Embed the same compact replay payload used by the default JSON sidecar.
+    # Full runtime diagnostics remain available in the optional
+    # ``*.diagnostics.json`` sidecar instead of inflating every PNG.
+    payload = json_safe(manifest_to_replay_dict(manifest))
     parameters = manifest_to_civitai_parameters(manifest)
     manifest_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return {
