@@ -8,7 +8,7 @@ IMAGE_GEN is a local text-to-image application built around a custom, modular St
 
 ## Project Update — August 7, 2026
 
-IMAGE_GEN remains in active alpha development. This update summarizes the latest runtime-performance, hires-generation, canvas-expansion, and intermediate-image workflow improvements completed through August 7, 2026.
+ImageGen remains in active alpha development. This update summarizes the latest runtime-performance, hires-generation, canvas-expansion, and intermediate-image workflow improvements completed through August 7, 2026.
 
 
 ### August 7 Updates
@@ -21,9 +21,9 @@ IMAGE_GEN remains in active alpha development. This update summarizes the latest
 
 * **Substantially smaller PNG output files observed in testing** — generated PNGs that previously occupied multiple megabytes are now commonly measuring only a few hundred kilobytes in the current test workflow. Exact file size remains dependent on image dimensions, image complexity, metadata, and save configuration, but the current output path is producing significantly smaller files in practical testing.
 
-* **Canvas Expansion workflow added** — IMAGE_GEN now includes a Stable Diffusion-based canvas-expansion/outpaint workflow designed to convert an existing composition into a larger target shape without stretching the protected source image.
+* **Canvas Expansion workflow added** — ImageGen now includes a Stable Diffusion-based canvas-expansion/outpaint workflow designed to convert an existing composition into a larger target shape without stretching the protected source image.
 
-* **Expand Existing Image** — users can load an existing image, choose a larger target canvas, select placement, provide extension prompts, and generate only the newly required image area while preserving the original composition. The source image does not need to have been created by IMAGE_GEN.
+* **Expand Existing Image** — users can load an existing image, choose a larger target canvas, select placement, provide extension prompts, and generate only the newly required image area while preserving the original composition. The source image does not need to have been created by ImageGen.
 
 * **Expand After Generation** — txt2img can now generate the smaller/base composition first and then expand that result inside the same generation workflow before the smaller image is treated as the primary final artifact. This allows the original Stable Diffusion generation to establish the subject, lighting, palette, and background before the canvas is enlarged.
 
@@ -98,6 +98,7 @@ Generation time and output size can vary substantially with:
 * PNG metadata and output settings.
 
 On the currently tested configuration, however, both normal generation and hires generation are completing substantially faster than earlier development builds, while generated PNG files are also materially smaller.
+
 
 ## Project Update — August 6, 2026
 
