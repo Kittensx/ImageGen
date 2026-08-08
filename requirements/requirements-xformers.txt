@@ -1,0 +1,4 @@
+# IMAGE_GEN validated xFormers wheel from the known-good freeze.
+# Kept separate so the custom attention runtime can be managed independently.
+
+xformers @ https://github.com/Kittensx/xformers-blackwell-windows/releases/download/v1.1.0-blackwell-sm120/xformers-0.0.35%2Baf84367e.sm120diag1-py39-none-win_amd64.whl#sha256=0f029db4738d94a4cd7dd5d55ba527e8b24ada3b6efbdad70b0759244b6c7bba

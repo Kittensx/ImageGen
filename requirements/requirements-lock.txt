@@ -1,0 +1,7 @@
+# Full known-good IMAGE_GEN Python environment.
+# Reconstructs the supplied pip freeze using split requirement files.
+
+-r requirements-common-lock.txt
+-r requirements-torch-cu128.txt
+-r requirements-mslk.txt
+-r requirements-xformers.txt

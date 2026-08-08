@@ -1,0 +1,6 @@
+# IMAGE_GEN installer-consumed common requirements.
+#
+# Keep this entry point stable: scripts/setup/install_image_gen.py installs it.
+# The exact working pins live in requirements-common-lock.txt.
+
+-r requirements-common-lock.txt

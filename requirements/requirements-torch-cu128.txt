@@ -1,0 +1,9 @@
+# IMAGE_GEN validated PyTorch / CUDA 12.8 stack from the known-good freeze.
+# Triton is kept with the Torch runtime stack.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+torchvision==0.26.0+cu128
+triton-windows==3.7.1.post27

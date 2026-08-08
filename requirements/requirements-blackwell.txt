@@ -1,0 +1,7 @@
+# Validated NVIDIA Blackwell SM120 environment.
+# Full pinned environment, split by runtime component.
+
+-r requirements-common-lock.txt
+-r requirements-torch-cu128.txt
+-r requirements-mslk.txt
+-r requirements-xformers.txt

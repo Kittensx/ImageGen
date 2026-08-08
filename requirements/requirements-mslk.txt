@@ -1,0 +1,4 @@
+# IMAGE_GEN validated MSLK wheel from the known-good freeze.
+# Kept separate so the custom attention runtime can be managed independently.
+
+mslk @ https://github.com/Kittensx/mslk-blackwell-windows/releases/download/v1.3.0-blackwell-sm120/mslk-1.3.0-py3-none-any.whl#sha256=4402cdae1c2006d93179dc7a9341777c8521128459743242a894032edf8b4354

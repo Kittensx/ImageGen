@@ -1,0 +1,5 @@
+# IMAGE_GEN developer environment lock entry point.
+# This now reconstructs the exact supplied working freeze while keeping
+# Torch/CUDA, MSLK, and xFormers in their own files.
+
+-r requirements-lock.txt
