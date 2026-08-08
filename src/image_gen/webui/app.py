@@ -36,7 +36,7 @@ from image_gen.webui.upscaler_catalog import (
     UPSCALER_CATALOG_CONTRACT_VERSION,
     WebUIUpscalerCatalog,
 )
-from image_gen.webui.civitai_lora_metadata import (
+from image_gen.webui.civitai_asset_metadata import (
     CivitaiCredentialError,
     CivitaiMetadataNotFound,
     CivitaiRequestError,
@@ -569,7 +569,10 @@ def create_app(
                     "/api/assets/refresh",
                     "/api/assets/checkpoints",
                     "/api/assets/loras",
+                    "/api/assets/vaes",
                     "/api/assets/textual-inversions",
+                    "/api/civitai/assets/{asset_type}/metadata",
+                    "/api/civitai/assets/{asset_type}/{asset_id}/metadata",
                 ],
                 "workspace_layout_routes": [
                     "/api/workspace/layout",
@@ -710,6 +713,79 @@ def create_app(
             return catalog.catalog_payload()
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=f"Unsupported asset type: {requested}") from exc
+
+    def _normalize_civitai_asset_type(value: str) -> str:
+        token = str(value or "").strip().casefold().replace("-", "_")
+        aliases = {
+            "checkpoint": "checkpoint",
+            "checkpoints": "checkpoint",
+            "model": "checkpoint",
+            "models": "checkpoint",
+            "lora": "lora",
+            "loras": "lora",
+            "vae": "vae",
+            "vaes": "vae",
+            "textual_inversion": "textual_inversion",
+            "textual_inversions": "textual_inversion",
+            "embedding": "textual_inversion",
+            "embeddings": "textual_inversion",
+            "upscaler": "upscaler",
+            "upscalers": "upscaler",
+        }
+        normalized = aliases.get(token, token)
+        if normalized not in {"checkpoint", "lora", "vae", "textual_inversion", "upscaler"}:
+            raise ValueError(f"Unsupported CivitAI asset type: {value}")
+        return normalized
+
+    @app.post("/api/civitai/assets/{asset_type}/metadata")
+    async def enrich_assets_from_civitai(
+        asset_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            normalized = _normalize_civitai_asset_type(asset_type)
+            mode = str((payload or {}).get("mode") or "missing").strip().casefold()
+            if normalized == "upscaler":
+                return await asyncio.to_thread(upscaler_catalog.enrich_all_from_civitai, mode=mode)
+            return await asyncio.to_thread(catalog.enrich_assets_from_civitai, normalized, mode=mode)
+        except CivitaiCredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CivitaiRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/civitai/assets/{asset_type}/{asset_id}/metadata")
+    async def enrich_asset_from_civitai(
+        asset_type: str,
+        asset_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        overwrite = bool((payload or {}).get("overwrite", False))
+        try:
+            normalized = _normalize_civitai_asset_type(asset_type)
+            if normalized == "upscaler":
+                return await asyncio.to_thread(
+                    upscaler_catalog.enrich_from_civitai,
+                    asset_id,
+                    overwrite=overwrite,
+                )
+            return await asyncio.to_thread(
+                catalog.enrich_asset_from_civitai,
+                normalized,
+                asset_id,
+                overwrite=overwrite,
+            )
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CivitaiMetadataNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CivitaiCredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CivitaiRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/assets/checkpoints")
     async def checkpoint_assets() -> dict[str, Any]:
@@ -929,6 +1005,52 @@ def create_app(
     async def delete_lora_asset(asset_id: str) -> dict[str, Any]:
         try:
             return catalog.delete_asset("lora", asset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/vaes")
+    async def vae_assets() -> dict[str, Any]:
+        return catalog.asset_payload("vae")
+
+    @app.post("/api/assets/vaes/refresh")
+    async def refresh_vae_assets() -> dict[str, Any]:
+        return await asyncio.to_thread(catalog.refresh_asset_type, "vae")
+
+    @app.get("/api/assets/vaes/{asset_id}")
+    async def vae_asset_details(asset_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(catalog.vae_details, asset_id)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.patch("/api/assets/vaes/{asset_id}")
+    async def update_vae_asset(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return catalog.update_asset_metadata("vae", asset_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/assets/vaes/{asset_id}/preview")
+    async def vae_asset_preview(asset_id: str) -> FileResponse:
+        try:
+            path = catalog.asset_preview_path("vae", asset_id)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path, media_type=_preview_media_type(path))
+
+    @app.post("/api/assets/vaes/{asset_id}/preview")
+    async def replace_vae_asset_preview(asset_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+        try:
+            return catalog.replace_asset_preview(
+                "vae",
+                asset_id,
+                filename=file.filename or "preview.png",
+                content=await file.read(),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (OSError, TypeError, ValueError) as exc:

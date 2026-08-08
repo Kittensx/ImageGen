@@ -914,7 +914,8 @@ def _metadata_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
         or ""
     )
     model_name = (
-        provenance.get("file_name")
+        provenance.get("model_name")
+        or provenance.get("file_name")
         or _asset_label(base_model)
         or (Path(str(model_path)).name if model_path else "")
     )

@@ -260,6 +260,8 @@ def _minimal_model_provenance(manifest: GenerationManifest) -> dict[str, Any]:
         "resolved_path": source.get("resolved_path") or base.resolved_path,
         "loaded_path": source.get("loaded_path") or base.resolved_path,
         "file_name": source.get("file_name") or base.resolved_filename or base.requested_filename,
+        "model_name": source.get("model_name"),
+        "model_name_source": source.get("model_name_source"),
         "sha256": source.get("sha256") or base.resolved_hash or base.requested_hash,
         "architecture": source.get("architecture"),
         "prediction_type": source.get("prediction_type"),

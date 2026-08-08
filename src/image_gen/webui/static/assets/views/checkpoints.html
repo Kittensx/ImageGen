@@ -81,6 +81,7 @@
         <span class="visually-hidden">Search checkpoints</span>
         <input id="checkpointLibrarySearch" type="search" placeholder="Search checkpoints…" autocomplete="off">
       </label>
+      <button class="secondary-button compact-button" id="checkpointFetchCivitaiButton" type="button">Fetch CivitAI Metadata</button>
       <button class="secondary-button compact-button" id="checkpointRefreshButton" type="button">↻ Refresh</button>
     </div>
     <div class="checkpoint-card-grid" id="checkpointCardGrid" aria-live="polite"></div>
@@ -118,8 +119,8 @@
         <div><dt>Modified</dt><dd id="checkpointDetailModified">—</dd></div>
       </dl>
       <label class="field-block">
-        <span>Display name</span>
-        <input id="checkpointMetadataDisplayName" type="text" maxlength="160">
+        <span>Nickname</span>
+        <input id="checkpointMetadataNickname" type="text" maxlength="160" placeholder="Optional library nickname">
       </label>
       <label class="field-block">
         <span>Source URL</span>
@@ -136,12 +137,18 @@
       <label class="checkpoint-switch-row checkpoint-detail-startup"><span>Use as pinned startup default</span><input id="checkpointDetailStartupToggle" type="checkbox"></label>
       <div class="checkpoint-detail-actions">
         <button class="primary-button" id="checkpointLoadNowButton" type="button">Load Now</button>
+        <button class="secondary-button" id="checkpointFetchCivitaiDetailButton" type="button">Refresh from CivitAI</button>
+        <button class="secondary-button" id="checkpointOpenSourceButton" type="button">Open CivitAI / Source Page</button>
         <button class="secondary-button" id="checkpointOpenFolderButton" type="button">Open Folder</button>
         <button class="secondary-button" id="checkpointReplacePreviewButton" type="button">Replace Preview</button>
         <button class="secondary-button" id="checkpointChooseRecentPreviewButton" type="button">Choose from Recent Outputs</button>
         <input id="checkpointPreviewFileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
         <button class="primary-button" id="checkpointSaveMetadataButton" type="button">Save Metadata</button>
       </div>
+      <details class="asset-civitai-metadata-details" id="checkpointCivitaiMetadataDetails">
+        <summary>CivitAI Metadata</summary>
+        <pre class="metadata-pre" id="checkpointCivitaiMetadataText">No CivitAI metadata has been retrieved for this checkpoint.</pre>
+      </details>
       <small class="field-status subtle" id="checkpointDetailStatus">Editable metadata is stored beside the checkpoint in an .imagegen.json sidecar.</small>
     </div>
   </aside>

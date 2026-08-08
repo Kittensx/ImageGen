@@ -9,14 +9,13 @@ import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
-import { bindSettings } from "./features/settings.js?v=home-sidebar1";
+import { bindSettings } from "./features/settings.js?v=0.1.62";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
-import { bindWorkspaceLayout } from "./features/layout.js?v=0.1.74";
+import { bindWorkspaceLayout } from "./features/layout.js?v=gallery-resize1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
-import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=0.1.74";
-import { bindLoraWorkspace } from "./features/loras.js?v=0.1.77";
-import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=home-sidebar1";
-import { bindHomeWorkspace } from "./features/home.js?v=home-sidebar1";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-label1";
+import { bindLoraWorkspace } from "./features/loras.js?v=asset-label1";
+import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
 import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
@@ -387,19 +386,64 @@ function applyVaeSelectionPolicy() {
   const status = $("#vaeSelectionStatus");
   if (!select || !status) return;
   select.disabled = false;
+  const civitaiButton = $("#vaeFetchCivitaiButton");
+  if (civitaiButton) civitaiButton.disabled = !select.value;
   if (!select.value) {
     status.textContent = "Automatic / checkpoint embedded.";
   } else {
     const label = select.selectedOptions?.[0]?.textContent || select.value;
-    status.textContent = `Manual external VAE selected: ${label}`;
+    const record = state.vaes.find((item) => normalizedModelPath(item.path) === normalizedModelPath(select.value));
+    const lookup = record?.civitai_lookup || record?.metadata?._civitai_lookup || {};
+    const civitaiLabel = lookup?.model_name
+      ? ` · CivitAI: ${lookup.model_name}${lookup.creator ? ` by ${lookup.creator}` : ""}`
+      : "";
+    status.textContent = `Manual external VAE selected: ${label}${civitaiLabel}`;
   }
   status.className = "field-status subtle";
+}
+
+async function enrichSelectedVaeFromCivitai() {
+  const select = $("#vaePath");
+  const button = $("#vaeFetchCivitaiButton");
+  if (!select?.value) {
+    notify("Select an external VAE before fetching CivitAI metadata.", "warning");
+    return;
+  }
+  const record = state.vaes.find((item) => normalizedModelPath(item.path) === normalizedModelPath(select.value));
+  if (!record?.asset_id) {
+    notify("The selected VAE is not registered in the IMAGE_GEN asset catalog. Refresh models and try again.", "warning");
+    return;
+  }
+  const previousLabel = button?.textContent || "Refresh selected VAE from CivitAI";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Fetching…";
+  }
+  try {
+    const updated = await api.enrichAssetFromCivitai("vae", record.asset_id, false);
+    state.vaes = state.vaes.map((item) => item.asset_id === updated.asset_id ? { ...item, ...updated } : item);
+    const currentModel = $("#modelPath")?.value || "";
+    const currentVae = select.value;
+    populateModels({ model_path: currentModel, vae_path: currentVae });
+    applyVaeSelectionPolicy();
+    const lookup = updated.civitai_lookup || updated.metadata?._civitai_lookup || {};
+    notify(lookup.preview_image_downloaded
+      ? "CivitAI metadata and a preview image were added to the VAE sidecar."
+      : "CivitAI metadata was added to the VAE sidecar.");
+  } catch (error) {
+    notify(`Unable to fetch VAE metadata from CivitAI: ${error.message}`, "error");
+  } finally {
+    if (button) {
+      button.disabled = !select.value;
+      button.textContent = previousLabel;
+    }
+  }
 }
 
 function populateModels(current = {}) {
   const modelOptions = state.models.map((item) => option(
     item.path,
-    `${item.name} · ${item.size_mb} MB`,
+    `${item.display_name || item.embedded_name || item.name} · ${item.size_mb} MB`,
   ));
   const requestedModelRaw = current.model_path || "";
   const requestedModel = resolveCatalogModelPath(requestedModelRaw) || requestedModelRaw;
@@ -1030,7 +1074,6 @@ async function start() {
     state.activeModel = bootstrap.active_model || null;
     setCatalogs(bootstrap);
     state.recentOutputs = bootstrap.recent_outputs || [];
-    bindHomeWorkspace({ models: state.models, vaes: state.vaes, loras: state.loras });
 
     const current = bootstrap.effective_generation || {
       ...(bootstrap.defaults || {}),
@@ -1092,7 +1135,6 @@ async function start() {
       showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
     });
     workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace });
-    workspaceTabs.showHome();
     window.addEventListener("image-gen-active-prompt-assets-updated", saveSessionSoon);
     bindLightbox();
     bindOutputDetails({ collect: collectCurrentValues, apply: applyReplayValues, onJobQueued: acceptQueuedJob });
@@ -1107,6 +1149,7 @@ async function start() {
     bindHiresUpscalers(saveSessionSoon);
     bindOutpaintPrototype(saveSessionSoon);
     $("#vaePath")?.addEventListener("change", applyVaeSelectionPolicy);
+    $("#vaeFetchCivitaiButton")?.addEventListener("click", enrichSelectedVaeFromCivitai);
     renderGallery(state.recentOutputs);
     renderPromptPresets(bootstrap.prompt_presets || []);
     renderGenerationProfiles(bootstrap.generation_profiles || []);

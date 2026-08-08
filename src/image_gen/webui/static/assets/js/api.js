@@ -86,6 +86,14 @@ export const api = {
   activeModel: () => request("/api/models/active"),
   unloadModel: () => request("/api/models/unload", { method: "POST" }),
   assetCatalog: () => request("/api/assets/catalog"),
+  enrichAssetsFromCivitai: (assetType, mode = "missing") => request(`/api/civitai/assets/${encodeURIComponent(assetType)}/metadata`, {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  }),
+  enrichAssetFromCivitai: (assetType, assetId, overwrite = false) => request(`/api/civitai/assets/${encodeURIComponent(assetType)}/${encodeURIComponent(assetId)}/metadata`, {
+    method: "POST",
+    body: JSON.stringify({ overwrite }),
+  }),
   refreshAssetCatalog: (assetType = "") => request("/api/assets/refresh", {
     method: "POST",
     body: JSON.stringify(assetType ? { asset_type: assetType } : {}),
@@ -111,20 +119,21 @@ export const api = {
     body: JSON.stringify({ output_id: outputId }),
   }),
   openCheckpointFolder: (assetId) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}/open-folder`, { method: "POST" }),
+  vaeAssets: () => request("/api/assets/vaes"),
+  refreshVaeAssets: () => request("/api/assets/vaes/refresh", { method: "POST" }),
+  vaeDetails: (assetId) => request(`/api/assets/vaes/${encodeURIComponent(assetId)}`),
+  saveVaeMetadata: (assetId, values) => request(`/api/assets/vaes/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(values),
+  }),
   loraAssets: () => request("/api/assets/loras"),
   refreshLoraAssets: () => request("/api/assets/loras/refresh", { method: "POST" }),
   scanLoras: (mode = "missing") => request("/api/assets/loras/scan", {
     method: "POST",
     body: JSON.stringify({ mode }),
   }),
-  enrichLorasFromCivitai: (mode = "missing") => request("/api/assets/loras/civitai-metadata", {
-    method: "POST",
-    body: JSON.stringify({ mode }),
-  }),
-  enrichLoraFromCivitai: (assetId, overwrite = false) => request(`/api/assets/loras/${encodeURIComponent(assetId)}/civitai-metadata`, {
-    method: "POST",
-    body: JSON.stringify({ overwrite }),
-  }),
+  enrichLorasFromCivitai: (mode = "missing") => api.enrichAssetsFromCivitai("lora", mode),
+  enrichLoraFromCivitai: (assetId, overwrite = false) => api.enrichAssetFromCivitai("lora", assetId, overwrite),
   loraDetails: (assetId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`),
   saveLoraMetadata: (assetId, values) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`, {
     method: "PATCH",

@@ -60,6 +60,41 @@ def _default_conditioning_dimension_for_architecture(architecture: str | None) -
     return defaults.get(normalized)
 
 
+_METADATA_MODEL_NAME_KEYS = (
+    "modelspec.title",
+    "modelspec.name",
+)
+
+
+def _looks_like_version_only(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    compact = text.replace("version", "").strip()
+    if compact.startswith("v"):
+        compact = compact[1:].strip()
+    return bool(compact) and all(ch.isdigit() or ch in ".-_ " for ch in compact)
+
+
+def detect_model_name(
+    metadata: Mapping[str, Any] | None,
+    fallback: str | None = None,
+) -> tuple[str, str]:
+    """Resolve a human checkpoint name from safetensors metadata safely.
+
+    Only ModelSpec title/name fields are considered authoritative enough to
+    replace the local filename stem. Generic metadata such as ``name`` or
+    provider/version labels is intentionally ignored. Obvious version-only
+    values (for example ``v1`` or ``1.0``) also fall back to the filename.
+    """
+    source = dict(metadata or {})
+    for key in _METADATA_MODEL_NAME_KEYS:
+        value = str(source.get(key) or "").strip()
+        if value and not _looks_like_version_only(value):
+            return value, key
+    fallback_text = str(fallback or "").strip()
+    return fallback_text, "filename" if fallback_text else ""
+
 _METADATA_PREDICTION_KEYS = (
     "modelspec.prediction_type",
     "prediction_type",
@@ -161,6 +196,8 @@ class CheckpointReport:
     prediction_type_source: str = ""
     architecture_summary: str = ""
     architecture_source: str = ""
+    model_name: str = ""
+    model_name_source: str = ""
 
     @property
     def architecture_contract(self) -> ArchitectureContract:
@@ -196,6 +233,8 @@ class CheckpointReport:
             "prediction_type_source": self.prediction_type_source,
             "architecture_summary": self.architecture_summary,
             "architecture_source": self.architecture_source,
+            "model_name": self.model_name,
+            "model_name_source": self.model_name_source,
             "architecture_contract": self.architecture_contract.to_dict(),
         }
 
@@ -261,6 +300,7 @@ class CheckpointInspector:
         )
         architecture, evidence, model_dimension = self._detect_architecture(keys, shapes, has_te2)
         prediction_type, prediction_source = detect_prediction_type(metadata, architecture)
+        model_name, model_name_source = detect_model_name(metadata, path.stem)
         contract = build_architecture_contract(
             architecture,
             prediction_type,
@@ -294,6 +334,8 @@ class CheckpointInspector:
             prediction_type_source=prediction_source,
             architecture_summary=contract.summary,
             architecture_source=contract.source,
+            model_name=model_name,
+            model_name_source=model_name_source,
         )
 
     def _collect_prefixes(self, keys: List[str]) -> List[str]:

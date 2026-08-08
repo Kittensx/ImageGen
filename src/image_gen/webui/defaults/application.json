@@ -86,56 +86,7 @@
     },
     "collapsed_panels": []
   },
-  "ui_scale_layout_defaults": {
-    "105": {
-      "left_column_width": 1006,
-      "right_column_width": 869,
-      "gallery_panel_height": 378.0001449584961,
-      "live_preview_panel_height": 360,
-      "live_preview_collapsed": false,
-      "follow_newest_output": false,
-      "panel_scales": {
-        "controls": 200,
-        "output_viewer": 100,
-        "recent_outputs": 100,
-        "live_preview": 140,
-        "queue": 130,
-        "recent_runs": 240,
-        "prompt_presets": 190,
-        "model_refresh": 190,
-        "maintenance": 200,
-        "memory_status": 100,
-        "active_prompt_assets": 100,
-        "runtime_status": 100,
-        "startup_defaults": 100
-      },
-      "workspace_layout_version": 1,
-      "startup_defaults_open": false,
-      "startup_defaults_pinned": false,
-      "startup_defaults_width": 300,
-      "panel_zones": {
-        "left": [
-          "generation_controls"
-        ],
-        "center": [
-          "output_viewer",
-          "recent_outputs"
-        ],
-        "right": [
-          "live_preview",
-          "active_prompt_assets",
-          "memory_status",
-          "runtime_status",
-          "queue",
-          "recent_runs",
-          "prompt_presets",
-          "model_refresh",
-          "maintenance"
-        ]
-      },
-      "collapsed_panels": []
-    }
-  },
+  "ui_scale_layout_defaults": {},
   "recent_outputs_browser": {
     "time_window": "all",
     "custom_hours": 24,

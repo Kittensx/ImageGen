@@ -134,7 +134,7 @@
           <div><dt>Model family</dt><dd id="loraDetailModelFamily">Unknown</dd></div>
           <div><dt>Modified</dt><dd id="loraDetailModified">—</dd></div>
         </dl>
-        <label class="field-block"><span>Display name</span><input id="loraMetadataDisplayName" type="text" maxlength="160"></label>
+        <label class="field-block"><span>Nickname</span><input id="loraMetadataNickname" type="text" maxlength="160" placeholder="Optional library nickname"></label>
         <label class="field-block"><span>Activation text</span><input id="loraMetadataActivationText" type="text" placeholder="thg-teresa"></label>
         <div class="lora-metadata-grid">
           <label class="field-block"><span>Preferred weight</span><input id="loraMetadataPreferredWeight" type="number" min="-4" max="4" step="0.05"></label>
@@ -158,6 +158,10 @@
           <button class="primary-button" id="loraSaveMetadataButton" type="button">Save Metadata</button>
           <button class="secondary-button danger-button" id="loraDeleteButton" type="button">Delete LoRA</button>
         </div>
+        <details class="asset-civitai-metadata-details" id="loraCivitaiMetadataDetails">
+          <summary>CivitAI Metadata</summary>
+          <pre class="metadata-pre" id="loraCivitaiMetadataText">No CivitAI metadata has been retrieved for this LoRA.</pre>
+        </details>
         <small class="field-status subtle" id="loraDetailStatus">Editable metadata is stored beside the LoRA in an .imagegen.json sidecar.</small>
       </div>
     </section>

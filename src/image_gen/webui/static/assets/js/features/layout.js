@@ -381,6 +381,7 @@ export function bindWorkspaceLayout(settings = {}) {
   let effectiveGalleryHeight = layout.gallery_panel_height;
   let gallerySyncFrame = 0;
   let draggedPanelId = "";
+  let resizeActive = false;
 
   const persistSoon = debounce(async () => {
     try {
@@ -431,7 +432,9 @@ export function bindWorkspaceLayout(settings = {}) {
     const recentInCenter = center && recentPanel?.parentElement === center && outputPanel?.parentElement === center;
     if (centerSplitter) {
       centerSplitter.classList.toggle("is-hidden", !recentInCenter || layout.collapsed_panels.includes("recent_outputs"));
-      if (recentInCenter) center.insertBefore(centerSplitter, recentPanel);
+      if (recentInCenter && centerSplitter.nextElementSibling !== recentPanel) {
+        center.insertBefore(centerSplitter, recentPanel);
+      }
     }
 
     const right = zoneElement("right");
@@ -440,7 +443,9 @@ export function bindWorkspaceLayout(settings = {}) {
     const liveInRight = right && livePanel?.parentElement === right;
     if (liveSplitter) {
       liveSplitter.classList.toggle("is-hidden", !liveInRight);
-      if (liveInRight) livePanel.after(liveSplitter);
+      if (liveInRight && livePanel.nextElementSibling !== liveSplitter) {
+        livePanel.after(liveSplitter);
+      }
     }
   };
 
@@ -528,7 +533,7 @@ export function bindWorkspaceLayout(settings = {}) {
     }
   };
 
-  const applyLayout = (preference = "balanced") => {
+  const applyLayout = (preference = "balanced", { structural = true } = {}) => {
     const workspace = $("#workspace");
     applyStartupDefaultsDrawer();
     renderedHorizontal = fitHorizontalLayout(layout, preference);
@@ -537,7 +542,7 @@ export function bindWorkspaceLayout(settings = {}) {
     workspace.style.setProperty("--center-column-min-width", `${renderedHorizontal.center_column_min_width}px`);
     workspace.style.setProperty("--gallery-panel-height", `${layout.gallery_panel_height}px`);
     workspace.style.setProperty("--live-preview-panel-height", `${layout.live_preview_panel_height}px`);
-    applyPanelPositions();
+    if (structural) applyPanelPositions();
     applyPanelScales(layout.panel_scales);
 
     const livePanel = $("#livePreviewPanel");
@@ -558,10 +563,15 @@ export function bindWorkspaceLayout(settings = {}) {
     syncGalleryStackHeight();
   };
 
-  const update = (changes, { persist = true, preference = "balanced", useRenderedHorizontal = false } = {}) => {
+  const update = (changes, {
+    persist = true,
+    preference = "balanced",
+    useRenderedHorizontal = false,
+    structural = true,
+  } = {}) => {
     const merged = mergeLayoutValues(layout, changes);
     layout = normalizeLayout({ ui_layout: merged });
-    applyLayout(preference);
+    applyLayout(preference, { structural });
     if (useRenderedHorizontal) {
       layout.left_column_width = renderedHorizontal.left_column_width;
       layout.right_column_width = renderedHorizontal.right_column_width;
@@ -734,23 +744,41 @@ export function bindWorkspaceLayout(settings = {}) {
   applyLayout();
 
   const beginPointerResize = (event, onMove) => {
-    if (window.matchMedia("(max-width: 720px)").matches) return;
+    if (window.matchMedia("(max-width: 720px)").matches) return false;
     event.preventDefault();
     const handle = event.currentTarget;
-    handle.setPointerCapture(event.pointerId);
+    const pointerId = event.pointerId;
+    resizeActive = true;
     document.body.classList.add("is-resizing");
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch (_) {
+      // Window-level listeners below still keep the resize stable if capture is unavailable.
+    }
 
-    const move = (moveEvent) => onMove(moveEvent);
-    const finish = () => {
+    const move = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      onMove(moveEvent);
+    };
+    const finish = (finishEvent) => {
+      if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
+      resizeActive = false;
       document.body.classList.remove("is-resizing");
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+      try {
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+      } catch (_) {
+        // The element may have lost capture during a browser/layout transition.
+      }
+      syncGalleryStackHeight();
       persistSoon();
     };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
+    return true;
   };
 
   $("#leftColumnSplitter")?.addEventListener("pointerdown", (event) => {
@@ -758,7 +786,7 @@ export function bindWorkspaceLayout(settings = {}) {
     beginPointerResize(event, (moveEvent) => {
       update(
         { left_column_width: moveEvent.clientX - bounds.left },
-        { persist: false, preference: "left", useRenderedHorizontal: true },
+        { persist: false, preference: "left", useRenderedHorizontal: true, structural: false },
       );
     });
   });
@@ -768,21 +796,40 @@ export function bindWorkspaceLayout(settings = {}) {
     beginPointerResize(event, (moveEvent) => {
       update(
         { right_column_width: bounds.right - moveEvent.clientX },
-        { persist: false, preference: "right", useRenderedHorizontal: true },
+        { persist: false, preference: "right", useRenderedHorizontal: true, structural: false },
       );
     });
   });
 
   $("#centerSplitter")?.addEventListener("pointerdown", (event) => {
-    if (panelElement("recent_outputs")?.parentElement !== zoneElement("center")) return;
-    const bounds = $("#outputBrowser").getBoundingClientRect();
+    const recentPanel = panelElement("recent_outputs");
+    const browser = zoneElement("center");
+    if (recentPanel?.parentElement !== browser) return;
+    const splitter = event.currentTarget;
+    const bounds = browser.getBoundingClientRect();
+    const splitterHeight = splitter.getBoundingClientRect().height || 10;
+    const maximum = Math.min(
+      MAX_GALLERY_HEIGHT,
+      Math.max(MIN_GALLERY_HEIGHT, bounds.height - MIN_OUTPUT_HEIGHT - splitterHeight),
+    );
+    const startY = event.clientY;
+    const startHeight = clamp(
+      recentPanel.getBoundingClientRect().height || effectiveGalleryHeight || layout.gallery_panel_height,
+      MIN_GALLERY_HEIGHT,
+      maximum,
+    );
     beginPointerResize(event, (moveEvent) => {
-      const maximum = Math.min(MAX_GALLERY_HEIGHT, Math.max(MIN_GALLERY_HEIGHT, bounds.height - MIN_OUTPUT_HEIGHT));
+      const deltaY = moveEvent.clientY - startY;
       update(
-        { gallery_panel_height: clamp(bounds.bottom - moveEvent.clientY, MIN_GALLERY_HEIGHT, maximum) },
-        { persist: false },
+        { gallery_panel_height: clamp(startHeight - deltaY, MIN_GALLERY_HEIGHT, maximum) },
+        { persist: false, structural: false },
       );
     });
+  });
+
+  $("#centerSplitter")?.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    update({ gallery_panel_height: DEFAULT_LAYOUT.gallery_panel_height });
   });
 
   $("#livePreviewSplitter")?.addEventListener("pointerdown", (event) => {
@@ -793,7 +840,7 @@ export function bindWorkspaceLayout(settings = {}) {
       const nextHeight = startHeight + (moveEvent.clientY - startY);
       update(
         { live_preview_panel_height: clamp(nextHeight, MIN_LIVE_PREVIEW_HEIGHT, MAX_LIVE_PREVIEW_HEIGHT) },
-        { persist: false },
+        { persist: false, structural: false },
       );
     });
   });
@@ -874,7 +921,13 @@ export function bindWorkspaceLayout(settings = {}) {
     if (!event.target.closest(".panel-dock-menu")) closeDockMenus();
   });
 
-  const workspaceResizeObserver = new ResizeObserver(() => applyLayout());
+  const workspaceResizeObserver = new ResizeObserver(() => {
+    if (resizeActive) {
+      syncGalleryStackHeight();
+      return;
+    }
+    applyLayout();
+  });
   workspaceResizeObserver.observe($("#workspace"));
   const galleryResizeObserver = new ResizeObserver(syncGalleryStackHeight);
   galleryResizeObserver.observe($("#outputBrowser"));

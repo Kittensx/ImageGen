@@ -863,6 +863,8 @@ class Txt2ImgRunner:
             "resolved_path": str(model_file),
             "loaded_path": "",
             "file_name": model_file.name,
+            "model_name": model_file.stem,
+            "model_name_source": "filename",
             "file_size_bytes": None,
             "modified_ns": None,
             "sha256": "",
@@ -985,6 +987,8 @@ class Txt2ImgRunner:
             {
                 "loaded_path": str(Path(str(report_path or load_path)).expanduser().resolve()),
                 "file_name": str(getattr(report, "file_name", model_file.name) or model_file.name),
+                "model_name": str(getattr(report, "model_name", model_file.stem) or model_file.stem),
+                "model_name_source": str(getattr(report, "model_name_source", "filename") or "filename"),
                 "file_size_bytes": int(
                     getattr(report, "file_size_bytes", model_provenance["file_size_bytes"] or 0)
                     or 0

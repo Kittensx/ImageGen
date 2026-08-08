@@ -2,6 +2,20 @@ import { api } from "../api.js";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 
+function assetLabel(asset = {}) {
+  const nickname = String(asset?.nickname || "").trim();
+  if (nickname) return nickname;
+  const embeddedName = String(asset?.embedded_name || "").trim();
+  if (embeddedName) return embeddedName;
+  const canonicalName = String(asset?.name || "").trim();
+  if (canonicalName) return canonicalName;
+  const displayName = String(asset?.display_name || "").trim();
+  if (displayName) return displayName;
+  const filename = String(asset?.filename || "").trim();
+  if (filename) return filename.replace(/\.[^.]+$/, "");
+  return "Unnamed asset";
+}
+
 function normalizedPath(value) {
   return String(value || "").trim().replaceAll("/", "\\").toLowerCase();
 }
@@ -34,6 +48,18 @@ function addTag(container, text, className = "") {
   tag.className = `checkpoint-tag ${className}`.trim();
   tag.textContent = text;
   container.append(tag);
+}
+
+function civitaiLookupFor(model = {}) {
+  const metadata = model?.metadata || {};
+  const lookup = model?.civitai_lookup || metadata?._civitai_lookup || {};
+  return lookup && typeof lookup === "object" ? lookup : {};
+}
+
+function sourceUrlFor(model = {}) {
+  const metadata = model?.metadata || {};
+  const lookup = civitaiLookupFor(model);
+  return String(metadata.source_url || model.source_url || lookup.source_url || "").trim();
 }
 
 
@@ -92,6 +118,9 @@ function modelMatchesFilter(model, filter) {
 function searchableText(model) {
   return [
     model.name,
+    model.nickname,
+    model.embedded_name,
+    model.display_name,
     model.filename,
     model.path,
     model.description,
@@ -108,7 +137,7 @@ function searchableText(model) {
 
 function sortModels(models, mode) {
   const output = [...models];
-  const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+  const byName = (a, b) => assetLabel(a).localeCompare(assetLabel(b), undefined, { sensitivity: "base" });
   if (mode === "name") return output.sort(byName);
   if (mode === "size_desc") return output.sort((a, b) => Number(b.size_bytes || 0) - Number(a.size_bytes || 0) || byName(a, b));
   if (mode === "size_asc") return output.sort((a, b) => Number(a.size_bytes || 0) - Number(b.size_bytes || 0) || byName(a, b));
@@ -326,7 +355,7 @@ export function bindCheckpointWorkspace({
     const titleRow = document.createElement("div");
     titleRow.className = "checkpoint-card-title-row";
     const title = document.createElement("strong");
-    title.textContent = model.name;
+    title.textContent = assetLabel(model);
     const favorite = document.createElement("button");
     favorite.className = "favorite-button";
     favorite.type = "button";
@@ -405,7 +434,7 @@ export function bindCheckpointWorkspace({
     const model = effectiveModel(selectedDetails);
     selectedDetails = model;
     const metadata = model.metadata || {};
-    $("#checkpointDetailName").textContent = model.name || model.display_name || "Checkpoint";
+    $("#checkpointDetailName").textContent = assetLabel(model);
     $("#checkpointDetailFilename").textContent = model.filename || "—";
     $("#checkpointDetailSize").textContent = formatSize(model.size_bytes, model.size_mb);
     $("#checkpointDetailHash").textContent = model.sha256 || (model.inspection_error ? "Inspection unavailable" : "Not inspected");
@@ -413,10 +442,19 @@ export function bindCheckpointWorkspace({
     $("#checkpointDetailPrediction").textContent = model.prediction_type || metadata.prediction_type || "Unknown";
     $("#checkpointDetailConditioning").textContent = model.conditioning_dimension || metadata.conditioning_dimension || "Unknown";
     $("#checkpointDetailModified").textContent = model.modified_iso || "—";
-    $("#checkpointMetadataDisplayName").value = metadata.display_name || model.name || "";
+    $("#checkpointMetadataNickname").value = metadata.nickname || model.nickname || "";
     $("#checkpointMetadataSourceUrl").value = metadata.source_url || model.source_url || "";
     $("#checkpointMetadataTags").value = (metadata.tags || model.tags || []).join(", ");
     $("#checkpointMetadataNotes").value = metadata.notes || model.notes || "";
+    const civitai = civitaiLookupFor(model);
+    const civitaiText = $("#checkpointCivitaiMetadataText");
+    if (civitaiText) {
+      civitaiText.textContent = Object.keys(civitai).length
+        ? JSON.stringify(civitai, null, 2)
+        : "No CivitAI metadata has been retrieved for this checkpoint.";
+    }
+    const sourceButton = $("#checkpointOpenSourceButton");
+    if (sourceButton) sourceButton.disabled = !sourceUrlFor(model);
     $("#checkpointDetailStartupToggle").checked = isPinnedDefault(model);
     $("#checkpointFavoriteButton").textContent = model.favorite ? "★" : "☆";
     $("#checkpointFavoriteButton").setAttribute("aria-pressed", String(Boolean(model.favorite)));
@@ -456,6 +494,38 @@ export function bindCheckpointWorkspace({
     $("#checkpointDetailContent").classList.add("is-hidden");
     detailsPanel?.classList.remove("is-open");
     renderCards();
+  };
+
+  const runCivitaiMetadataFetch = async (mode = "missing") => {
+    const button = $("#checkpointFetchCivitaiButton");
+    const previousLabel = button?.textContent || "Fetch CivitAI Metadata";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Fetching…";
+    }
+    try {
+      const payload = await api.enrichAssetsFromCivitai("checkpoint", mode);
+      models = Array.isArray(payload.checkpoints) ? payload.checkpoints : models;
+      state.models = [...models];
+      state.checkpointCatalog = [...models];
+      refreshGenerationModelSelect?.();
+      renderCards();
+      renderCurrentModel();
+      if (selectedId) {
+        const selected = models.find((model) => model.asset_id === selectedId);
+        if (selected) await openDetails(selected);
+      }
+      const summary = payload?.civitai || {};
+      const errors = Array.isArray(summary.errors) ? summary.errors.length : 0;
+      notify(`CivitAI metadata fetch complete: ${summary.matched || 0} matched, ${summary.previews_downloaded || 0} preview image(s) downloaded, ${summary.skipped || 0} already current, ${errors} error(s).`, errors ? "warning" : "success");
+    } catch (error) {
+      notify(`Unable to fetch CivitAI metadata: ${error.message}`, "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = previousLabel;
+      }
+    }
   };
 
   const bindSearch = (selector, counterpart) => {
@@ -515,6 +585,7 @@ export function bindCheckpointWorkspace({
     catch (error) { notify(`Unable to save default-asset behavior: ${error.message}`, "error"); }
   });
   $("#checkpointRefreshButton")?.addEventListener("click", () => refreshCatalog().catch((error) => notify(error.message, "error")));
+  $("#checkpointFetchCivitaiButton")?.addEventListener("click", () => runCivitaiMetadataFetch("missing"));
   $("#closeCheckpointDetailsButton")?.addEventListener("click", clearDetails);
   $("#checkpointUseCurrentButton")?.addEventListener("click", () => showGenerationWorkspace?.());
   $("#checkpointUnloadButton")?.addEventListener("click", async () => {
@@ -533,6 +604,40 @@ export function bindCheckpointWorkspace({
     if (model) await setPinnedDefault(model, true);
   });
   $("#checkpointLoadNowButton")?.addEventListener("click", () => selectedDetails && activate(selectedDetails));
+  $("#checkpointFetchCivitaiDetailButton")?.addEventListener("click", async () => {
+    if (!selectedDetails) return;
+    const button = $("#checkpointFetchCivitaiDetailButton");
+    const previousLabel = button?.textContent || "Refresh from CivitAI";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Fetching…";
+    }
+    $("#checkpointDetailStatus").textContent = "Calculating hash and fetching CivitAI metadata…";
+    try {
+      const updated = await api.enrichAssetFromCivitai("checkpoint", selectedDetails.asset_id, false);
+      selectedDetails = mergeCatalogModel(updated) || updated;
+      refreshGenerationModelSelect?.();
+      renderCards();
+      renderCurrentModel();
+      renderDetails();
+      const lookup = civitaiLookupFor(selectedDetails);
+      notify(lookup.preview_image_downloaded
+        ? "CivitAI metadata and a preview image were added to the checkpoint sidecar."
+        : "CivitAI metadata was added to the checkpoint sidecar.");
+    } catch (error) {
+      renderDetails();
+      notify(`Unable to fetch CivitAI metadata: ${error.message}`, "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = previousLabel;
+      }
+    }
+  });
+  $("#checkpointOpenSourceButton")?.addEventListener("click", () => {
+    const url = sourceUrlFor(selectedDetails || {});
+    if (url) window.open(url, "_blank", "noopener");
+  });
   $("#checkpointOpenFolderButton")?.addEventListener("click", async () => {
     if (!selectedDetails) return;
     try { await api.openCheckpointFolder(selectedDetails.asset_id); }
@@ -546,7 +651,7 @@ export function bindCheckpointWorkspace({
     if (!selectedDetails) return;
     try {
       const updated = await api.saveCheckpointMetadata(selectedDetails.asset_id, {
-        display_name: $("#checkpointMetadataDisplayName").value,
+        nickname: $("#checkpointMetadataNickname").value,
         source_url: $("#checkpointMetadataSourceUrl").value,
         tags: $("#checkpointMetadataTags").value,
         notes: $("#checkpointMetadataNotes").value,

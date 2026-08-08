@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote
 
+from safetensors import safe_open
+
 from image_gen.systems.registry import RuntimeRegistrySystem
 from image_gen.runtime.lora_inspector import (
     LORA_SCAN_CACHE_SCHEMA_VERSION,
@@ -17,9 +19,9 @@ from image_gen.runtime.lora_inspector import (
     inspect_lora_file,
     lora_scan_cache_is_current,
 )
-from image_gen.webui.civitai_lora_metadata import (
+from image_gen.webui.civitai_asset_metadata import (
+    CivitaiAssetMetadataService,
     CivitaiCredentialError,
-    CivitaiLoraMetadataClient,
     CivitaiMetadataError,
     read_civitai_api_key,
 )
@@ -36,7 +38,7 @@ from image_gen.webui.asset_metadata import (
 from image_gen.webui.image_refs import encode_external_image_ref, is_within_root
 from image_gen.webui.output_details import load_image_file_details, load_output_details
 from image_gen.webui.schema_utils import normalize_config_schema
-from modules.checkpoint_inspector import CheckpointInspector
+from modules.checkpoint_inspector import CheckpointInspector, detect_model_name
 from modules.project_context import ProjectContext
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
 
@@ -44,10 +46,11 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt"}
 _TEXTUAL_INVERSION_EXTENSIONS = {".safetensors", ".pt", ".bin"}
 ASSET_CATALOG_CONTRACT_VERSION = "image-gen-asset-catalog-v1"
-_ASSET_TYPES = ("checkpoint", "lora", "textual_inversion")
+_ASSET_TYPES = ("checkpoint", "lora", "vae", "textual_inversion")
 _ASSET_PLURAL_KEYS = {
     "checkpoint": "checkpoints",
     "lora": "loras",
+    "vae": "vaes",
     "textual_inversion": "textual_inversions",
 }
 
@@ -65,6 +68,7 @@ class WebUICatalog:
         self._asset_indexes: dict[str, dict[str, dict[str, Any]]] = {
             "checkpoint": {},
             "lora": {},
+            "vae": {},
             "textual_inversion": {},
         }
         self._catalog_lock = threading.RLock()
@@ -73,7 +77,9 @@ class WebUICatalog:
         self._checkpoint_detail_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._lora_detail_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._checkpoint_inspector = CheckpointInspector()
-        self._civitai_lora_client = CivitaiLoraMetadataClient(context)
+        self._civitai_client = CivitaiAssetMetadataService(context)
+        # Compatibility alias for older extensions/tests; the implementation is generic.
+        self._civitai_lora_client = self._civitai_client
         self._output_summary_cache: dict[tuple[str, int], dict[str, Any]] = {}
         self.refresh_models()
 
@@ -149,6 +155,31 @@ class WebUICatalog:
         return sorted(output, key=lambda item: (item["name"].casefold(), item["path"].casefold()))
 
     @staticmethod
+    def _embedded_safetensors_name(path: Path, asset_type: str) -> str:
+        """Read a conservative display title from the safetensors header only.
+
+        This never hashes the file or materializes tensors. Checkpoint/VAE names
+        use ModelSpec title/name fields only. LoRAs/textual inversions may also
+        expose ``ss_output_name`` as an informational display title, while their
+        technical identity remains the filename stem.
+        """
+        if path.suffix.lower() != ".safetensors":
+            return ""
+        try:
+            with safe_open(str(path), framework="pt", device="cpu") as handle:
+                metadata = dict(handle.metadata() or {})
+        except Exception:
+            return ""
+        if asset_type in {"checkpoint", "vae"}:
+            value, source = detect_model_name(metadata, "")
+            return value if source and source != "filename" else ""
+        for key in ("modelspec.title", "modelspec.name", "ss_output_name"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
     def _asset_id(path: str | os.PathLike[str], asset_type: str) -> str:
         resolved = os.path.normcase(str(Path(path).expanduser().resolve()))
         return hashlib.sha256(f"{asset_type}|{resolved}".encode("utf-8")).hexdigest()[:20]
@@ -162,17 +193,40 @@ class WebUICatalog:
 
     def _catalog_entry(self, item: dict[str, Any], *, asset_type: str) -> dict[str, Any]:
         path = Path(str(item.get("path") or "")).expanduser().resolve()
-        metadata = load_asset_metadata(path)
-        if asset_type == "lora":
-            metadata = synchronize_asset_companions(path, metadata)
+        metadata = synchronize_asset_companions(path, load_asset_metadata(path))
         preview = resolve_preview_path(path, metadata)
         preview_payload = preview_file_payload(preview)
         preview_revision = str(preview_payload.get("preview_revision") or "")
         preview_url = ""
         if preview_payload.get("has_preview"):
-            plural = "checkpoints" if asset_type == "checkpoint" else ("loras" if asset_type == "lora" else "textual-inversions")
+            plural = {
+                "checkpoint": "checkpoints",
+                "lora": "loras",
+                "vae": "vaes",
+                "textual_inversion": "textual-inversions",
+            }.get(asset_type, f"{asset_type}s")
             preview_url = f"/api/assets/{plural}/{self._asset_id(path, asset_type)}/preview?v={quote(preview_revision, safe='')}"
-        name = str(metadata.get("display_name") or item.get("name") or path.stem).strip()
+        canonical_name = str(item.get("name") or path.stem).strip() or path.stem
+        embedded_name = str(item.get("embedded_name") or "").strip()
+        lookup = metadata.get("_civitai_lookup")
+        lookup = dict(lookup) if isinstance(lookup, dict) else {}
+        nickname_explicit = "nickname" in metadata
+        nickname = str(metadata.get("nickname") or "").strip()
+        if not nickname_explicit and not nickname:
+            legacy_display_name = str(metadata.get("display_name") or "").strip()
+            civitai_names = {
+                str(lookup.get("model_version_name") or "").strip().casefold(),
+                str(lookup.get("model_name") or "").strip().casefold(),
+            }
+            civitai_names.discard("")
+            civitai_applied = bool(lookup.get("display_name_applied")) or "display_name" in set(lookup.get("applied_fields") or [])
+            # Older CivitAI enrichment wrote provider model/version names into
+            # display_name. Ignore that historical value when it still matches
+            # CivitAI provenance. Genuine user-created legacy display names are
+            # preserved as nicknames for backward compatibility.
+            if legacy_display_name and not (civitai_applied and legacy_display_name.casefold() in civitai_names):
+                nickname = legacy_display_name
+        display_name = nickname or embedded_name or canonical_name
         tags = metadata.get("tags") if isinstance(metadata.get("tags"), list) else []
         try:
             preferred_weight = float(metadata.get("preferred_weight", 1.0) or 1.0)
@@ -182,8 +236,13 @@ class WebUICatalog:
             **item,
             "asset_id": self._asset_id(path, asset_type),
             "asset_type": asset_type,
-            "name": name or path.stem,
-            "display_name": name or path.stem,
+            # ``name`` is the stable local technical identity. Display labels may
+            # use a user nickname or an embedded ModelSpec title, but neither is
+            # allowed to change the selected file path or LoRA prompt token.
+            "name": canonical_name,
+            "nickname": nickname,
+            "embedded_name": embedded_name,
+            "display_name": display_name,
             "filename": path.name,
             "size_bytes": int(path.stat().st_size) if path.is_file() else int(float(item.get("size_mb") or 0) * 1024 * 1024),
             "modified_iso": self._iso_modified(int(item.get("modified_ns") or 0)),
@@ -203,6 +262,17 @@ class WebUICatalog:
             "activation_text": str(metadata.get("activation_text") or ""),
             "preferred_weight": max(-4.0, min(4.0, preferred_weight)),
         }
+        entry.update({
+            "civitai_lookup": lookup,
+            "civitai_model_id": lookup.get("model_id"),
+            "civitai_model_version_id": lookup.get("model_version_id"),
+            "civitai_model_name": str(lookup.get("model_name") or ""),
+            "civitai_model_version_name": str(lookup.get("model_version_name") or ""),
+            "civitai_model_type": str(lookup.get("model_type") or ""),
+            "civitai_creator": str(lookup.get("creator") or ""),
+            "civitai_base_model": str(lookup.get("base_model") or ""),
+            "civitai_stats": dict(lookup.get("stats") or {}) if isinstance(lookup.get("stats"), dict) else {},
+        })
         if asset_type == "lora":
             entry.update(self._lora_scan_cache_payload(path, metadata=metadata))
         self._asset_indexes.setdefault(asset_type, {})[entry["asset_id"]] = entry
@@ -221,6 +291,7 @@ class WebUICatalog:
         return {
             "checkpoint": "_models",
             "lora": "_loras",
+            "vae": "_vaes",
             "textual_inversion": "_textual_inversions",
         }[asset_type]
 
@@ -229,6 +300,8 @@ class WebUICatalog:
             return [self.context.checkpoints_dir, *self._additional_roots()], set(MODEL_EXTENSIONS)
         if asset_type == "lora":
             return [self.context.lora_dir], set(_LORA_EXTENSIONS)
+        if asset_type == "vae":
+            return [self.context.vae_dir], set(MODEL_EXTENSIONS)
         if asset_type == "textual_inversion":
             return [self.context.embeddings_dir], set(_TEXTUAL_INVERSION_EXTENSIONS)
         raise KeyError(asset_type)
@@ -272,6 +345,9 @@ class WebUICatalog:
     def refresh_asset_type(self, asset_type: str) -> dict[str, Any]:
         roots, extensions = self._asset_scan_config(asset_type)
         items = self._scan_files(roots, extensions)
+        for item in items:
+            path = Path(str(item.get("path") or "")).expanduser().resolve()
+            item["embedded_name"] = self._embedded_safetensors_name(path, asset_type)
         with self._catalog_lock:
             self._bump_catalog_revision(asset_type)
             records = self._catalog_entries(items, asset_type=asset_type)
@@ -298,13 +374,12 @@ class WebUICatalog:
     def refresh_models(self) -> dict[str, Any]:
         for asset_type in _ASSET_TYPES:
             self.refresh_asset_type(asset_type)
-        self._vaes = self._scan_files([self.context.vae_dir], MODEL_EXTENSIONS)
         return self.model_payload()
 
     def model_payload(self) -> dict[str, Any]:
         return {
             "models": self.asset_list("checkpoint"),
-            "vaes": list(self._vaes),
+            "vaes": self.asset_list("vae"),
             "loras": self.asset_list("lora"),
             "textual_inversions": self.asset_list("textual_inversion"),
             "asset_catalog": self.catalog_status(),
@@ -449,8 +524,8 @@ class WebUICatalog:
                 "network_type": "Unknown",
                 "tensor_key_format": "Unknown",
                 "tensor_key_count": 0,
-                "activation_text": "",
-                "activation_text_source": "",
+                "activation_text": str(data.get("activation_text") or ""),
+                "activation_text_source": "sidecar" if str(data.get("activation_text") or "").strip() else "",
                 "scan_status": "unscanned",
                 "scanned_at": "",
                 "inspection_error": "",
@@ -647,86 +722,79 @@ class WebUICatalog:
             "preview_url": f"/api/assets/loras/{asset_id}/preview?v={quote(preview_revision, safe='')}" if preview_payload.get("has_preview") else "",
         })
 
-    @staticmethod
-    def _editable_family_from_civitai(value: Any) -> str:
-        family = canonical_model_family(value)
-        return {
-            "sd1": "sd1.x",
-            "sd2": "sd2.x",
-            "sdxl": "sdxl",
-            "sd3": "sd3",
-            "flux": "flux",
-        }.get(family, family)
-
-    def enrich_lora_from_civitai(self, asset_id: str, *, overwrite: bool = False) -> dict[str, Any]:
-        record = self._asset_record("lora", asset_id)
+    def vae_details(self, asset_id: str) -> dict[str, Any]:
+        record = self._asset_record("vae", asset_id)
         path = Path(record["path"]).resolve()
-        technical, _ = self._inspect_lora_record(record)
-        result = self._civitai_lora_client.lookup_by_hashes((
-            technical.get("sha256"),
-            technical.get("a1111_hash"),
-        ))
-
         metadata = synchronize_asset_companions(path, load_asset_metadata(path))
-        updates: dict[str, Any] = {}
-        activation_text = str(result.get("activation_text") or "").strip()
-        current_activation = str(metadata.get("activation_text") or record.get("activation_text") or "").strip()
-        if activation_text and (overwrite or not current_activation):
-            updates["activation_text"] = activation_text
+        preview = resolve_preview_path(path, metadata)
+        preview_payload = preview_file_payload(preview)
+        preview_revision = str(preview_payload.get("preview_revision") or "")
+        refreshed = self._catalog_entry(record, asset_type="vae")
+        self._replace_catalog_record("vae", refreshed)
+        return self._catalog_entry_payload("vae", {
+            **refreshed,
+            "metadata": metadata,
+            **preview_payload,
+            "preview_url": f"/api/assets/vaes/{asset_id}/preview?v={quote(preview_revision, safe='')}" if preview_payload.get("has_preview") else "",
+        })
 
-        source_url = str(result.get("source_url") or "").strip()
-        current_source_url = str(metadata.get("source_url") or record.get("source_url") or "").strip()
-        if source_url and (overwrite or not current_source_url):
-            updates["source_url"] = source_url
+    def _details_for_asset_type(self, asset_type: str, asset_id: str) -> dict[str, Any]:
+        if asset_type == "checkpoint":
+            return self.checkpoint_details(asset_id)
+        if asset_type == "lora":
+            return self.lora_details(asset_id)
+        if asset_type == "vae":
+            return self.vae_details(asset_id)
+        return self.asset_record(asset_type, asset_id)
 
-        model_family = self._editable_family_from_civitai(result.get("base_model"))
-        current_family = str(metadata.get("model_family") or record.get("model_family") or "").strip()
-        if model_family and (overwrite or not current_family):
-            updates["model_family"] = model_family
+    def _known_civitai_hashes(self, asset_type: str, record: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        if asset_type == "checkpoint":
+            details = self.checkpoint_details(str(record.get("asset_id") or ""))
+            values.append(str(details.get("sha256") or ""))
+        elif asset_type == "lora":
+            technical, _ = self._inspect_lora_record(record)
+            values.extend([
+                str(technical.get("sha256") or ""),
+                str(technical.get("a1111_hash") or ""),
+            ])
+        else:
+            values.append(str(record.get("sha256") or ""))
+        return [value for value in values if value]
 
-        description = str(result.get("description") or "").strip()
-        current_description = str(metadata.get("description") or record.get("description") or "").strip()
-        if description and (overwrite or not current_description):
-            updates["description"] = description
-
-        local_preview = resolve_preview_path(path, metadata)
-        preview_downloaded = False
-        preview_download_error = ""
-        civitai_image_url = str(result.get("image_url") or "").strip()
-        if local_preview is None and civitai_image_url:
-            try:
-                filename, content = self._civitai_lora_client.download_preview_image(civitai_image_url)
-                local_preview, metadata = replace_asset_preview(path, filename=filename, content=content)
-                metadata = synchronize_asset_companions(path, metadata)
-                preview_downloaded = True
-            except (CivitaiMetadataError, OSError, ValueError) as exc:
-                preview_download_error = str(exc)
-
-        lookup_payload = {
-            **dict(result),
-            "activation_text_applied": bool(updates.get("activation_text")),
-            "source_url_applied": bool(updates.get("source_url")),
-            "model_family_applied": bool(updates.get("model_family")),
-            "description_applied": bool(updates.get("description")),
-            "preview_image_downloaded": preview_downloaded,
-            "preview_image_path": str(local_preview) if local_preview else "",
-            "preview_image_download_error": preview_download_error,
-        }
-        save_asset_sidecar_fields(path, {**updates, "_civitai_lookup": lookup_payload})
-        refreshed = self._catalog_entry(record, asset_type="lora")
-        self._replace_catalog_record("lora", refreshed)
-        self._bump_catalog_revision("lora")
-        details = self.lora_details(asset_id)
-        details["civitai_lookup"] = lookup_payload
+    def enrich_asset_from_civitai(
+        self,
+        asset_type: str,
+        asset_id: str,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        if asset_type not in _ASSET_TYPES:
+            raise KeyError(asset_type)
+        record = self._asset_record(asset_type, asset_id)
+        path = Path(record["path"]).resolve()
+        enrichment = self._civitai_client.enrich_local_asset(
+            path,
+            asset_type=asset_type,
+            hashes=self._known_civitai_hashes(asset_type, record),
+            overwrite=overwrite,
+        )
+        refreshed = self._catalog_entry(record, asset_type=asset_type)
+        self._replace_catalog_record(asset_type, refreshed)
+        self._bump_catalog_revision(asset_type)
+        details = self._details_for_asset_type(asset_type, asset_id)
+        details["civitai_lookup"] = dict(enrichment.get("civitai_lookup") or {})
         return details
 
-    def enrich_loras_from_civitai(self, *, mode: str = "missing") -> dict[str, Any]:
+    def enrich_assets_from_civitai(self, asset_type: str, *, mode: str = "missing") -> dict[str, Any]:
+        if asset_type not in _ASSET_TYPES:
+            raise KeyError(asset_type)
         normalized_mode = str(mode or "missing").strip().lower()
         if normalized_mode not in {"missing", "all"}:
-            raise ValueError(f"Unsupported Civitai LoRA metadata mode: {mode}")
+            raise ValueError(f"Unsupported CivitAI metadata mode: {mode}")
 
-        # Validate the private-key configuration once so a bulk request fails
-        # clearly instead of repeating the same credential error for every file.
+        # Validate once so bulk requests fail clearly rather than repeating the
+        # same credential error for every local file.
         read_civitai_api_key(self.context)
 
         matched = 0
@@ -736,30 +804,23 @@ class WebUICatalog:
         preview_download_errors = 0
         skipped = 0
         errors: list[dict[str, str]] = []
-        for record in list(self._loras):
+        records = list(getattr(self, self._collection_attribute(asset_type)))
+        for record in records:
             path = Path(str(record.get("path") or "")).expanduser().resolve()
             if not path.is_file():
                 continue
             metadata = synchronize_asset_companions(path, load_asset_metadata(path))
             lookup = metadata.get("_civitai_lookup")
             lookup = dict(lookup) if isinstance(lookup, dict) else {}
-            has_activation = bool(str(metadata.get("activation_text") or record.get("activation_text") or "").strip())
-            has_source = bool(str(metadata.get("source_url") or record.get("source_url") or lookup.get("source_url") or "").strip())
-            has_preview = resolve_preview_path(path, metadata) is not None
-            try:
-                lookup_schema = int(lookup.get("schema_version") or 0)
-            except (TypeError, ValueError):
-                lookup_schema = 0
-            preview_lookup_complete = (
-                lookup_schema >= 2
-                and str(lookup.get("status") or "").strip().lower() == "matched"
-                and not str(lookup.get("image_url") or "").strip()
-            )
-            if normalized_mode == "missing" and has_activation and has_source and (has_preview or preview_lookup_complete):
+            if normalized_mode == "missing" and str(lookup.get("status") or "").strip().lower() == "matched":
                 skipped += 1
                 continue
             try:
-                details = self.enrich_lora_from_civitai(str(record.get("asset_id") or ""), overwrite=False)
+                details = self.enrich_asset_from_civitai(
+                    asset_type,
+                    str(record.get("asset_id") or ""),
+                    overwrite=False,
+                )
                 civitai = details.get("civitai_lookup")
                 civitai = dict(civitai) if isinstance(civitai, dict) else {}
                 matched += 1
@@ -773,7 +834,7 @@ class WebUICatalog:
                     preview_download_errors += 1
             except CivitaiCredentialError:
                 raise
-            except CivitaiMetadataError as exc:
+            except (CivitaiMetadataError, OSError, ValueError) as exc:
                 errors.append({
                     "asset_id": str(record.get("asset_id") or ""),
                     "filename": str(record.get("filename") or path.name),
@@ -781,9 +842,10 @@ class WebUICatalog:
                 })
 
         return {
-            "catalog": self.catalog_status("lora")["catalogs"]["lora"],
-            "loras": self.asset_list("lora"),
+            "catalog": self.catalog_status(asset_type)["catalogs"][asset_type],
+            _ASSET_PLURAL_KEYS[asset_type]: self.asset_list(asset_type),
             "civitai": {
+                "asset_type": asset_type,
                 "mode": normalized_mode,
                 "matched": matched,
                 "activation_text_found": activation_text_found,
@@ -795,10 +857,18 @@ class WebUICatalog:
             },
         }
 
+    # Backwards-compatible LoRA methods now delegate to the generic service.
+    def enrich_lora_from_civitai(self, asset_id: str, *, overwrite: bool = False) -> dict[str, Any]:
+        return self.enrich_asset_from_civitai("lora", asset_id, overwrite=overwrite)
+
+    def enrich_loras_from_civitai(self, *, mode: str = "missing") -> dict[str, Any]:
+        return self.enrich_assets_from_civitai("lora", mode=mode)
+
     def asset_list(self, asset_type: str) -> list[dict[str, Any]]:
         mapping = {
             "checkpoint": self._models,
             "lora": self._loras,
+            "vae": self._vaes,
             "textual_inversion": self._textual_inversions,
         }
         if asset_type not in mapping:
@@ -918,6 +988,8 @@ class WebUICatalog:
             return self.checkpoint_details(asset_id)
         if asset_type == "lora":
             return self.lora_details(asset_id)
+        if asset_type == "vae":
+            return self.vae_details(asset_id)
         return self._catalog_entry_payload(asset_type, refreshed)
 
     def replace_asset_preview(
@@ -937,6 +1009,8 @@ class WebUICatalog:
             return self.checkpoint_details(asset_id)
         if asset_type == "lora":
             return self.lora_details(asset_id)
+        if asset_type == "vae":
+            return self.vae_details(asset_id)
         return self._catalog_entry_payload(asset_type, refreshed)
 
     def delete_asset(self, asset_type: str, asset_id: str) -> dict[str, Any]:
@@ -960,6 +1034,8 @@ class WebUICatalog:
             self._models = [item for item in self._models if item.get("asset_id") != asset_id]
         elif asset_type == "lora":
             self._loras = [item for item in self._loras if item.get("asset_id") != asset_id]
+        elif asset_type == "vae":
+            self._vaes = [item for item in self._vaes if item.get("asset_id") != asset_id]
         elif asset_type == "textual_inversion":
             self._textual_inversions = [item for item in self._textual_inversions if item.get("asset_id") != asset_id]
         self._asset_indexes.get(asset_type, {}).pop(asset_id, None)

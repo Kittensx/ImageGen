@@ -169,7 +169,8 @@ def manifest_to_civitai_parameters(manifest: GenerationManifest) -> str:
 
     provenance = dict(manifest.extra.get("model_provenance") or {})
     model_name = (
-        _stem_from_path(provenance.get("file_name"))
+        str(provenance.get("model_name") or "").strip()
+        or _stem_from_path(provenance.get("file_name"))
         or _stem_from_path(provenance.get("loaded_path"))
         or _stem_from_path(provenance.get("resolved_path"))
         or _stem_from_path(req.model_path)

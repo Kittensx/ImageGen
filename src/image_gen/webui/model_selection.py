@@ -35,6 +35,8 @@ class ActiveModelSelection:
     size_bytes: int
     modified_ns: int
     selected_at: str
+    model_filename: str = ""
+    model_name_source: str = ""
     source: str = "webui"
     status: str = "ready"
     architecture: str = ""
@@ -52,6 +54,8 @@ class ActiveModelSelection:
             "resolved_path": self.resolved_path,
             "model_name": self.model_name,
             "extension": self.extension,
+            "model_filename": self.model_filename,
+            "model_name_source": self.model_name_source,
             "size_bytes": self.size_bytes,
             "modified_ns": self.modified_ns,
             "selected_at": self.selected_at,
@@ -151,6 +155,8 @@ class WebUIModelSelectionState:
                     "architecture_source": report.architecture_source or report.prediction_type_source,
                     "checkpoint_kind": report.checkpoint_kind,
                     "architecture_contract": contract,
+                    "model_name": str(getattr(report, "model_name", path.stem) or path.stem),
+                    "model_name_source": str(getattr(report, "model_name_source", "filename") or "filename"),
                 }
             except Exception:
                 payload = {}
@@ -177,8 +183,10 @@ class WebUIModelSelectionState:
             selection_id=uuid.uuid4().hex[:16],
             requested_path=str(model_path),
             resolved_path=str(path),
-            model_name=path.stem,
+            model_name=str(inspection.get("model_name") or path.stem),
             extension=path.suffix.lower(),
+            model_filename=path.name,
+            model_name_source=str(inspection.get("model_name_source") or "filename"),
             size_bytes=int(stat.st_size),
             modified_ns=int(stat.st_mtime_ns),
             selected_at=_utc_now(),

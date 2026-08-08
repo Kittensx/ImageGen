@@ -2,6 +2,20 @@ import { api } from "../api.js";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 
+function assetLabel(asset = {}) {
+  const nickname = String(asset?.nickname || "").trim();
+  if (nickname) return nickname;
+  const embeddedName = String(asset?.embedded_name || "").trim();
+  if (embeddedName) return embeddedName;
+  const canonicalName = String(asset?.name || "").trim();
+  if (canonicalName) return canonicalName;
+  const displayName = String(asset?.display_name || "").trim();
+  if (displayName) return displayName;
+  const filename = String(asset?.filename || "").trim();
+  if (filename) return filename.replace(/\.[^.]+$/, "");
+  return "Unnamed asset";
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value ?? null));
 }
@@ -97,10 +111,9 @@ function selectedCheckpointRecord() {
 
 function selectedCheckpointName() {
   const record = selectedCheckpointRecord();
+  if (record) return assetLabel(record);
   return String(
-    record?.name
-    || record?.display_name
-    || state.activeModel?.model_name
+    state.activeModel?.model_name
     || state.defaultAssets?.active_model?.model_name
     || "",
   ).trim();
@@ -198,6 +211,9 @@ async function copyText(value, label = "Text") {
 function searchableText(model) {
   return [
     model.name,
+    model.nickname,
+    model.embedded_name,
+    model.display_name,
     model.filename,
     model.path,
     model.description,
@@ -240,7 +256,7 @@ function renderScanSummary(items) {
 
 function sortLoras(items, mode) {
   const output = [...items];
-  const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+  const byName = (a, b) => assetLabel(a).localeCompare(assetLabel(b), undefined, { sensitivity: "base" });
   if (mode === "name") return output.sort(byName);
   if (mode === "favorites") return output.sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || byName(a, b));
   if (mode === "weight_desc") return output.sort((a, b) => Number(b.preferred_weight ?? 1) - Number(a.preferred_weight ?? 1) || byName(a, b));
@@ -726,8 +742,8 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const body = document.createElement("div");
     body.className = "lora-card-body";
     const title = document.createElement("strong");
-    title.textContent = model.name || model.filename || "LoRA";
-    title.title = model.name || model.filename || "LoRA";
+    title.textContent = assetLabel(model);
+    title.title = assetLabel(model);
     const triggerRow = document.createElement("div");
     triggerRow.className = "lora-card-trigger";
     const triggerLabel = document.createElement("span");
@@ -763,14 +779,14 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const actions = document.createElement("div");
     actions.className = "lora-card-actions";
     actions.append(
-      createActionButton("+", `Add ${model.name} to the current prompt`, () => stageLora(model), "is-primary"),
-      createActionButton("◉", `View ${model.name} details`, () => openDetails(model)),
-      createActionButton("✎", `Edit ${model.name} metadata`, () => openDetails(model, { focusEditor: true })),
-      createActionButton("⧉", `Copy ${model.name} file path`, async () => {
+      createActionButton("+", `Add ${assetLabel(model)} to the current prompt`, () => stageLora(model), "is-primary"),
+      createActionButton("◉", `View ${assetLabel(model)} details`, () => openDetails(model)),
+      createActionButton("✎", `Edit ${assetLabel(model)} metadata`, () => openDetails(model, { focusEditor: true })),
+      createActionButton("⧉", `Copy ${assetLabel(model)} file path`, async () => {
         try { await copyText(model.path, "LoRA path"); notify("LoRA path copied."); }
         catch (error) { notify(error.message, "error"); }
       }),
-      createActionButton("↗", `Open ${model.name} source website`, () => {
+      createActionButton("↗", `Open ${assetLabel(model)} source website`, () => {
         if (model.source_url) window.open(model.source_url, "_blank", "noopener");
         else notify("No source URL is saved for this LoRA.", "error");
       }),
@@ -820,7 +836,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     if (!selectedDetails) return;
     const model = selectedDetails;
     const metadata = model.metadata || {};
-    $("#loraDetailName").textContent = model.name || model.display_name || "LoRA";
+    $("#loraDetailName").textContent = assetLabel(model);
     $("#loraDetailFilename").textContent = model.filename || "—";
     $("#loraDetailSize").textContent = formatSize(model.size_bytes, model.size_mb);
     $("#loraDetailHash").textContent = model.sha256 || (model.inspection_error ? "Inspection unavailable" : "Not inspected");
@@ -828,7 +844,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     $("#loraDetailTensorFormat").textContent = model.tensor_key_format || "Unknown";
     $("#loraDetailModelFamily").textContent = familyLabel(model.model_family || model.detected_model_family);
     $("#loraDetailModified").textContent = model.modified_iso || "—";
-    $("#loraMetadataDisplayName").value = metadata.display_name || model.name || "";
+    $("#loraMetadataNickname").value = metadata.nickname || model.nickname || "";
     $("#loraMetadataActivationText").value = metadata.activation_text || model.activation_text || "";
     $("#loraMetadataPreferredWeight").value = Number(metadata.preferred_weight ?? model.preferred_weight ?? 1).toFixed(2);
     $("#loraMetadataModelFamily").value = normalizeFamily(metadata.model_family || model.model_family || model.detected_model_family);
@@ -851,6 +867,12 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     $("#loraOpenSourceButton").disabled = !sourceUrlFor(model);
     const compatibility = compatibilityFor(model);
     const civitai = civitaiLookupFor(model);
+    const civitaiText = $("#loraCivitaiMetadataText");
+    if (civitaiText) {
+      civitaiText.textContent = Object.keys(civitai).length
+        ? JSON.stringify(civitai, null, 2)
+        : "No CivitAI metadata has been retrieved for this LoRA.";
+    }
     let civitaiStatus = "";
     if (civitai.status === "matched" && civitai.manual_activation_text_search_required) {
       civitaiStatus = " Civitai matched the file but returned no trainedWords; open the Civitai page to check the description or comments for activation text.";
@@ -879,7 +901,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
       selectedDetails = merged;
       renderDetails();
-      if (focusEditor) $("#loraMetadataDisplayName")?.focus();
+      if (focusEditor) $("#loraMetadataNickname")?.focus();
     } catch (error) {
       if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
       selectedDetails = { ...model, metadata: {}, inspection_error: error.message };
@@ -950,7 +972,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       button.textContent = "Fetching…";
     }
     try {
-      const payload = await api.enrichLorasFromCivitai(mode);
+      const payload = await api.enrichAssetsFromCivitai("lora", mode);
       applyCatalogPayload(payload);
       renderCards();
       renderDefaults();
@@ -1107,7 +1129,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     }
     $("#loraDetailStatus").textContent = "Calculating hashes and fetching Civitai metadata…";
     try {
-      const updated = await api.enrichLoraFromCivitai(selectedDetails.asset_id, false);
+      const updated = await api.enrichAssetFromCivitai("lora", selectedDetails.asset_id, false);
       selectedDetails = mergeCatalogRecord(updated) || updated;
       renderCards();
       renderDetails();
@@ -1181,7 +1203,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     if (!selectedDetails) return;
     try {
       const updated = await api.saveLoraMetadata(selectedDetails.asset_id, {
-        display_name: $("#loraMetadataDisplayName").value,
+        nickname: $("#loraMetadataNickname").value,
         activation_text: $("#loraMetadataActivationText").value,
         preferred_weight: Number($("#loraMetadataPreferredWeight").value || 1),
         model_family: $("#loraMetadataModelFamily").value,

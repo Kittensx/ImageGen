@@ -50,10 +50,18 @@ function renderStatus() {
   if (!item) {
     status.textContent = "No supported neural .pth upscaler is selected. Refresh or install a recognized model.";
     status.className = "field-status error";
+    const civitaiButton = $("#upscalerFetchCivitaiButton");
+    if (civitaiButton) civitaiButton.disabled = true;
     return;
   }
-  status.textContent = `${item.display_name} · ${item.architecture} · native x${item.native_scale} · ${friendlyAvailability(item)}`;
+  const lookup = item.civitai_lookup || item.metadata?._civitai_lookup || {};
+  const civitai = lookup?.model_name
+    ? ` · CivitAI: ${lookup.model_name}${lookup.creator ? ` by ${lookup.creator}` : ""}`
+    : "";
+  status.textContent = `${item.display_name} · ${item.architecture} · native x${item.native_scale} · ${friendlyAvailability(item)}${civitai}`;
   status.className = item.selectable ? "field-status ready" : "field-status error";
+  const civitaiButton = $("#upscalerFetchCivitaiButton");
+  if (civitaiButton) civitaiButton.disabled = !item?.upscaler_id;
 }
 
 function setTileControls(enabled, item) {
@@ -210,6 +218,32 @@ export function bindHiresUpscalers(saveSessionSoon = null) {
     renderStatus();
     window.dispatchEvent(new CustomEvent("image-gen-hires-upscaler-change"));
     saveSessionSoon?.();
+  });
+  $("#upscalerFetchCivitaiButton")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const item = selectedDescriptor();
+    if (!item?.upscaler_id) {
+      notify("Select a supported neural upscaler before fetching CivitAI metadata.", "warning");
+      return;
+    }
+    const previousLabel = button.textContent || "Refresh selected from CivitAI";
+    button.disabled = true;
+    button.textContent = "Fetching…";
+    try {
+      const result = await api.enrichAssetFromCivitai("upscaler", item.upscaler_id, false);
+      state.upscalers = result.catalog || await api.upscalers();
+      renderOptions(item.upscaler_id);
+      window.dispatchEvent(new CustomEvent("image-gen-hires-upscaler-change"));
+      const lookup = result.asset?.civitai_lookup || {};
+      notify(lookup.preview_image_downloaded
+        ? "CivitAI metadata and a preview image were added to the upscaler sidecar."
+        : "CivitAI metadata was added to the upscaler sidecar.");
+    } catch (error) {
+      notify(`Unable to fetch upscaler metadata from CivitAI: ${error.message}`, "error");
+    } finally {
+      button.textContent = previousLabel;
+      button.disabled = !selectedDescriptor();
+    }
   });
   $("#refreshUpscalersButton")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;

@@ -19,11 +19,14 @@
       <small id="modelArchitectureStatus" class="field-status subtle">Architecture: waiting for activation.</small>
     </div>
 
-    <label class="field-block">
+    <div class="field-block">
       <span>VAE</span>
-      <select id="vaePath" name="vae_path"></select>
+      <select id="vaePath" name="vae_path" aria-label="VAE"></select>
+      <div class="inline-actions">
+        <button class="secondary-button compact-button" id="vaeFetchCivitaiButton" type="button">Refresh selected VAE from CivitAI</button>
+      </div>
       <small id="vaeSelectionStatus" class="field-status subtle">Automatic / checkpoint embedded.</small>
-    </label>
+    </div>
 
     <section class="prompt-parser-panel" id="promptParserPanel">
       <div class="prompt-parser-grid">
@@ -217,6 +220,7 @@
         </div>
         <div class="inline-actions">
           <button class="secondary-button" id="refreshUpscalersButton" type="button">Refresh upscalers</button>
+          <button class="secondary-button" id="upscalerFetchCivitaiButton" type="button">Refresh selected from CivitAI</button>
           <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
         </div>
         <small id="hiresNativePlanStatus" class="field-status subtle">Native upscaler target plan is unavailable until a supported model is selected.</small>

@@ -19,6 +19,7 @@ _COMPANION_METADATA_SUFFIXES = (
 ASSET_DISCOVERY_SCHEMA_VERSION = 1
 _EDITABLE_FIELDS = {
     "display_name",
+    "nickname",
     "description",
     "source_url",
     "tags",
