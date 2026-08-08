@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "name": "IMAGE_GEN default model asset directories",
+  "resources": [
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.models_root",
+        "fallback": "models/StableDiffusion"
+      }
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.checkpoints_dir",
+        "fallback": "models/StableDiffusion/CheckPoints"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.checkpoints_dir",
+        "fallback": "models/StableDiffusion/CheckPoints",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN Checkpoints\n\nPlace supported Stable Diffusion checkpoint model files in this folder (for example .safetensors checkpoint files).\n\nYou may also configure a different model location in user_config/user-config.yml. IMAGE_GEN should use the configured path rather than requiring assets to be copied into this default folder."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.vae_dir",
+        "fallback": "models/StableDiffusion/VAE"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.vae_dir",
+        "fallback": "models/StableDiffusion/VAE",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN VAE Models\n\nPlace supported full VAE model files in this folder.\n\nYou may also configure a different VAE location in user_config/user-config.yml."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.vae_approx_dir",
+        "fallback": "models/StableDiffusion/VAE_approx"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.vae_approx_dir",
+        "fallback": "models/StableDiffusion/VAE_approx",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN Approximate VAE Assets\n\nPlace supported approximate VAE / preview-decoder assets in this folder when required by the selected preview pipeline.\n\nYou may also configure a different location in user_config/user-config.yml."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.lora_dir",
+        "fallback": "models/StableDiffusion/Lora"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.lora_dir",
+        "fallback": "models/StableDiffusion/Lora",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN LoRAs\n\nPlace supported LoRA model files in this folder.\n\nLoRAs are optional and personal to each user's workflow. You may also configure a different LoRA location in user_config/user-config.yml."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.blip_dir",
+        "fallback": "models/StableDiffusion/BLIP"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.blip_dir",
+        "fallback": "models/StableDiffusion/BLIP",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN BLIP Assets\n\nPlace supported BLIP / image-interrogation model assets in this folder when required. These assets may later be managed automatically by IMAGE_GEN."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.codeformer_dir",
+        "fallback": "models/StableDiffusion/Codeformer"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.codeformer_dir",
+        "fallback": "models/StableDiffusion/Codeformer",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN CodeFormer Assets\n\nPlace supported CodeFormer face-restoration model assets in this folder when required."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.controlnet_dir",
+        "fallback": "models/StableDiffusion/ControlNet"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.controlnet_dir",
+        "fallback": "models/StableDiffusion/ControlNet",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN ControlNet Models\n\nPlace supported ControlNet model files in this folder.\n\nYou may also configure a different ControlNet location in user_config/user-config.yml."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.embeddings_dir",
+        "fallback": "models/StableDiffusion/Embeddings"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.embeddings_dir",
+        "fallback": "models/StableDiffusion/Embeddings",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN Embeddings / Textual Inversions\n\nPlace supported embedding and textual-inversion files in this folder.\n\nYou may also configure a different embeddings location in user_config/user-config.yml."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.esrgan_dir",
+        "fallback": "models/StableDiffusion/ESRGAN"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.esrgan_dir",
+        "fallback": "models/StableDiffusion/ESRGAN",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN ESRGAN Upscalers\n\nPlace supported ESRGAN upscaler model files in this folder."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.gfpgan_dir",
+        "fallback": "models/StableDiffusion/GFPGAN"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.gfpgan_dir",
+        "fallback": "models/StableDiffusion/GFPGAN",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN GFPGAN Assets\n\nPlace supported GFPGAN face-restoration model files in this folder when required."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.hypernetworks_dir",
+        "fallback": "models/StableDiffusion/Hypernetworks"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.hypernetworks_dir",
+        "fallback": "models/StableDiffusion/Hypernetworks",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN Hypernetworks\n\nPlace local supported hypernetwork files in this folder. Hypernetworks are optional and are not part of the proposed minimal first-run download set."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.realesrgan_dir",
+        "fallback": "models/StableDiffusion/RealESRGAN"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.realesrgan_dir",
+        "fallback": "models/StableDiffusion/RealESRGAN",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN RealESRGAN Upscalers\n\nPlace supported RealESRGAN upscaler model files in this folder."
+    },
+    {
+      "kind": "directory",
+      "path": {
+        "config_key": "paths.upscalers_comfyui_dir",
+        "fallback": "models/StableDiffusion/Upscalers_ComfyUI"
+      }
+    },
+    {
+      "kind": "text",
+      "path": {
+        "config_key": "paths.upscalers_comfyui_dir",
+        "fallback": "models/StableDiffusion/Upscalers_ComfyUI",
+        "append": "PLACE_ASSETS_HERE.txt"
+      },
+      "write_policy": "if_missing",
+      "only_if_parent_empty": true,
+      "content": "IMAGE_GEN ComfyUI-Compatible Upscalers\n\nPlace supported ComfyUI-style neural upscaler model files in this folder. IMAGE_GEN's upscaler registry should determine compatibility before use."
+    }
+  ]
+}

@@ -781,6 +781,57 @@ def generate_user_lock(
         "profile_id": choice.profile_id,
     }
 
+
+def materialize_project_resources(
+    root: Path,
+    report_dir: Path,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Create configured IMAGE_GEN asset folders before environment installation.
+
+    This intentionally runs as a separate setup utility so the same declarative
+    materializer can be reused by future setup flows and on-demand IMAGE_GEN
+    resource creation without coupling filesystem mutations to the GPU installer.
+    """
+
+    script = root / "scripts" / "setup" / "materialize_resources.py"
+    manifest = (
+        root
+        / "scripts"
+        / "setup"
+        / "manifests"
+        / "model_asset_directories.json"
+    )
+    project_config = root / "user_config" / "user-config.yml"
+    resource_report = report_dir / "resource_materialization.json"
+    command = [
+        sys.executable,
+        str(script),
+        "--project-root",
+        str(root),
+        "--manifest",
+        str(manifest),
+        "--project-config",
+        str(project_config),
+        "--report-json",
+        str(resource_report),
+    ]
+    if dry_run:
+        command.append("--dry-run")
+    # Execute the dedicated script even for installer dry-runs. Its own
+    # --dry-run mode performs validation and prints the planned resources while
+    # guaranteeing that it does not mutate the filesystem.
+    _run(command, cwd=root, dry_run=False)
+    return {
+        "script": str(script),
+        "manifest": str(manifest),
+        "project_config": str(project_config),
+        "report": str(resource_report),
+        "dry_run": dry_run,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -839,6 +890,13 @@ def main() -> int:
             for profile in manifest["profiles"]:
                 print(f"{profile['id']}: {profile.get('label', profile['id'])}")
             return 0
+
+        if not args.scan_only:
+            report["project_resources"] = materialize_project_resources(
+                root,
+                report_dir,
+                dry_run=args.dry_run,
+            )
 
         gpus, driver_cuda_version, nvidia_smi = scan_nvidia()
         toolkits = discover_cuda_toolkits()
