@@ -125,6 +125,32 @@ configs\generation_config.yml
 ```
 
 ---
+### Optional: Add or Update Your CivitAI API Key
+
+ImageGen can use a CivitAI API key to retrieve additional metadata and preview information for installed LoRAs.
+
+The default private key file is:
+
+```text
+secrets\civitai_api_key.txt
+```
+
+If the `secrets` folder or file does not exist, create them inside the main ImageGen folder.
+
+Open `civitai_api_key.txt` in a text editor and place your CivitAI API key on a **single line by itself**:
+
+```text
+your_civitai_api_key_here
+```
+
+Do not add quotation marks, labels, spaces, or additional lines.
+
+To replace an existing key, simply replace the contents of `civitai_api_key.txt` with the new key and save the file. ImageGen reads the key when performing CivitAI metadata requests, so reinstalling ImageGen is not required.
+
+> [!IMPORTANT]
+> Your API key is private. Do not share `civitai_api_key.txt`, include it in support logs, or commit it to GitHub.
+
+---
 
 ## First Generation
 
