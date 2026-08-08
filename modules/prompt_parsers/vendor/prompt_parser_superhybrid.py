@@ -1,4 +1,20 @@
 # prompt_parser_patched_superhybrid.py
+
+# -----------------------------------------------------------------------------
+# UPSTREAM / REGION ATTRIBUTION
+#
+# This vendored SuperHybrid parser contains code supplied by and/or derived from
+# work by GitHub user Konpr, including the original REGION syntax and parser-side
+# REGION semantics:
+#   https://github.com/Konpr/whats-/tree/main/new_version3
+#
+# The original author granted permission to use/adapt the code with credit.
+# REGION parser/syntax portions of this file are therefore not claimed as
+# original IMAGE_GEN work. IMAGE_GEN-specific runtime behavior is implemented
+# outside this vendored parser in the native regional prompting/conditioning
+# layers.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import re
@@ -12616,6 +12632,8 @@ def get_multicond_prompt_list(prompts: SdConditioning | list[str]):
         subprompts = _split_top_level_multicond(protected_prompt)
         indexes = []
         for subprompt in subprompts:
+            #PP21 removes punctuation from the end of a prompt. This creates a difference in normal prompts where a prompt ended in a comma. the original code is commented out.
+            '''
             s = subprompt if isinstance(subprompt, str) else str(subprompt)
 
             # 1) Нормализация скобочных весов: "(cat:2.0)" или просто "(cat)"
@@ -12623,6 +12641,17 @@ def get_multicond_prompt_list(prompts: SdConditioning | list[str]):
                 r'^\s*\(\s*(.*?)\s*(?::\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*)?\)\s*$',
                 s
             )
+            '''
+            s_raw = subprompt if isinstance(subprompt, str) else str(subprompt)
+            s_stripped = (s_raw or "").strip()
+
+            # 1) Parenthesized emphasis form: "(cat:2.0)" or "(cat)"
+            m_emph = re.match(
+                r'^\s*\(\s*(.*?)\s*(?::\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*)?\)\s*$',
+                s_raw
+            )
+            
+            '''
             if m_emph:
                 text = m_emph.group(1)
                 weight = m_emph.group(2) if m_emph.group(2) is not None else ROUND_BRACKET_MULTIPLIER
@@ -12646,6 +12675,41 @@ def get_multicond_prompt_list(prompts: SdConditioning | list[str]):
                 weight = float(weight) if weight is not None else 1.0
             except (ValueError, TypeError):
                 weight = 1.0
+                
+            '''
+            if m_emph:
+                text = m_emph.group(1)
+                weight = m_emph.group(2) if m_emph.group(2) is not None else ROUND_BRACKET_MULTIPLIER
+            else:
+                # Legacy parity:
+                # preserve literal punctuation; only treat trailing ":<number>" as weight syntax
+                m_end = RE_END_WEIGHT.match(s_stripped)
+                if m_end and m_end.group("w"):
+                    text, weight = m_end.group("text"), m_end.group("w")
+                else:
+                    text, weight = (s_stripped, None)
+
+            text = _restore_escaped_literals((text or "").strip(), span_restore)
+
+            # Only remove a trailing colon artifact when we actually parsed a weight suffix.
+            if weight is not None and (text.endswith(":") or text.endswith("：")):
+                text = text[:-1].rstrip()
+
+            # Legacy parity:
+            # preserve a truly empty literal prompt as "".
+            # Keep SAFE_EMPTY only for synthetic/internal empty branches if needed.
+            if not text.strip():
+                if len(subprompts) == 1 and not s_stripped:
+                    text = ""
+                else:
+                    text = SAFE_EMPTY
+
+            try:
+                weight = float(weight) if weight is not None else 1.0
+            except (ValueError, TypeError):
+                weight = 1.0
+            
+            
             index = prompt_indexes.get(text, None)
             if index is None:
                 index = len(prompt_flat_list)

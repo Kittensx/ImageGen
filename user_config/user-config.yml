@@ -13,8 +13,10 @@ paths:
   gfpgan_dir: "models/StableDiffusion/GFPGAN"
   realesrgan_dir: "models/StableDiffusion/RealESRGAN"
   controlnet_dir: "models/StableDiffusion/ControlNet"
-  embeddings_dir: "models/Embeddings"
+  embeddings_dir: "models/StableDiffusion/Embeddings"
   hypernetworks_dir: "models/StableDiffusion/Hypernetworks"
+  upscalers_comfyui_dir: "models/StableDiffusion/Upscalers_ComfyUI"
+  
 
   local_config_dir: "modules/local_configs"
   tokenizer_dir: "modules/local_tokenizers/clip-vit-large-patch14"
@@ -27,22 +29,22 @@ paths:
   diagnostics_dir: "artifacts/diagnostics"
 
 defaults:
-  model_path: "models/StableDiffusion/CheckPoints/goldenLegends_v10.safetensors"
+  model_path: "models/StableDiffusion/CheckPoints/Nautica.safetensors"
   vae_path: null
   lora_paths: []
   device: "auto"
   dtype: "auto"
 
 generation:
-  prompt: "A cat on a woman's lap"
-  negative_prompt: "blurry, distorted, low resolution, sepia, black and white, kodak photograph"
-  seed: null
-  steps: 25
-  cfg_scale: 7.0
-  width: 640
-  height: 960
-  sampler: "kes"
-  scheduler: "simple_kes"
+  positive_prompt: "raw photo, (attractive woman, age20), styled ((blonde)) hair, ((blue)) eyes, standing, {wearing dress, slit, exposed upper thighs}, tan-lines, {relaxed posture}, softlight, small breasts"
+  negative_prompt: "cape"
+  seed: 519822357
+  steps: 20
+  cfg_scale: 6.0
+  width: 512
+  height: 768
+  sampler_name: "kes"
+  scheduler_name: "simple_kes"
   batch_size: 1
 
 registry:
@@ -63,7 +65,7 @@ model_library:
     GFPGAN: "models/StableDiffusion/GFPGAN"
     RealESRGAN: "models/StableDiffusion/RealESRGAN"
     ControlNet: "models/StableDiffusion/ControlNet"
-    Embeddings: "models/Embeddings"
+    Embeddings: "models/StableDiffusion/Embeddings"
     Hypernetworks: "models/StableDiffusion/Hypernetworks"
 
   additional_scan_roots: []

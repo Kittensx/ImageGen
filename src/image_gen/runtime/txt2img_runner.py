@@ -27,7 +27,9 @@ from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
 from image_gen.systems.output import OutputSystem, PreparedOutputSaveRequest
 from image_gen.systems.outpainting import (
     OUTPAINT_SHAPE_EXPANSION_CONTRACT_VERSION,
+    build_post_generation_shape_action,
     format_outpaint_failure,
+    normalize_outpaint_source_handoff_mode,
     resolve_outpaint_shape_target,
 )
 from image_gen.systems.upscaling import (
@@ -1200,6 +1202,8 @@ class Txt2ImgRunner:
             base_request,
             width=int(target["target_width"]),
             height=int(target["target_height"]),
+            outpaint_target_width=int(target["target_width"]),
+            outpaint_target_height=int(target["target_height"]),
             outpaint_prototype_enabled=True,
             outpaint_source_image="",
             outpaint_anchor=str(getattr(request, "outpaint_shape_anchor", "center") or "center"),
@@ -1245,10 +1249,12 @@ class Txt2ImgRunner:
 
         outpaint_record = dict(expanded_result.metadata.get("outpaint_prototype") or {})
         source_handoff = dict(outpaint_record.get("source_handoff") or {})
+        source_handoff_contract = dict(outpaint_record.get("source_handoff_contract") or {})
         runtime_record = {
             "contract_version": OUTPAINT_SHAPE_EXPANSION_CONTRACT_VERSION,
             "enabled": True,
             "source_kind": "fresh_txt2img_generation",
+            "source_origin": str(source_handoff_contract.get("source_origin") or "fresh_generation"),
             "disk_round_trip": False,
             "base_generation_width": base_width,
             "base_generation_height": base_height,
@@ -1263,22 +1269,43 @@ class Txt2ImgRunner:
             "source_handoff_requested": str(
                 getattr(request, "outpaint_shape_source_handoff", "auto") or "auto"
             ),
+            "source_handoff_requested_stable": normalize_outpaint_source_handoff_mode(
+                getattr(request, "outpaint_shape_source_handoff", "auto") or "auto",
+                default="auto",
+            ),
             "source_handoff_actual": str(source_handoff.get("actual") or ""),
-            "source_handoff_fallback_reason": str(source_handoff.get("fallback_reason") or ""),
-            "latent_grid_alignment": dict(source_handoff.get("alignment") or {}),
+            "source_handoff_actual_stable": str(source_handoff_contract.get("actual_source_handoff") or ""),
+            "source_handoff_fallback_reason": str(source_handoff.get("fallback_reason") or source_handoff_contract.get("source_handoff_fallback_reason") or ""),
+            "latent_grid_alignment": dict(source_handoff_contract.get("latent_grid_alignment") or source_handoff.get("alignment") or {}),
             "preservation_reference_source": str(
-                source_handoff.get("preservation_reference_source") or ""
+                source_handoff_contract.get("preservation_reference_source") or source_handoff.get("preservation_reference_source") or ""
             ),
             "source_was_vae_reencoded_for_protected_latent": bool(
-                source_handoff.get("source_was_vae_reencoded_for_protected_latent", True)
+                source_handoff_contract.get("source_was_vae_reencoded_for_protected_latent", source_handoff.get("source_was_vae_reencoded_for_protected_latent", True))
             ),
-            "live_source_latent_reused": bool(source_handoff.get("live_source_latent_reused", False)),
+            "live_source_latent_reused": bool(source_handoff_contract.get("live_source_latent_reused", source_handoff.get("live_source_latent_reused", False))),
             "outpaint_prompt_mode": str(expansion_request.outpaint_prompt_mode),
             "outpaint_overlay_positive_prompt": str(expansion_request.outpaint_overlay_positive_prompt),
             "outpaint_overlay_negative_prompt": str(expansion_request.outpaint_overlay_negative_prompt),
             "outpaint_denoising_strength": float(expansion_request.outpaint_denoising_strength),
             "provisional_base_saved": bool(getattr(request, "outpaint_shape_save_base", False)),
             "expanded_result_is_primary": True,
+            "post_generation_shape_action": build_post_generation_shape_action(
+                base_width=base_width,
+                base_height=base_height,
+                target_width=int(target["target_width"]),
+                target_height=int(target["target_height"]),
+                anchor=str(expansion_request.outpaint_anchor),
+                context_seed_mode=str(expansion_request.outpaint_context_seed_mode),
+                source_handoff_policy=str(getattr(request, "outpaint_shape_source_handoff", "auto") or "auto"),
+                overlay_positive_prompt=str(expansion_request.outpaint_overlay_positive_prompt),
+                overlay_negative_prompt=str(expansion_request.outpaint_overlay_negative_prompt),
+                denoise_strength=float(expansion_request.outpaint_denoising_strength),
+                save_pre_expansion_base=bool(getattr(request, "outpaint_shape_save_base", False)),
+            ),
+            "geometry_fingerprint": dict(outpaint_record.get("geometry_fingerprint") or {}),
+            "inference_fingerprint": dict(outpaint_record.get("inference_fingerprint") or {}),
+            "audit": dict(outpaint_record.get("audit") or {}),
         }
         runtime_record["runtime_handoff_tensors_released_after_expansion"] = True
         expansion_request.outpaint_shape_runtime_record = dict(runtime_record)

@@ -1,3 +1,22 @@
+# -----------------------------------------------------------------------------
+# REGION ATTRIBUTION
+#
+# Original REGION syntax and core regional-conditioning design are based on
+# work by GitHub user Konpr:
+#   https://github.com/Konpr/whats-/tree/main/new_version3
+#
+# The original author granted permission to use/adapt the code with credit.
+# IMAGE_GEN retains that attribution for the REGION language and semantics,
+# including REGION{...}, spatial coordinates/tiling, *base=, overlay/common
+# modes, latent backend semantics, branch weights/curves, start/stop windows,
+# blur, canvas masks, and base_ratio.
+#
+# This file's IMAGE_GEN implementation is a substantial native adaptation:
+# parser-independent conditioning, native model-output execution, canonical CFG
+# integration, batching, hires/resolution transforms, replay/fingerprinting,
+# validation, telemetry, caching, and low-VRAM execution are IMAGE_GEN work.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import base64

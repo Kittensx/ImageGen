@@ -356,6 +356,12 @@ class GenerationRequest:
     hires_host_staging_policy: str = "pageable"
     hires_host_staging_cap_mb: int = 1024
     hires_artifact_disk_budget_mb: int = 0
+    outpaint_enabled: bool = False
+    outpaint_target_width: int = 0
+    outpaint_target_height: int = 0
+    outpaint_preservation_mode: str = "strict_preserve"
+    outpaint_mask_strategy: str = "preserve_generate_feather_v1"
+    outpaint_source_handoff_mode: str = "image_reencode_v1"
     outpaint_prototype_enabled: bool = False
     outpaint_source_image: str = ""
     outpaint_anchor: str = "center"
@@ -401,6 +407,26 @@ class GenerationRequest:
     def __post_init__(self) -> None:
         self.prompt_asset_contract_version = str(
             self.prompt_asset_contract_version or PROMPT_ASSET_CONTRACT_VERSION
+        )
+        self.outpaint_enabled = bool(self.outpaint_enabled or self.outpaint_prototype_enabled)
+        if int(self.outpaint_target_width or 0) > 0:
+            self.width = int(self.outpaint_target_width)
+        else:
+            self.outpaint_target_width = int(self.width)
+        if int(self.outpaint_target_height or 0) > 0:
+            self.height = int(self.outpaint_target_height)
+        else:
+            self.outpaint_target_height = int(self.height)
+        if self.outpaint_enabled:
+            self.outpaint_prototype_enabled = True
+        self.outpaint_preservation_mode = str(
+            self.outpaint_preservation_mode or "strict_preserve"
+        )
+        self.outpaint_mask_strategy = str(
+            self.outpaint_mask_strategy or "preserve_generate_feather_v1"
+        )
+        self.outpaint_source_handoff_mode = str(
+            self.outpaint_source_handoff_mode or "image_reencode_v1"
         )
         self.loras = normalize_prompt_asset_list(
             self.loras,
@@ -523,6 +549,12 @@ class GenerationRequest:
             "hires_host_staging_policy": str(self.hires_host_staging_policy or "pageable"),
             "hires_host_staging_cap_mb": int(self.hires_host_staging_cap_mb or 0),
             "hires_artifact_disk_budget_mb": int(self.hires_artifact_disk_budget_mb or 0),
+            "outpaint_enabled": bool(self.outpaint_enabled),
+            "outpaint_target_width": int(self.outpaint_target_width or 0),
+            "outpaint_target_height": int(self.outpaint_target_height or 0),
+            "outpaint_preservation_mode": str(self.outpaint_preservation_mode or "strict_preserve"),
+            "outpaint_mask_strategy": str(self.outpaint_mask_strategy or "preserve_generate_feather_v1"),
+            "outpaint_source_handoff_mode": str(self.outpaint_source_handoff_mode or "image_reencode_v1"),
             "outpaint_prototype_enabled": bool(self.outpaint_prototype_enabled),
             "outpaint_source_image": str(self.outpaint_source_image or ""),
             "outpaint_anchor": str(self.outpaint_anchor or "center"),

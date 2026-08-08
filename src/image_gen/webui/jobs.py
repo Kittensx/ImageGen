@@ -325,9 +325,33 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["hires_save_lowres"] = _coerce_boolean(
         normalized.get("hires_save_lowres", False), default=False
     )
-    normalized["outpaint_prototype_enabled"] = _coerce_boolean(
-        normalized.get("outpaint_prototype_enabled", False), default=False
+    normalized["outpaint_enabled"] = _coerce_boolean(
+        normalized.get("outpaint_enabled", normalized.get("outpaint_prototype_enabled", False)), default=False
     )
+    normalized["outpaint_prototype_enabled"] = bool(normalized["outpaint_enabled"] or _coerce_boolean(
+        normalized.get("outpaint_prototype_enabled", False), default=False
+    ))
+    normalized["outpaint_target_width"] = _coerce_top_level_number(
+        normalized.get("outpaint_target_width", normalized.get("width")), integer=True, default=normalized.get("width", 640)
+    )
+    normalized["outpaint_target_height"] = _coerce_top_level_number(
+        normalized.get("outpaint_target_height", normalized.get("height")), integer=True, default=normalized.get("height", 960)
+    )
+    normalized["outpaint_preservation_mode"] = str(
+        normalized.get("outpaint_preservation_mode") or "strict_preserve"
+    ).strip().lower()
+    if normalized["outpaint_preservation_mode"] not in {"strict_preserve"}:
+        raise ValueError("Unsupported outpaint_preservation_mode.")
+    normalized["outpaint_mask_strategy"] = str(
+        normalized.get("outpaint_mask_strategy") or "preserve_generate_feather_v1"
+    ).strip().lower()
+    if normalized["outpaint_mask_strategy"] not in {"preserve_generate_feather_v1"}:
+        raise ValueError("Unsupported outpaint_mask_strategy.")
+    normalized["outpaint_source_handoff_mode"] = str(
+        normalized.get("outpaint_source_handoff_mode") or "image_reencode_v1"
+    ).strip().lower()
+    if normalized["outpaint_source_handoff_mode"] not in {"image_reencode_v1", "live_txt2img_latent_v1", "auto"}:
+        raise ValueError("Unsupported outpaint_source_handoff_mode.")
     normalized["outpaint_source_image"] = str(normalized.get("outpaint_source_image") or "").strip()
     normalized["outpaint_anchor"] = str(normalized.get("outpaint_anchor") or "center").strip().lower()
     if normalized["outpaint_anchor"] not in OUTPAINT_ANCHORS:

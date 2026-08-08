@@ -1,3 +1,11 @@
+/*
+ * REGION ATTRIBUTION
+ * Original REGION syntax/concept and builder direction: GitHub user Konpr
+ * https://github.com/Konpr/whats-/tree/main/new_version3
+ * Used/adapted with permission and attribution. This IMAGE_GEN frontend runtime
+ * is a substantial modular redesign/integration of that original direction.
+ */
+
 import { loadFragments } from "./fragments.js";
 
 const REGION_BUILDER_SCRIPTS = [

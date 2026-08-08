@@ -275,16 +275,33 @@ class ProjectContext:
         if not isinstance(generation, Mapping) or not isinstance(defaults, Mapping):
             raise ProjectConfigurationError("'generation' and 'defaults' must be mappings.")
 
+        def generation_value(canonical_key: str, *legacy_keys: str, default: Any = None) -> Any:
+            """Read replay/request field names first, then historical project aliases.
+
+            The canonical project generation schema intentionally mirrors the
+            GenerationRequest/replay payload so a saved request can be copied into
+            ``generation:`` without renaming sampler/scheduler/prompt fields.
+            Historical aliases remain read-compatible, but never override the
+            canonical spelling when both are present.
+            """
+
+            if canonical_key in generation:
+                return generation[canonical_key]
+            for legacy_key in legacy_keys:
+                if legacy_key in generation:
+                    return generation[legacy_key]
+            return default
+
         payload: dict[str, Any] = {
-            "positive_prompt": generation.get("prompt", ""),
-            "negative_prompt": generation.get("negative_prompt", ""),
-            "seed": generation.get("seed"),
-            "steps": generation.get("steps"),
-            "cfg_scale": generation.get("cfg_scale"),
-            "width": generation.get("width"),
-            "height": generation.get("height"),
-            "sampler_name": generation.get("sampler"),
-            "scheduler_name": generation.get("scheduler"),
+            "positive_prompt": generation_value("positive_prompt", "prompt", default=""),
+            "negative_prompt": generation_value("negative_prompt", default=""),
+            "seed": generation_value("seed"),
+            "steps": generation_value("steps"),
+            "cfg_scale": generation_value("cfg_scale"),
+            "width": generation_value("width"),
+            "height": generation_value("height"),
+            "sampler_name": generation_value("sampler_name", "sampler"),
+            "scheduler_name": generation_value("scheduler_name", "scheduler"),
             "batch_size": generation.get("batch_size"),
             "batch_count": generation.get("batch_count", 1),
             "unlimited": bool(generation.get("unlimited", False)),
@@ -305,17 +322,17 @@ class ProjectContext:
             ),
             "scheduler_kwargs": dict(generation.get("scheduler_kwargs") or {}),
             "sampler_kwargs": dict(generation.get("sampler_kwargs") or {}),
-            "prompt_parser_name": str(generation.get("prompt_parser") or "legacy"),
-            "prompt_parser_kwargs": dict(generation.get("prompt_parser_kwargs") or {}),
-            "prompt_shortcut_profile_name": str(generation.get("prompt_shortcut_profile") or ("legacy_default" if str(generation.get("prompt_parser") or "legacy") == "legacy" else ("superhybrid_native" if str(generation.get("prompt_parser") or "legacy") == "superhybrid" else "parser21_native"))),
-            "prompt_parser_preset_name": str(generation.get("prompt_parser_preset") or ""),
-            "base_prompt_parser_name": str(generation.get("prompt_parser") or "legacy"),
-            "base_shortcut_profile_name": str(generation.get("prompt_shortcut_profile") or ("legacy_default" if str(generation.get("prompt_parser") or "legacy") == "legacy" else ("superhybrid_native" if str(generation.get("prompt_parser") or "legacy") == "superhybrid" else "parser21_native"))),
+            "prompt_parser_name": str(generation_value("prompt_parser_name", "prompt_parser", default="legacy") or "legacy"),
+            "prompt_parser_kwargs": dict(generation_value("prompt_parser_kwargs", default={}) or {}),
+            "prompt_shortcut_profile_name": str(generation_value("prompt_shortcut_profile_name", "prompt_shortcut_profile") or ("legacy_default" if str(generation_value("prompt_parser_name", "prompt_parser", default="legacy") or "legacy") == "legacy" else ("superhybrid_native" if str(generation_value("prompt_parser_name", "prompt_parser", default="legacy") or "legacy") == "superhybrid" else "parser21_native"))),
+            "prompt_parser_preset_name": str(generation_value("prompt_parser_preset_name", "prompt_parser_preset", default="") or ""),
+            "base_prompt_parser_name": str(generation_value("base_prompt_parser_name", "prompt_parser_name", "prompt_parser", default="legacy") or "legacy"),
+            "base_shortcut_profile_name": str(generation_value("base_shortcut_profile_name", "prompt_shortcut_profile_name", "prompt_shortcut_profile") or ("legacy_default" if str(generation_value("base_prompt_parser_name", "prompt_parser_name", "prompt_parser", default="legacy") or "legacy") == "legacy" else ("superhybrid_native" if str(generation_value("base_prompt_parser_name", "prompt_parser_name", "prompt_parser", default="legacy") or "legacy") == "superhybrid" else "parser21_native"))),
             "hires_prompt_parser_mode": str(generation.get("hires_prompt_parser_mode") or "same_as_base"),
-            "hires_prompt_parser_name": str(generation.get("hires_prompt_parser") or generation.get("prompt_parser") or "legacy"),
+            "hires_prompt_parser_name": str(generation_value("hires_prompt_parser_name", "hires_prompt_parser") or generation_value("prompt_parser_name", "prompt_parser", default="legacy") or "legacy"),
             "hires_prompt_parser_kwargs": dict(generation.get("hires_prompt_parser_kwargs") or {}),
             "hires_shortcut_profile_mode": str(generation.get("hires_shortcut_profile_mode") or "same_as_base"),
-            "hires_shortcut_profile_name": str(generation.get("hires_shortcut_profile") or generation.get("prompt_shortcut_profile") or "legacy_default"),
+            "hires_shortcut_profile_name": str(generation_value("hires_shortcut_profile_name", "hires_shortcut_profile") or generation_value("prompt_shortcut_profile_name", "prompt_shortcut_profile", default="legacy_default") or "legacy_default"),
             "hires_shortcut_profile_snapshot": dict(generation.get("hires_shortcut_profile_snapshot") or {}),
             "hires_enabled": bool(generation.get("hires_enabled", False)),
             "hires_positive_prompt": str(generation.get("hires_positive_prompt") or ""),

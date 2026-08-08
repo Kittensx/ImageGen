@@ -1,5 +1,18 @@
 # prompt_conditioning_adapter.py
 
+# -----------------------------------------------------------------------------
+# REGION ATTRIBUTION
+#
+# REGION syntax and the original regional-conditioning design originate from
+# work by GitHub user Konpr:
+#   https://github.com/Konpr/whats-/tree/main/new_version3
+#
+# The original author granted permission to use/adapt the code with credit.
+# This adapter/bridge is IMAGE_GEN-specific: it separates REGION extraction from
+# the selected prompt parser and routes the resulting regional prompts through
+# IMAGE_GEN's parser registry and native conditioning/runtime contracts.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from dataclasses import dataclass
