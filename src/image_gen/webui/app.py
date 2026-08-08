@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION
+from image_gen.program_metadata import build_program_metadata
 from image_gen.runtime.hires_sizing import resolve_hires_dimensions
 from image_gen.systems.outpainting import plan_outpaint_canvas
 from image_gen.runtime_options import (
@@ -378,6 +379,7 @@ def create_app(
             "started_at_unix": server_started_at_unix,
             "worker": jobs.status(),
             "version": WEBUI_VERSION,
+            "application": build_program_metadata(context.project_root),
             "active_model": model_selection.current_payload(),
             "prompt_parsers": prompt_parsers.descriptors(),
         }
@@ -512,6 +514,7 @@ def create_app(
 
         return {
             "version": WEBUI_VERSION,
+            "application": build_program_metadata(context.project_root),
             "project_root": str(context.project_root),
             "output_root": str(context.txt2img_output_root),
             "runtime_paths": {

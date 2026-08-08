@@ -7,6 +7,12 @@ from typing import Any, Mapping
 
 from PIL.PngImagePlugin import PngInfo
 
+from image_gen.program_metadata import (
+    APPLICATION_VERSION,
+    METADATA_SCHEMA_VERSION,
+    PRODUCT_NAME,
+    build_program_metadata,
+)
 from image_gen.systems.diagnostics.serialization import json_safe
 from modules.txt2img.generation_manifest import GenerationManifest
 from modules.txt2img.manifest_io import manifest_to_replay_dict
@@ -230,13 +236,33 @@ def build_png_text_chunks(manifest: GenerationManifest) -> dict[str, str]:
     # Embed the same compact replay payload used by the default JSON sidecar.
     # Full runtime diagnostics remain available in the optional
     # ``*.diagnostics.json`` sidecar instead of inflating every PNG.
+    application = dict(manifest.extra.get("application") or build_program_metadata())
+    build = dict(application.get("build") or {})
+
     payload = json_safe(manifest_to_replay_dict(manifest))
+    payload_extra = dict(payload.get("extra") or {})
+    payload_extra["application"] = json_safe(application)
+    payload["extra"] = payload_extra
+
     parameters = manifest_to_civitai_parameters(manifest)
     manifest_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return {
         "parameters": parameters,
         "Comment": parameters,
-        "Software": "IMAGE_GEN",
+        "Software": PRODUCT_NAME,
+        "ImageGen Version": str(application.get("version") or APPLICATION_VERSION),
+        "ImageGen Build": str(build.get("display") or build.get("commit_short") or ""),
+        "ImageGen Commit": str(build.get("commit_full") or ""),
+        "ImageGen Metadata Version": str(
+            application.get("metadata_schema_version") or METADATA_SCHEMA_VERSION
+        ),
+        "imagegen_version": str(application.get("version") or APPLICATION_VERSION),
+        "imagegen_build": str(build.get("commit_short") or ""),
+        "imagegen_commit": str(build.get("commit_full") or ""),
+        "imagegen_build_exact": "true" if bool(build.get("exact_source_snapshot")) else "false",
+        "imagegen_metadata_version": str(
+            application.get("metadata_schema_version") or METADATA_SCHEMA_VERSION
+        ),
         "image_gen_manifest": manifest_json,
         "image_gen_manifest_version": str(getattr(manifest, "manifest_version", "1.0")),
         "image_gen_manifest_type": str(getattr(manifest, "manifest_type", "txt2img")),

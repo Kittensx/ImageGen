@@ -989,7 +989,10 @@ async function start() {
     const restoredPromptAssets = replayPromptAssets(current);
     state.activePromptAssets = restoredPromptAssets;
 
-    $("#appVersion").textContent = `v${bootstrap.version}`;
+    const applicationMetadata = bootstrap.application || {};
+    const applicationVersion = applicationMetadata.version || bootstrap.version;
+    const buildDisplay = applicationMetadata.build?.display || "";
+    $("#appVersion").textContent = `v${applicationVersion}${buildDisplay ? ` · ${buildDisplay}` : ""}`;
     $("#projectPath").textContent = `Project: ${bootstrap.project_root}`;
     populateModels(current);
     populatePlugins(current);

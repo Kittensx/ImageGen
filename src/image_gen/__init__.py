@@ -10,6 +10,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+from image_gen.program_metadata import APPLICATION_VERSION as __version__
+
 if TYPE_CHECKING:  # pragma: no cover - static typing only
     from image_gen.contracts import (
         ConditioningOutput,
@@ -29,7 +31,7 @@ _CONTRACT_EXPORTS = {
     "SchedulerOutput",
 }
 
-__all__ = sorted(_CONTRACT_EXPORTS)
+__all__ = sorted(_CONTRACT_EXPORTS | {"__version__"})
 
 
 def __getattr__(name: str) -> Any:

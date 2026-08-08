@@ -1,4 +1,5 @@
 from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION, normalize_prompt_asset_list
+from image_gen.program_metadata import build_program_metadata
 from image_gen.systems.diagnostics.serialization import json_safe
 from modules.txt2img.generation_manifest import (
     GenerationManifest,
@@ -49,6 +50,8 @@ def build_generation_manifest(
             model_path=model_path,
         )
     )
+
+    manifest.extra["application"] = build_program_metadata()
 
     scheduler_kwargs = getattr(request, "scheduler_kwargs", {}) if request is not None else {}
     sampler_kwargs = getattr(request, "sampler_kwargs", {}) if request is not None else {}

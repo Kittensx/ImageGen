@@ -497,6 +497,10 @@ def manifest_to_replay_dict(manifest: GenerationManifest) -> dict[str, Any]:
         payload["optional_for_rerun"] = _drop_empty(optional_payload)
 
     top_extra: dict[str, Any] = {}
+    application = _mapping(manifest.extra.get("application"))
+    if application:
+        top_extra["application"] = json_safe(application)
+
     model_provenance = _minimal_model_provenance(manifest)
     if model_provenance:
         top_extra["model_provenance"] = model_provenance
