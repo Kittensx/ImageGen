@@ -4,7 +4,7 @@ cd /d "%~dp0"
 title IMAGE_GEN Installer
 
 echo.
-echo IMAGE_GEN hardware-aware installer
+echo IMAGE_GEN hardware-aware installer (Python 3.10.20 x64 required)
 echo ==================================
 echo This installer detects NVIDIA GPUs, installed CUDA toolkits, and the
 echo NVIDIA driver's supported CUDA level. It installs only a published,
@@ -18,7 +18,7 @@ set "PYTHON_ARGS="
 :detect_python
 where py.exe >nul 2>&1
 if not errorlevel 1 (
-    py -3.10 -c "import struct,sys; raise SystemExit(0 if sys.version_info[:2]==(3,10) and struct.calcsize('P')*8==64 else 1)" >nul 2>&1
+    py -3.10 -c "import struct,sys; raise SystemExit(0 if sys.version_info[:3]==(3,10,20) and struct.calcsize('P')*8==64 else 1)" >nul 2>&1
     if not errorlevel 1 (
         set "PYTHON_EXE=py.exe"
         set "PYTHON_ARGS=-3.10"
@@ -28,7 +28,7 @@ if not errorlevel 1 (
 
 where python.exe >nul 2>&1
 if not errorlevel 1 (
-    python -c "import struct,sys; raise SystemExit(0 if sys.version_info[:2]==(3,10) and struct.calcsize('P')*8==64 else 1)" >nul 2>&1
+    python -c "import struct,sys; raise SystemExit(0 if sys.version_info[:3]==(3,10,20) and struct.calcsize('P')*8==64 else 1)" >nul 2>&1
     if not errorlevel 1 (
         set "PYTHON_EXE=python.exe"
         set "PYTHON_ARGS="
@@ -42,7 +42,7 @@ for %%P in (
     "%ProgramFiles(x86)%\Python310\python.exe"
 ) do (
     if exist "%%~P" (
-        "%%~P" -c "import struct,sys; raise SystemExit(0 if sys.version_info[:2]==(3,10) and struct.calcsize('P')*8==64 else 1)" >nul 2>&1
+        "%%~P" -c "import struct,sys; raise SystemExit(0 if sys.version_info[:3]==(3,10,20) and struct.calcsize('P')*8==64 else 1)" >nul 2>&1
         if not errorlevel 1 (
             set "PYTHON_EXE=%%~P"
             set "PYTHON_ARGS="
@@ -52,28 +52,29 @@ for %%P in (
 )
 
 if defined IMAGE_GEN_PYTHON_INSTALL_ATTEMPTED (
-    echo ERROR: Python 3.10 x64 was installed but could not be located.
-    echo Close this window, open a new Command Prompt, and rerun install.bat.
+    echo ERROR: Python 3.10.20 x64 was installed but could not be located.
+    echo Rerun install_python_3.10.20.bat and verify the Python launcher/PATH
+    echo or use the standard Python310 installation location.
     pause
     exit /b 1
 )
 
-echo ERROR: Python 3.10 x64 was not found.
+echo Python 3.10.20 x64 was not found.
+echo IMAGE_GEN requires this exact interpreter build.
 echo.
-where winget.exe >nul 2>&1
-if errorlevel 1 (
-    echo Install Python 3.10 x64, enable the Python launcher, then rerun install.bat.
-    pause
-    exit /b 1
-)
-set /p "INSTALL_PYTHON=Install Python 3.10 x64 with winget now? [Y/N]: "
+set /p "INSTALL_PYTHON=Download and install the validated Python 3.10.20 x64 release now? [Y/N]: "
 if /I not "%INSTALL_PYTHON%"=="Y" exit /b 1
-winget install --id Python.Python.3.10 --exact --source winget --accept-package-agreements --accept-source-agreements
-if errorlevel 1 (
-    echo ERROR: Python installation failed.
+
+set "IMAGE_GEN_PARENT_INSTALL=1"
+call "%CD%\install_python_3.10.20.bat"
+set "PYTHON_INSTALL_RESULT=%ERRORLEVEL%"
+set "IMAGE_GEN_PARENT_INSTALL="
+if not "%PYTHON_INSTALL_RESULT%"=="0" (
+    echo ERROR: Python 3.10.20 prerequisite installation failed.
     pause
-    exit /b 1
+    exit /b %PYTHON_INSTALL_RESULT%
 )
+
 set "IMAGE_GEN_PYTHON_INSTALL_ATTEMPTED=1"
 goto detect_python
 

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 
-REQUIRED_PYTHON = (3, 10)
+REQUIRED_PYTHON = (3, 10, 20)
 
 
 class InstallError(RuntimeError):
@@ -533,13 +533,21 @@ def _choose_install_choice(
 def _check_host_requirements() -> None:
     if sys.platform != "win32":
         raise InstallError("This installer currently supports Windows only.")
-    if (sys.version_info.major, sys.version_info.minor) != REQUIRED_PYTHON:
+    running_python = (
+        sys.version_info.major,
+        sys.version_info.minor,
+        sys.version_info.micro,
+    )
+    if running_python != REQUIRED_PYTHON:
+        required = ".".join(str(part) for part in REQUIRED_PYTHON)
+        detected = ".".join(str(part) for part in running_python)
         raise InstallError(
-            f"Python {REQUIRED_PYTHON[0]}.{REQUIRED_PYTHON[1]} x64 is required. "
-            f"This installer is running with Python {sys.version_info.major}.{sys.version_info.minor}."
+            f"IMAGE_GEN requires Python {required} x64 exactly. "
+            f"This installer is running with Python {detected}. "
+            "Other Python 3.10 patch releases are not accepted for this build."
         )
     if struct.calcsize("P") * 8 != 64:
-        raise InstallError("A 64-bit Python installation is required.")
+        raise InstallError("Python 3.10.20 must be a 64-bit installation.")
 
 
 def _environment_for_choice(
