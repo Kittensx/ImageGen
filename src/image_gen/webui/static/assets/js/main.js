@@ -184,6 +184,45 @@ function normalizedModelPath(value) {
   return String(value || "").trim().replaceAll("/", "\\").toLowerCase();
 }
 
+function modelFileName(value) {
+  return String(value || "").trim().split(/[\\/]/).pop()?.toLowerCase() || "";
+}
+
+function resolveCatalogModelPath(value) {
+  const requested = String(value || "").trim();
+  if (!requested) return "";
+  const exact = state.models.find((item) => normalizedModelPath(item.path) === normalizedModelPath(requested));
+  if (exact) return exact.path;
+  const fileName = modelFileName(requested);
+  if (!fileName) return "";
+  const byFilename = state.models.find((item) => modelFileName(item.path) === fileName);
+  return byFilename?.path || "";
+}
+
+function syncModelDropdownSelection(requestedPath, { label = "" } = {}) {
+  const select = $("#modelPath");
+  if (!select) return "";
+
+  const rawRequested = String(requestedPath || "").trim();
+  if (!rawRequested) return "";
+
+  const resolved = resolveCatalogModelPath(rawRequested) || rawRequested;
+  const optionLabel = label || (resolved === rawRequested
+    ? undefined
+    : `${resolved} (resolved from ${rawRequested})`);
+  ensureSelectValue(select, resolved, optionLabel);
+  select.value = resolved;
+
+  if (resolved !== rawRequested) {
+    const staleOption = [...select.options].find((item) => item.value === rawRequested);
+    const requestedIsCatalogEntry = state.models.some(
+      (item) => normalizedModelPath(item.path) === normalizedModelPath(rawRequested),
+    );
+    if (staleOption && !requestedIsCatalogEntry) staleOption.remove();
+  }
+  return resolved;
+}
+
 function modelRuntimeIsReady(status, requestedPath) {
   const currentPath = normalizedModelPath(status?.current_model_path);
   const requested = normalizedModelPath(requestedPath);
@@ -239,10 +278,11 @@ async function activateSelectedModel({ quiet = false } = {}) {
   setModelReadyState(false, "Activating selected checkpoint…", "loading");
   const activation = api.activateModel(requestedPath).then((payload) => {
     const active = payload.active_model;
-    if (!active || active.resolved_path !== requestedPath) {
-      throw new Error("The backend did not activate the checkpoint selected in the dropdown.");
+    if (!active?.resolved_path) {
+      throw new Error("The backend did not return an activated checkpoint.");
     }
-    if (!rememberModelRuntime(payload.model_runtime, requestedPath)) {
+    const effectivePath = syncModelDropdownSelection(active.resolved_path) || active.resolved_path;
+    if (!rememberModelRuntime(payload.model_runtime, effectivePath)) {
       throw new Error("The checkpoint selection completed, but the model is not resident on the execution device.");
     }
     state.activeModel = active;
@@ -260,7 +300,12 @@ async function activateSelectedModel({ quiet = false } = {}) {
     api.runtimeStartupStatus()
       .then((status) => renderRuntimeStartupStatus(status))
       .catch((error) => console.warn("Unable to refresh runtime status after model activation", error));
-    if (!quiet) notify(`Activated checkpoint: ${active.model_name}${summary ? ` (${active.architecture_summary})` : ""}`);
+    if (!quiet) {
+      const resolutionNote = normalizedModelPath(effectivePath) !== normalizedModelPath(requestedPath)
+        ? " · resolved to the current checkpoint library path"
+        : "";
+      notify(`Activated checkpoint: ${active.model_name}${summary ? ` (${active.architecture_summary})` : ""}${resolutionNote}`);
+    }
     return active;
   }).catch((error) => {
     state.activeModel = null;
@@ -296,18 +341,18 @@ async function ensureSelectedModelReady() {
 async function applyStartupModelBehavior(bootstrap, current = {}) {
   const mode = String(state.settings.checkpoint_startup_mode || "last_used").trim().toLowerCase();
   const preload = state.settings.checkpoint_preload_on_startup !== false;
-  const lastUsed = current.model_path || "";
-  const pinned = state.settings.checkpoint_startup_path || "";
-  const configuredDefault = bootstrap.defaults?.model_path || bootstrap.effective_generation?.model_path || "";
+  const lastUsed = resolveCatalogModelPath(current.model_path || "") || current.model_path || "";
+  const pinned = resolveCatalogModelPath(state.settings.checkpoint_startup_path || "") || state.settings.checkpoint_startup_path || "";
+  const configuredDefaultSource = bootstrap.defaults?.model_path || bootstrap.effective_generation?.model_path || "";
+  const configuredDefault = resolveCatalogModelPath(configuredDefaultSource) || configuredDefaultSource;
   const active = bootstrap.active_model || null;
 
   let selectedPath = "";
   if (mode === "pinned_default") selectedPath = pinned || configuredDefault;
   else if (mode === "last_used") selectedPath = lastUsed || pinned || configuredDefault;
 
-  if (selectedPath && $("#modelPath").value !== selectedPath) {
-    const exists = state.models.some((item) => normalizedModelPath(item.path) === normalizedModelPath(selectedPath));
-    if (exists) $("#modelPath").value = selectedPath;
+  if (selectedPath) {
+    syncModelDropdownSelection(selectedPath);
   }
 
   if (mode === "none" || !selectedPath) {
@@ -355,9 +400,13 @@ function populateModels(current = {}) {
     item.path,
     `${item.name} · ${item.size_mb} MB`,
   ));
-  const requestedModel = current.model_path || "";
-  if (requestedModel && !state.models.some((item) => item.path === requestedModel)) {
-    modelOptions.unshift(option(requestedModel, `${requestedModel} (configured)`));
+  const requestedModelRaw = current.model_path || "";
+  const requestedModel = resolveCatalogModelPath(requestedModelRaw) || requestedModelRaw;
+  if (requestedModel && !state.models.some((item) => normalizedModelPath(item.path) === normalizedModelPath(requestedModel))) {
+    const configuredLabel = requestedModelRaw && normalizedModelPath(requestedModelRaw) !== normalizedModelPath(requestedModel)
+      ? `${requestedModel} (resolved from ${requestedModelRaw})`
+      : `${requestedModel} (configured)`;
+    modelOptions.unshift(option(requestedModel, configuredLabel));
   }
   replaceOptions($("#modelPath"), modelOptions, requestedModel);
 
@@ -603,19 +652,24 @@ function missingAdvancedKeys(container, values = {}) {
 }
 
 async function applyReplayValues(values = {}) {
-  if ("sampler_kwargs" in values) samplerValues = values.sampler_kwargs || {};
-  if ("scheduler_kwargs" in values) schedulerValues = values.scheduler_kwargs || {};
-  if (values.scheduler_name) schedulerUserSelected = true;
-  schedulerPresetName = values._webui_scheduler_preset_name || "";
-  schedulerPresetPluginId = values._webui_scheduler_preset_plugin_id || "";
-  schedulerPresetSource = values._webui_scheduler_preset_source || "";
+  const replayValues = { ...values };
+  if (replayValues.model_path) {
+    replayValues.model_path = resolveCatalogModelPath(replayValues.model_path) || replayValues.model_path;
+  }
 
-  ensureSelectValue($("#modelPath"), values.model_path, `${values.model_path} (from output metadata)`);
-  ensureSelectValue($("#vaePath"), values.vae_path, `${values.vae_path} (from output metadata)`);
-  ensureSelectValue($("#samplerName"), values.sampler_name, `${values.sampler_name} (unavailable plugin)`);
-  ensureSelectValue($("#schedulerName"), values.scheduler_name, `${values.scheduler_name} (unavailable plugin)`);
+  if ("sampler_kwargs" in replayValues) samplerValues = replayValues.sampler_kwargs || {};
+  if ("scheduler_kwargs" in replayValues) schedulerValues = replayValues.scheduler_kwargs || {};
+  if (replayValues.scheduler_name) schedulerUserSelected = true;
+  schedulerPresetName = replayValues._webui_scheduler_preset_name || "";
+  schedulerPresetPluginId = replayValues._webui_scheduler_preset_plugin_id || "";
+  schedulerPresetSource = replayValues._webui_scheduler_preset_source || "";
 
-  const restoredPromptAssets = replayPromptAssets(values);
+  ensureSelectValue($("#modelPath"), replayValues.model_path, `${replayValues.model_path} (from output metadata)`);
+  ensureSelectValue($("#vaePath"), replayValues.vae_path, `${replayValues.vae_path} (from output metadata)`);
+  ensureSelectValue($("#samplerName"), replayValues.sampler_name, `${replayValues.sampler_name} (unavailable plugin)`);
+  ensureSelectValue($("#schedulerName"), replayValues.scheduler_name, `${replayValues.scheduler_name} (unavailable plugin)`);
+
+  const restoredPromptAssets = replayPromptAssets(replayValues);
   state.activePromptAssets = restoredPromptAssets;
   window.dispatchEvent(new CustomEvent("image-gen-active-prompt-assets-updated", {
     detail: {
@@ -625,18 +679,18 @@ async function applyReplayValues(values = {}) {
     },
   }));
 
-  applyGenerationValues(values);
+  applyGenerationValues(replayValues);
   window.imageGenPromptLoraSync?.syncFromPrompts?.();
   applyVaeSelectionPolicy();
-  initializePromptTools(values);
+  initializePromptTools(replayValues);
   await refreshAdvancedEditors({ preservePresetSelection: true });
 
   const unsupported = [
-    ...missingAdvancedKeys($("#samplerAdvancedContent"), values.sampler_kwargs),
-    ...missingAdvancedKeys($("#schedulerAdvancedContent"), values.scheduler_kwargs),
+    ...missingAdvancedKeys($("#samplerAdvancedContent"), replayValues.sampler_kwargs),
+    ...missingAdvancedKeys($("#schedulerAdvancedContent"), replayValues.scheduler_kwargs),
   ];
 
-  if (values.model_path) {
+  if (replayValues.model_path) {
     try {
       await activateSelectedModel({ quiet: true });
     } catch (error) {
