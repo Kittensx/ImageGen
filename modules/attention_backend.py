@@ -15,7 +15,7 @@ from modules.attention_runtime import (
     build_verified_xformers_processor,
     get_execution_evidence,
     module_device_dtype,
-    require_verified_production_dispatch,
+    require_production_dispatch,
     run_xformers_layout_matrix,
     verified_layout_executor,
 )
@@ -407,7 +407,7 @@ def _activate_xformers_compat(
             "rejection_reasons": [],
         }
     else:
-        production_dispatch = require_verified_production_dispatch(
+        production_dispatch = require_production_dispatch(
             model_signature, validation_dtype=str(placement["dtype"])
         )
     details["production_dispatch"] = production_dispatch

@@ -363,7 +363,13 @@ def validate_profile_contract(root: Path, profile: dict[str, Any]) -> dict[str, 
             raise InstallError(
                 f"Profile/attention manifest mismatch for {field}: expected {expected}, got {actual}."
             )
-    profile_caps = {str(value) for value in profile.get("compute_capabilities", [])}
+    profile_caps = {
+        str(value)
+        for value in profile.get(
+            "attention_contract_compute_capabilities",
+            profile.get("compute_capabilities", []),
+        )
+    }
     attention_caps = {str(value) for value in compatibility.get("compute_capabilities", [])}
     if profile_caps != attention_caps:
         raise InstallError(
@@ -421,6 +427,72 @@ def matching_profiles(
             continue
         matches.append(profile)
     return sorted(matches, key=lambda item: int(item.get("priority", 0)), reverse=True)
+
+
+def community_matching_profiles(
+    manifest: dict[str, Any],
+    gpu: GPUInfo,
+    driver_cuda_version: str | None,
+    *,
+    enforce_host: bool = True,
+) -> list[dict[str, Any]]:
+    """Build community/unverified candidates from published reference stacks.
+
+    A community candidate means the package combination is available for a real
+    capability probe on this NVIDIA GPU. It does not promote the GPU to a
+    validated hardware target.
+    """
+
+    candidates: list[dict[str, Any]] = []
+    for raw in manifest.get("profiles", []):
+        reference = dict(raw)
+        community = dict(reference.get("community_validation") or {})
+        if not bool(community.get("enabled", False)):
+            continue
+        if enforce_host and not _profile_matches_host(reference):
+            continue
+        accepted = {
+            str(value)
+            for value in community.get("compatible_compute_capabilities", [])
+        }
+        if gpu.compute_capability not in accepted and "*" not in accepted:
+            continue
+        required_runtime = str(dict(reference.get("torch") or {}).get("cuda_runtime") or "")
+        if driver_cuda_version and required_runtime and not _version_at_least(
+            driver_cuda_version, required_runtime
+        ):
+            continue
+
+        profile = json.loads(json.dumps(reference))
+        source_id = str(reference.get("id") or "reference")
+        capability_tag = gpu.compute_capability.replace(".", "")
+        torch_cfg = dict(reference.get("torch") or {})
+        torch_version = str(torch_cfg.get("version") or "unknown")
+        cuda_tag = str(torch_cfg.get("cuda_tag") or torch_cfg.get("cuda_runtime") or "cuda")
+        profile["source_profile_id"] = source_id
+        profile["id"] = f"windows-nvidia-community-sm{capability_tag}-torch{torch_version.replace('.', '')}-{cuda_tag}"
+        profile["label"] = (
+            f"NVIDIA {gpu.name} / compute {gpu.compute_capability} / "
+            f"PyTorch {torch_version} / {cuda_tag} / Community qualification"
+        )
+        profile["status"] = str(community.get("status") or "community_unverified")
+        profile["qualification"] = "community_unverified"
+        profile["compute_capabilities"] = [gpu.compute_capability]
+        profile["strict_attention_validation"] = False
+        runtime_environment = dict(reference.get("runtime_environment") or {})
+        runtime_environment.update(dict(community.get("runtime_environment") or {}))
+        profile["runtime_environment"] = runtime_environment
+        candidates.append(profile)
+
+    return sorted(candidates, key=lambda item: int(item.get("priority", 0)), reverse=True)
+
+
+def _profile_qualification(profile: dict[str, Any]) -> str:
+    if str(profile.get("qualification") or "").strip():
+        return str(profile["qualification"]).strip()
+    if str(profile.get("status") or "").lower() == "validated":
+        return "validated"
+    return "community_unverified"
 
 
 def build_install_choices(
@@ -669,6 +741,8 @@ def _install_profile(
     )
 
     attention_manifest = root / str(profile.get("attention_manifest"))
+    qualification = _profile_qualification(profile)
+    community_mode = qualification != "validated"
     attention_command = [
         str(python),
         str(root / "scripts" / "release" / "install_published_attention_stack.py"),
@@ -679,6 +753,8 @@ def _install_profile(
         "--manifest",
         str(attention_manifest),
     ]
+    if community_mode:
+        attention_command.append("--community-compatibility")
     if skip_gpu_smoke:
         attention_command.append("--skip-gpu-smoke")
     if no_download:
@@ -693,6 +769,7 @@ def _install_profile(
             "torch_packages": torch_packages,
             "index_url": index_url,
             "attention_manifest": str(attention_manifest),
+            "qualification": qualification,
         }
 
     verification_code = (
@@ -722,8 +799,160 @@ def _install_profile(
             f"PyTorch CUDA runtime mismatch: expected {choice.cuda_runtime}, "
             f"got {verification.get('torch_cuda')}."
         )
+
+    verification["qualification"] = qualification
+    if community_mode:
+        if skip_gpu_smoke:
+            verification["community_attention_probe"] = {
+                "status": "skipped",
+                "passed": None,
+                "reason": "GPU smoke/probe was disabled by the installer option.",
+            }
+        else:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            probe_dir = root / "artifacts" / "hardware_qualification" / stamp
+            probe_command = [
+                str(python),
+                "-m",
+                "image_gen.tools.verify_attention_stack",
+                "--community-compatibility-test",
+                "--output-dir",
+                str(probe_dir),
+            ]
+            print("+ " + subprocess.list2cmdline(probe_command))
+            completed = subprocess.run(
+                probe_command,
+                cwd=root,
+                env=env,
+                check=False,
+            )
+            summary_path = probe_dir / "validation_summary.json"
+            summary: dict[str, Any] = {}
+            if summary_path.is_file():
+                try:
+                    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    summary = {}
+            verification["community_attention_probe"] = {
+                "status": "passed" if completed.returncode == 0 else "failed",
+                "passed": completed.returncode == 0,
+                "returncode": int(completed.returncode),
+                "output_directory": str(probe_dir),
+                "operator": summary.get("operator"),
+                "case_count": len(summary.get("compatibility_matrix") or []),
+                "failure_count": len(summary.get("failures") or []),
+            }
     return verification
 
+
+def _hardware_profile_fingerprint(
+    gpu: GPUInfo,
+    profile: dict[str, Any],
+    choice: InstallChoice,
+    verification: dict[str, Any],
+) -> str:
+    material = "|".join(
+        [
+            gpu.name.strip(),
+            gpu.compute_capability,
+            gpu.driver_version,
+            str(verification.get("torch") or ""),
+            str(verification.get("torch_cuda") or choice.cuda_runtime),
+            str(verification.get("mslk") or ""),
+            str(verification.get("xformers") or ""),
+            str(profile.get("source_profile_id") or profile.get("id") or ""),
+        ]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def save_shareable_hardware_profile(
+    root: Path,
+    gpu: GPUInfo,
+    driver_cuda_version: str | None,
+    profile: dict[str, Any],
+    choice: InstallChoice,
+    verification: dict[str, Any],
+) -> dict[str, Any]:
+    """Save a privacy-minimized qualification profile suitable for sharing."""
+
+    qualification = _profile_qualification(profile)
+    fingerprint = _hardware_profile_fingerprint(gpu, profile, choice, verification)
+    capability_tag = gpu.compute_capability.replace(".", "")
+    profile_id = f"nvidia-sm{capability_tag}-{fingerprint}"
+    probe = dict(verification.get("community_attention_probe") or {})
+    directory = root / "user_config" / "hardware_profiles"
+    existing_opt_in = False
+    latest_existing = directory / "latest.json"
+    if latest_existing.is_file():
+        try:
+            previous = json.loads(latest_existing.read_text(encoding="utf-8"))
+            existing_opt_in = bool(dict(previous.get("sharing") or {}).get("opt_in", False))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            existing_opt_in = False
+    payload = {
+        "schema_version": 1,
+        "profile_id": profile_id,
+        "generated_at_utc": _utc_now(),
+        "project": "IMAGE_GEN",
+        "qualification": qualification,
+        "reference_profile_id": str(
+            profile.get("source_profile_id") or profile.get("id") or choice.profile_id
+        ),
+        "hardware": {
+            "gpu_vendor": "NVIDIA",
+            "gpu_name": gpu.name,
+            "compute_capability": gpu.compute_capability,
+            "vram_mib": gpu.memory_mib,
+            "driver_version": gpu.driver_version,
+            "driver_cuda_ceiling": driver_cuda_version,
+            "platform": sys.platform,
+            "machine": platform.machine(),
+            "python_version": platform.python_version(),
+        },
+        "runtime": {
+            "torch_version": verification.get("torch"),
+            "torch_cuda_runtime": verification.get("torch_cuda"),
+            "mslk_version": verification.get("mslk"),
+            "xformers_version": verification.get("xformers"),
+            "cuda_available": bool(verification.get("cuda_available")),
+            "attention_probe": {
+                "status": probe.get("status"),
+                "passed": probe.get("passed"),
+                "operator": probe.get("operator"),
+                "case_count": probe.get("case_count"),
+                "failure_count": probe.get("failure_count"),
+            },
+        },
+        "sharing": {
+            "opt_in": existing_opt_in,
+            "automatic_upload_available": False,
+            "submission_status": "not_submitted",
+        },
+        "privacy": {
+            "sanitized": True,
+            "excluded_fields": [
+                "gpu_uuid",
+                "pci_bus_id",
+                "project_root",
+                "local_cuda_paths",
+                "local_model_paths",
+                "prompts",
+                "generated_images",
+            ],
+        },
+    }
+    path = directory / f"{profile_id}.json"
+    latest = directory / "latest.json"
+    _write_json(path, payload)
+    _write_json(latest, payload)
+    return {
+        "profile_id": profile_id,
+        "path": str(path),
+        "latest_path": str(latest),
+        "qualification": qualification,
+        "share_opt_in": existing_opt_in,
+    }
 
 
 def _sha256_file(path: Path) -> str:
@@ -781,62 +1010,12 @@ def generate_user_lock(
         "profile_id": choice.profile_id,
     }
 
-
-def materialize_project_resources(
-    root: Path,
-    report_dir: Path,
-    *,
-    dry_run: bool,
-) -> dict[str, Any]:
-    """Create configured IMAGE_GEN asset folders before environment installation.
-
-    This intentionally runs as a separate setup utility so the same declarative
-    materializer can be reused by future setup flows and on-demand IMAGE_GEN
-    resource creation without coupling filesystem mutations to the GPU installer.
-    """
-
-    script = root / "scripts" / "setup" / "materialize_resources.py"
-    manifest = (
-        root
-        / "scripts"
-        / "setup"
-        / "manifests"
-        / "model_asset_directories.json"
-    )
-    project_config = root / "user_config" / "user-config.yml"
-    resource_report = report_dir / "resource_materialization.json"
-    command = [
-        sys.executable,
-        str(script),
-        "--project-root",
-        str(root),
-        "--manifest",
-        str(manifest),
-        "--project-config",
-        str(project_config),
-        "--report-json",
-        str(resource_report),
-    ]
-    if dry_run:
-        command.append("--dry-run")
-    # Execute the dedicated script even for installer dry-runs. Its own
-    # --dry-run mode performs validation and prints the planned resources while
-    # guaranteeing that it does not mutate the filesystem.
-    _run(command, cwd=root, dry_run=False)
-    return {
-        "script": str(script),
-        "manifest": str(manifest),
-        "project_config": str(project_config),
-        "report": str(resource_report),
-        "dry_run": dry_run,
-    }
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Scan the Windows NVIDIA/CUDA environment and install a validated IMAGE_GEN "
-            "PyTorch, Triton, custom MSLK, and custom xFormers stack."
+            "Scan the Windows NVIDIA/CUDA environment and install an IMAGE_GEN "
+            "PyTorch, Triton, custom MSLK, and custom xFormers stack. SM120 is the "
+            "validated reference target; other NVIDIA architectures can use community qualification."
         )
     )
     parser.add_argument("--project-root", type=Path, default=_project_root())
@@ -891,13 +1070,6 @@ def main() -> int:
                 print(f"{profile['id']}: {profile.get('label', profile['id'])}")
             return 0
 
-        if not args.scan_only:
-            report["project_resources"] = materialize_project_resources(
-                root,
-                report_dir,
-                dry_run=args.dry_run,
-            )
-
         gpus, driver_cuda_version, nvidia_smi = scan_nvidia()
         toolkits = discover_cuda_toolkits()
         report["nvidia_smi"] = nvidia_smi
@@ -922,28 +1094,38 @@ def main() -> int:
                 ),
             )
 
-        profiles = matching_profiles(manifest, selected_gpu, driver_cuda_version)
+        validated_profiles = matching_profiles(manifest, selected_gpu, driver_cuda_version)
+        community_profiles = community_matching_profiles(
+            manifest, selected_gpu, driver_cuda_version
+        )
+        profiles = validated_profiles or community_profiles
         if args.profile:
-            requested = _find_profile(manifest["profiles"], args.profile)
-            if requested not in profiles:
+            candidates = [*validated_profiles, *community_profiles]
+            requested_matches = [
+                item
+                for item in candidates
+                if str(item.get("id")) == args.profile
+                or str(item.get("source_profile_id")) == args.profile
+            ]
+            if not requested_matches:
                 raise InstallError(
                     f"Profile {args.profile} is not compatible with GPU compute capability "
                     f"{selected_gpu.compute_capability}, this Python, or the installed driver."
                 )
-            profiles = [requested]
+            profiles = [requested_matches[0]]
         if not profiles:
-            known = sorted(
+            validated = sorted(
                 {
                     capability
-                    for profile in manifest["profiles"]
-                    for capability in profile.get("compute_capabilities", [])
+                    for item in manifest["profiles"]
+                    for capability in item.get("compute_capabilities", [])
                 }
             )
             raise InstallError(
-                "No validated custom MSLK/xFormers profile exists for compute capability "
-                f"{selected_gpu.compute_capability}. Published profiles currently cover: "
-                f"{', '.join(known) or 'none'}. Add a tested profile and wheel manifest before "
-                "installing on this GPU."
+                "No IMAGE_GEN NVIDIA package profile can be offered for compute capability "
+                f"{selected_gpu.compute_capability}. Validated reference targets currently cover: "
+                f"{', '.join(validated) or 'none'}. This usually means the driver, platform, "
+                "or published package stack is incompatible rather than that the GPU is merely unvalidated."
             )
 
         if toolkits:
@@ -959,7 +1141,7 @@ def main() -> int:
         choices = build_install_choices(profiles, toolkits)
         choice = _choose_install_choice(
             choices,
-            requested_profile=args.profile,
+            requested_profile=None,
             requested_cuda=args.cuda,
             non_interactive=args.non_interactive,
         )
@@ -967,7 +1149,9 @@ def main() -> int:
         attention_contract = validate_profile_contract(root, profile)
         report["selected_gpu"] = asdict(selected_gpu)
         report["selected_choice"] = asdict(choice)
+        qualification = _profile_qualification(profile)
         report["selected_profile"] = profile
+        report["qualification"] = qualification
         report["attention_release_id"] = attention_contract.get("release_id")
 
         print("\nDetected environment")
@@ -977,6 +1161,9 @@ def main() -> int:
         print(f"NVIDIA driver:       {selected_gpu.driver_version}")
         print(f"Driver CUDA ceiling: {driver_cuda_version or 'unknown'}")
         print(f"Install profile:     {choice.profile_id}")
+        print(f"Qualification:       {qualification}")
+        if qualification != "validated":
+            print("Hardware status:     community/unverified; capability probes will be recorded")
         print(f"PyTorch CUDA runtime:{choice.cuda_runtime}")
         print(f"Local CUDA toolkit:  {choice.toolkit_path or 'not required'}")
         if toolkits:
@@ -1024,17 +1211,42 @@ def main() -> int:
             dry_run=args.dry_run,
         )
         report["user_lock"] = user_lock_record
+        if args.dry_run:
+            saved_hardware_profile = {
+                "generated": False,
+                "dry_run": True,
+                "qualification": qualification,
+            }
+        else:
+            saved_hardware_profile = save_shareable_hardware_profile(
+                root,
+                selected_gpu,
+                driver_cuda_version,
+                profile,
+                choice,
+                verification,
+            )
+        report["saved_hardware_profile"] = saved_hardware_profile
         report["venv"] = str(root / ".venv")
         report["previous_venv_backup"] = str(backup) if backup else None
         report["runtime_environment"] = str(runtime_bat)
         report["success"] = True
         report["completed_at_utc"] = _utc_now()
         _write_json(report_path, report)
-        print("\nPASS: IMAGE_GEN environment installed and validated.")
+        if qualification == "validated":
+            print("\nPASS: IMAGE_GEN environment installed with a validated reference profile.")
+        else:
+            print("\nPASS: IMAGE_GEN environment installed in community qualification mode.")
+            probe = dict(verification.get("community_attention_probe") or {})
+            print(
+                "Attention probe: "
+                + ("PASS" if probe.get("passed") is True else "UNVERIFIED/FAILED - Auto can fall back to SDPA")
+            )
         print(f"Environment: {root / '.venv'}")
         print(f"Report:      {report_path}")
         if not args.dry_run:
             print(f"User lock:   {user_lock}")
+            print(f"HW profile:  {saved_hardware_profile['path']}")
         print("Start with:  run_webui.bat")
         return 0
     except Exception as exc:

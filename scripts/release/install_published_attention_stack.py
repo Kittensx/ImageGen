@@ -119,6 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wheel-dir", type=Path)
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument("--skip-gpu-smoke", action="store_true")
+    parser.add_argument(
+        "--community-compatibility",
+        action="store_true",
+        help=(
+            "Install the published wheel set without requiring the SM120 reference "
+            "qualification contract. The parent installer performs a capability probe "
+            "and records the result for community hardware."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -227,29 +236,51 @@ def main() -> int:
             cwd=root,
         )
         verification_dir = artifact_dir / "verification"
-        command = [
-            str(python),
-            "-m",
-            "image_gen.tools.verify_attention_stack",
-            "--environment-only",
-            "--strict",
-            "--output-dir",
-            str(verification_dir / "environment"),
-        ]
-        _run(command, cwd=root)
-        if not args.skip_gpu_smoke:
-            _run(
-                [
-                    str(python),
-                    "-m",
-                    "image_gen.tools.verify_attention_stack",
-                    "--known-good-release-test",
-                    "--strict",
-                    "--output-dir",
-                    str(verification_dir / "known_good_k512"),
-                ],
-                cwd=root,
-            )
+        if args.community_compatibility:
+            # Community hardware is intentionally not judged against the SM120
+            # production-validation profile here. Import/API checks prove the
+            # packages are usable; IMAGE_GEN's parent installer then runs the
+            # real capability probe and records whether MSLK/xFormers executed.
+            import_check = [
+                str(python),
+                "-c",
+                (
+                    "import json, torch, mslk, xformers; "
+                    "from xformers.ops import fmha; "
+                    "required=['execute_forward_with_evidence','get_fmha_provider_registry',"
+                    "'get_operator_support_report','get_runtime_package_provenance']; "
+                    "ok=all(callable(getattr(fmha,n,None)) for n in required); "
+                    "print(json.dumps({'cuda_available':torch.cuda.is_available(),"
+                    "'api_complete':ok})); raise SystemExit(0 if ok else 2)"
+                ),
+            ]
+            _run(import_check, cwd=root)
+            state["qualification_mode"] = "community_unverified"
+            state["reference_validation_skipped"] = True
+        else:
+            command = [
+                str(python),
+                "-m",
+                "image_gen.tools.verify_attention_stack",
+                "--environment-only",
+                "--strict",
+                "--output-dir",
+                str(verification_dir / "environment"),
+            ]
+            _run(command, cwd=root)
+            if not args.skip_gpu_smoke:
+                _run(
+                    [
+                        str(python),
+                        "-m",
+                        "image_gen.tools.verify_attention_stack",
+                        "--known-good-release-test",
+                        "--strict",
+                        "--output-dir",
+                        str(verification_dir / "known_good_k512"),
+                    ],
+                    cwd=root,
+                )
         freeze_after = subprocess.check_output(
             [str(python), "-m", "pip", "freeze"], text=True
         )

@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from modules.attention_runtime.release_reproducibility import verify_release_stack
+from modules.attention_runtime.release_reproducibility import (
+    resolve_requirement_tree,
+    verify_release_stack,
+)
 
 
 _TRACKED_PACKAGES = (
@@ -63,12 +66,9 @@ def _expected_version(name: str, requirement: str) -> str | None:
 def load_environment_contract(lock_path: str | Path | None = None) -> dict[str, Any]:
     path = Path(lock_path) if lock_path is not None else _project_root() / "requirements" / "requirements-lock.txt"
     raw = path.read_bytes()
-    lines = raw.decode("utf-8").splitlines()
+    tree = resolve_requirement_tree(path)
     requirements: dict[str, str] = {}
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
+    for line in tree["lines"]:
         name = re.split(r"\s*@\s*|==|>=|<=|~=|!=|>|<", line, maxsplit=1)[0].strip().lower()
         requirements[name] = line
 
@@ -96,6 +96,17 @@ def load_environment_contract(lock_path: str | Path | None = None) -> dict[str, 
         "authoritative": True,
         "path": relative_path.replace("\\", "/"),
         "sha256": hashlib.sha256(raw).hexdigest(),
+        "resolved_files": [
+            str(item.resolve().relative_to(_project_root().resolve())).replace("\\", "/")
+            if item.resolve().is_relative_to(_project_root().resolve())
+            else str(item.resolve())
+            for item in tree["files"]
+        ],
+        "missing_includes": [str(item) for item in tree["missing"]],
+        "include_cycles": [
+            [str(item) for item in cycle]
+            for cycle in tree["cycles"]
+        ],
         "packages": packages,
     }
 

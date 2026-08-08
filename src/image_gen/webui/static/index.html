@@ -11,6 +11,8 @@
   <link rel="stylesheet" href="/assets/css/layout.css?v=0.1.74">
   <link rel="stylesheet" href="/assets/css/components.css?v=0.1.77">
   <link rel="stylesheet" href="/assets/css/responsive.css?v=0.1.77">
+  <link rel="stylesheet" href="/assets/css/home.css?v=home-sidebar1">
+  <link rel="stylesheet" href="/assets/css/site-sidebar.css?v=home-sidebar1">
 </head>
 <body>
   <div class="app-shell">
@@ -27,10 +29,10 @@
         <strong>Worker</strong>
         <span id="workerText">Connecting…</span>
       </div>
-      <div data-fragment="/assets/views/workspace-tabs.html?v=0.1.74"></div>
-      <nav class="top-actions" aria-label="Generation actions"><button class="nav-button is-active" id="topGenerateButton" type="button">Generate</button><button class="nav-button" id="topInfinityButton" type="button">∞ Generate</button><button class="nav-button nav-button-compactable" id="topCancelButton" type="button">Cancel</button><button class="nav-button nav-button-compactable" id="openOutputsButton" type="button">Outputs</button><button class="nav-button nav-button-compactable" id="reloadWorkspaceButton" type="button">Reload UI</button><button class="nav-button nav-button-compactable" id="openSettingsButton" type="button">Settings</button></nav>
     </header>
-    <main class="workspace" id="workspace" data-active-workspace="generation">
+    <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=home-sidebar1"></div>
+    <div data-fragment="/assets/views/home.html?v=home-sidebar1"></div>
+    <main class="workspace is-hidden" id="workspace" data-active-workspace="generation">
       <section class="workspace-column left-column" id="workspaceLeftColumn" data-workspace-zone="left" aria-label="Left workspace column">
         <div data-fragment="/assets/views/controls.html?v=0.1.74"></div>
       </section>
@@ -98,6 +100,7 @@ Reload UI after applying the latest patch.`;
       }, 15000);
     })();
   </script>
-  <script type="module" src="/assets/js/main.js?v=0.1.84"></script>
+  <script type="module" src="/assets/js/site-sidebar.js?v=home-sidebar1"></script>
+  <script type="module" src="/assets/js/main.js?v=home-sidebar1"></script>
 </body>
 </html>

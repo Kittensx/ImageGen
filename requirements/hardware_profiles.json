@@ -12,7 +12,7 @@
     "prefer_validated_profiles": true,
     "prefer_bundled_cuda_runtime": true,
     "require_custom_attention_stack": true,
-    "allow_unvalidated_combinations": false
+    "allow_unvalidated_combinations": true
   },
   "profiles": [
     {
@@ -48,14 +48,38 @@
         "12.8"
       ],
       "runtime_environment": {
-        "MSLK_FMHA_POLICY": "blackwell_safe"
+        "MSLK_FMHA_POLICY": "blackwell_safe",
+        "IMAGE_GEN_HARDWARE_QUALIFICATION": "validated"
       },
       "notes": [
         "The PyTorch wheel bundles the CUDA 12.8 runtime.",
         "A separately installed CUDA toolkit is optional for this profile.",
-        "Only compute capability 12.0 is currently validated by the published custom MSLK/xFormers stack."
+        "Compute capability 12.0 is the currently validated reference target.",
+        "Other NVIDIA compute capabilities may use this package stack in community validation mode; they are not promoted to validated status unless their compatibility report is reviewed and published."
       ],
-      "developer_lock": "requirements/requirements-dev-lock.txt"
+      "developer_lock": "requirements/requirements-dev-lock.txt",
+      "validated_compute_capabilities": [
+        "12.0"
+      ],
+      "attention_contract_compute_capabilities": [
+        "12.0"
+      ],
+      "community_validation": {
+        "enabled": true,
+        "status": "community_unverified",
+        "compatible_compute_capabilities": [
+          "*"
+        ],
+        "runtime_environment": {
+          "IMAGE_GEN_HARDWARE_QUALIFICATION": "community_unverified",
+          "MSLK_FMHA_POLICY": "auto",
+          "MSLK_FMHA_EXPERIMENTAL_HEAD_DIMS": "40,80,160"
+        },
+        "attention_validation": "capability_probe",
+        "allow_sdpa_fallback": true,
+        "save_local_profile": true,
+        "sharing_default": false
+      }
     }
   ]
 }

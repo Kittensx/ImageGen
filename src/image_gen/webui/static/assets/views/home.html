@@ -1,0 +1,58 @@
+<main class="home-workspace" id="homeWorkspace" data-active-workspace="home" aria-label="IMAGE_GEN Home">
+  <div class="home-component-grid" id="homeComponentGrid" data-workspace-page="home">
+    <section class="home-component home-hero" data-workspace-component="home.welcome" data-component-variant="feature" data-component-span="12">
+      <div class="home-hero-copy">
+        <span class="home-eyebrow">IMAGE_GEN</span>
+        <h2>Welcome to your workspace</h2>
+        <p>Start a generation, manage your local assets, or continue configuring IMAGE_GEN. Home is designed to grow with optional cards for recent work, developer updates, system status, and the tools you use most.</p>
+      </div>
+      <button class="primary-button home-primary-action" id="homePrimaryAction" type="button">Open Generation</button>
+    </section>
+
+    <section class="home-component home-readiness" id="homeReadinessComponent" data-workspace-component="home.readiness" data-component-variant="standard" data-component-span="7">
+      <div class="home-component-heading">
+        <div>
+          <span class="home-eyebrow">Start here</span>
+          <h3 id="homeReadinessTitle">Checking your local assets…</h3>
+        </div>
+        <span class="home-status-pill" id="homeReadinessBadge">Checking</span>
+      </div>
+      <p class="home-component-copy" id="homeReadinessMessage">IMAGE_GEN is checking whether a checkpoint is available for generation.</p>
+      <div class="home-asset-summary" aria-label="Installed asset summary">
+        <div><strong id="homeCheckpointCount">0</strong><span>Checkpoints</span></div>
+        <div><strong id="homeVaeCount">0</strong><span>VAEs</span></div>
+        <div><strong id="homeLoraCount">0</strong><span>LoRAs</span></div>
+      </div>
+      <div class="home-component-actions">
+        <button class="primary-button" id="homeCheckpointsButton" type="button">Open Checkpoints</button>
+        <button class="secondary-button" id="homeGenerationButton" type="button">Open Generation</button>
+      </div>
+    </section>
+
+    <section class="home-component" data-workspace-component="home.quick-launch" data-component-variant="standard" data-component-span="5">
+      <div class="home-component-heading">
+        <div>
+          <span class="home-eyebrow">Quick launch</span>
+          <h3>Go directly to a working page</h3>
+        </div>
+      </div>
+      <div class="home-quick-launch" role="group" aria-label="Quick launch">
+        <button class="home-launch-button" id="homeQuickGeneration" type="button"><strong>Generation</strong><span>txt2img controls and queue</span></button>
+        <button class="home-launch-button" id="homeQuickCheckpoints" type="button"><strong>Checkpoints</strong><span>Browse and activate models</span></button>
+        <button class="home-launch-button" id="homeQuickLoras" type="button"><strong>LoRAs</strong><span>Browse and manage LoRAs</span></button>
+        <a class="home-launch-button" id="homeQuickRegion" href="/region-builder.html"><strong>Region / Outpaint</strong><span>Open the REGION editor</span></a>
+        <button class="home-launch-button" id="homeQuickSettings" type="button"><strong>Settings</strong><span>WebUI and runtime settings</span></button>
+      </div>
+    </section>
+
+    <section class="home-component" data-workspace-component="home.developer-updates" data-component-variant="horizontal" data-component-span="12">
+      <div class="home-component-heading">
+        <div>
+          <span class="home-eyebrow">Developer updates</span>
+          <h3>Changelog component reserved</h3>
+        </div>
+      </div>
+      <p class="home-component-copy">Release notes and developer changelog entries will appear here once the local changelog feed is connected.</p>
+    </section>
+  </div>
+</main>

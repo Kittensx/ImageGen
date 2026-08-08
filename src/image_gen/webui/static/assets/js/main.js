@@ -9,13 +9,14 @@ import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
-import { bindSettings } from "./features/settings.js?v=0.1.62";
+import { bindSettings } from "./features/settings.js?v=home-sidebar1";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
 import { bindWorkspaceLayout } from "./features/layout.js?v=0.1.74";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
 import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=0.1.74";
 import { bindLoraWorkspace } from "./features/loras.js?v=0.1.77";
-import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
+import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=home-sidebar1";
+import { bindHomeWorkspace } from "./features/home.js?v=home-sidebar1";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
 import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
@@ -1029,6 +1030,7 @@ async function start() {
     state.activeModel = bootstrap.active_model || null;
     setCatalogs(bootstrap);
     state.recentOutputs = bootstrap.recent_outputs || [];
+    bindHomeWorkspace({ models: state.models, vaes: state.vaes, loras: state.loras });
 
     const current = bootstrap.effective_generation || {
       ...(bootstrap.defaults || {}),
@@ -1090,6 +1092,7 @@ async function start() {
       showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
     });
     workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace });
+    workspaceTabs.showHome();
     window.addEventListener("image-gen-active-prompt-assets-updated", saveSessionSoon);
     bindLightbox();
     bindOutputDetails({ collect: collectCurrentValues, apply: applyReplayValues, onJobQueued: acceptQueuedJob });

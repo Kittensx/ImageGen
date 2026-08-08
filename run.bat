@@ -27,7 +27,7 @@ rem   run.bat standard        - standard interactive txt2img
 rem   run.bat hires           - interactive neural-.pth hires txt2img
 rem   set IMAGE_GEN_RUN_MODE=hires before launch to select hires without a menu
 rem -----------------------------------------------------------------------------
-if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--xformers"
+if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--attention-backend auto"
 if not defined IMAGE_GEN_CONSOLE_MEMORY set "IMAGE_GEN_CONSOLE_MEMORY=compact"
 
 set "IMAGE_GEN_SELECTED_RUN_MODE=%IMAGE_GEN_RUN_MODE%"
@@ -44,7 +44,13 @@ if errorlevel 1 (
 set "PYTHON_EXE=%IMAGE_GEN_PYTHON%"
 
 rem Preserve values supplied by the caller; otherwise use the requested defaults.
-if not defined MSLK_FMHA_POLICY set "MSLK_FMHA_POLICY=blackwell_safe"
+if not defined MSLK_FMHA_POLICY (
+    if /I "%IMAGE_GEN_HARDWARE_QUALIFICATION%"=="community_unverified" (
+        set "MSLK_FMHA_POLICY=auto"
+    ) else (
+        set "MSLK_FMHA_POLICY=blackwell_safe"
+    )
+)
 if not defined MSLK_FMHA_DEBUG set "MSLK_FMHA_DEBUG="
 if not defined MSLK_FMHA_BLOCK_N set "MSLK_FMHA_BLOCK_N="
 if not defined MSLK_FMHA_BLOCK_M set "MSLK_FMHA_BLOCK_M="

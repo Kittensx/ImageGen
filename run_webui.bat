@@ -12,7 +12,7 @@ rem   set "COMMANDLINE_ARGS=--xformers --medvram"
 rem   set "COMMANDLINE_ARGS=--attention-backend xformers --memory-policy low_vram"
 rem Explicit arguments passed to this BAT still override COMMANDLINE_ARGS.
 rem -----------------------------------------------------------------------------
-if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--xformers"
+if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--attention-backend auto"
 
 rem Resolve the project virtual environment. Prefer .venv, then legacy venv.
 set "VENV_DIR=%CD%\.venv"
@@ -48,7 +48,13 @@ if exist "%IMAGE_GEN_WEBUI_URL_FILE%" del /q "%IMAGE_GEN_WEBUI_URL_FILE%" >nul 2
 if exist "%IMAGE_GEN_WEBUI_RESTART_FILE%" del /q "%IMAGE_GEN_WEBUI_RESTART_FILE%" >nul 2>&1
 
 rem Preserve values supplied by the caller; otherwise use the requested defaults.
-if not defined MSLK_FMHA_POLICY set "MSLK_FMHA_POLICY=blackwell_safe"
+if not defined MSLK_FMHA_POLICY (
+    if /I "%IMAGE_GEN_HARDWARE_QUALIFICATION%"=="community_unverified" (
+        set "MSLK_FMHA_POLICY=auto"
+    ) else (
+        set "MSLK_FMHA_POLICY=blackwell_safe"
+    )
+)
 if not defined MSLK_FMHA_DEBUG set "MSLK_FMHA_DEBUG="
 if not defined MSLK_FMHA_BLOCK_N set "MSLK_FMHA_BLOCK_N="
 if not defined MSLK_FMHA_BLOCK_M set "MSLK_FMHA_BLOCK_M="

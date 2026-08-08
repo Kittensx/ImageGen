@@ -673,8 +673,10 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
     }
   });
 
-  $("#openSettingsButton").addEventListener("click", async () => {
-    $("#settingsDialog").showModal();
+  const openSettingsDialog = async () => {
+    const dialog = $("#settingsDialog");
+    if (!dialog.open) dialog.showModal();
+    window.dispatchEvent(new CustomEvent("image-gen-settings-opened"));
     try {
       const status = await api.runtimeStartupStatus();
       renderMslkRuntimeStatus(status);
@@ -683,6 +685,11 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
     } catch (error) {
       console.warn("Unable to refresh MSLK startup status", error);
     }
+  };
+  $("#openSettingsButton")?.addEventListener("click", openSettingsDialog);
+  window.addEventListener("image-gen-open-settings", openSettingsDialog);
+  $("#settingsDialog")?.addEventListener("close", () => {
+    window.dispatchEvent(new CustomEvent("image-gen-settings-closed"));
   });
   $("#inheritStartupRuntimeButton")?.addEventListener("click", async () => {
     const button = $("#inheritStartupRuntimeButton");

@@ -20,13 +20,30 @@ _EXECUTION_STATE: dict[str, Any] = {
 }
 
 
-def prepare_mslk_process_environment() -> dict[str, Any]:
-    """Freeze the validated Blackwell launch policy before importing MSLK."""
+def hardware_qualification_mode() -> str:
+    value = str(os.environ.get("IMAGE_GEN_HARDWARE_QUALIFICATION") or "").strip().lower()
+    if value in {"validated", "validated_reference", "official"}:
+        return "validated"
+    if value in {"community", "community_unverified", "unverified"}:
+        return "community_unverified"
+    return "validated"
 
+
+def prepare_mslk_process_environment() -> dict[str, Any]:
+    """Apply the launch policy appropriate to the hardware qualification level.
+
+    SM120 keeps the published blackwell_safe policy. Community hardware defaults
+    to MSLK's capability-oriented auto policy and is allowed to prove support by
+    executing IMAGE_GEN's real projection-derived layout matrix.
+    """
+
+    qualification = hardware_qualification_mode()
     previous = os.environ.get("MSLK_FMHA_POLICY")
-    os.environ.setdefault("MSLK_FMHA_POLICY", "blackwell_safe")
+    default_policy = "blackwell_safe" if qualification == "validated" else "auto"
+    os.environ.setdefault("MSLK_FMHA_POLICY", default_policy)
     return {
         "MSLK_FMHA_POLICY": os.environ.get("MSLK_FMHA_POLICY"),
+        "IMAGE_GEN_HARDWARE_QUALIFICATION": qualification,
         "policy_was_preexisting": previous is not None,
         "policy_changed": previous is None,
     }
@@ -114,6 +131,96 @@ def verified_production_dispatch_decision(
         "release_identity": release_identity,
         "rejection_reasons": reasons,
     }
+
+
+def capability_production_dispatch_decision(
+    model_signature: dict[str, Any],
+    *,
+    validation_dtype: str,
+) -> dict[str, Any]:
+    """Admit community hardware to the real layout execution probe.
+
+    This intentionally does not claim that the SM120 validation profile matches.
+    The subsequent xFormers layout matrix executes the requested MSLK operator on
+    the active GPU and is the compatibility gate for this model/runtime pair.
+    """
+
+    environment = prepare_mslk_process_environment()
+    reasons: list[str] = []
+    cuda_available = False
+    compute_capability = None
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        if cuda_available:
+            compute_capability = list(torch.cuda.get_device_capability(torch.cuda.current_device()))
+        else:
+            reasons.append("CUDA is unavailable for the community MSLK capability probe.")
+    except Exception as exc:
+        reasons.append(f"PyTorch CUDA capability probe failed: {type(exc).__name__}: {exc}")
+
+    package_imports: dict[str, Any] = {}
+    try:
+        import xformers
+        from mslk.attention.fmha import triton_splitk
+
+        package_imports = {
+            "xformers": getattr(xformers, "__version__", "unknown"),
+            "mslk_triton_splitk": str(getattr(triton_splitk, "__file__", "available")),
+        }
+    except Exception as exc:
+        reasons.append(f"MSLK/xFormers import failed: {type(exc).__name__}: {exc}")
+
+    return {
+        "schema_version": 1,
+        "verified": not reasons,
+        "qualification": "community_unverified",
+        "verification_scope": "capability_probe_pending_layout_execution",
+        "provider": _REQUIRED_PROVIDER,
+        "operator": _REQUIRED_OPERATOR,
+        "processor": "ImageGenMSLKXFormersAttnProcessor",
+        "required_head_dimensions": _model_head_dimensions(model_signature),
+        "validated_head_dimensions": [],
+        "missing_head_dimensions": [],
+        "validation_dtype": validation_dtype,
+        "cuda_available": cuda_available,
+        "compute_capability": compute_capability,
+        "package_imports": package_imports,
+        "environment": environment,
+        "rejection_reasons": reasons,
+    }
+
+
+def production_dispatch_decision(
+    model_signature: dict[str, Any],
+    *,
+    validation_dtype: str,
+) -> dict[str, Any]:
+    if hardware_qualification_mode() == "validated":
+        decision = verified_production_dispatch_decision(
+            model_signature, validation_dtype=validation_dtype
+        )
+        decision["qualification"] = "validated"
+        decision["verification_scope"] = "published_reference_profile"
+        return decision
+    return capability_production_dispatch_decision(
+        model_signature, validation_dtype=validation_dtype
+    )
+
+
+def require_production_dispatch(
+    model_signature: dict[str, Any],
+    *,
+    validation_dtype: str,
+) -> dict[str, Any]:
+    decision = production_dispatch_decision(
+        model_signature, validation_dtype=validation_dtype
+    )
+    if not decision["verified"]:
+        detail = "; ".join(decision.get("rejection_reasons") or []) or "unknown mismatch"
+        raise RuntimeError("MSLK production dispatch is unavailable: " + detail)
+    return decision
 
 
 def require_verified_production_dispatch(
@@ -254,8 +361,12 @@ def build_verified_xformers_processor() -> Any:
 
 __all__ = [
     "build_verified_xformers_processor",
+    "capability_production_dispatch_decision",
     "get_execution_evidence",
+    "hardware_qualification_mode",
     "prepare_mslk_process_environment",
+    "production_dispatch_decision",
+    "require_production_dispatch",
     "require_verified_production_dispatch",
     "reset_execution_evidence_for_testing",
     "verified_layout_executor",

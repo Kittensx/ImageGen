@@ -260,6 +260,17 @@ def _default_cases(include_k512: bool) -> list[dict[str, int]]:
     return cases
 
 
+def _community_cases() -> list[dict[str, int]]:
+    # Keep installer qualification bounded while exercising the SD 1.x logical
+    # dimensions that IMAGE_GEN actually uses. Each dimension is tested in one
+    # self-attention and one cross-attention shape against PyTorch SDPA.
+    return [
+        {"head_dim": dim, "query_length": q, "key_value_length": kv, "heads": 8}
+        for dim in (40, 80, 160)
+        for q, kv in ((77, 77), (77, 16))
+    ]
+
+
 def _model_signature_cases(path: Path) -> list[dict[str, int]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     layouts = payload.get("unique_layouts") if isinstance(payload, dict) else None
@@ -291,19 +302,41 @@ def _summary_lines(report: dict[str, Any]) -> list[str]:
     )
     release = report.get("release", {})
     contract_errors = list(release.get("errors") or ())
-    return [
-        "# Published SM120 attention-stack validation",
+    community = report.get("qualification_mode") == "community_unverified"
+    lines = [
+        (
+            "# Community NVIDIA attention capability qualification"
+            if community
+            else "# Published SM120 attention-stack validation"
+        ),
         "",
         f"- Release ID: `{release.get('release_id')}`",
-        f"- Runtime contract: `{'PASS' if release.get('runtime_compatible') else 'FAIL'}`",
-        f"- Runtime contract errors: `{len(contract_errors)}`",
-        f"- Published-wheel provenance: `{'PASS' if release.get('release_provenance_valid') else 'UNVERIFIED'}`",
-        f"- Explicit operator: `{report.get('operator')}`",
-        f"- GPU cases passed: `{passed_cases}/{len(matrix)}`",
-        f"- Execution failures: `{len(report.get('failures') or ())}`",
-        f"- Overall: `{'PASS' if report.get('passed') else 'FAIL'}`",
-        "",
     ]
+    if community:
+        lines.extend(
+            [
+                "- Reference SM120 contract: `NOT REQUIRED FOR COMMUNITY QUALIFICATION`",
+                f"- Reference-contract differences recorded: `{len(contract_errors)}`",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- Runtime contract: `{'PASS' if release.get('runtime_compatible') else 'FAIL'}`",
+                f"- Runtime contract errors: `{len(contract_errors)}`",
+                f"- Published-wheel provenance: `{'PASS' if release.get('release_provenance_valid') else 'UNVERIFIED'}`",
+            ]
+        )
+    lines.extend(
+        [
+            f"- Explicit operator: `{report.get('operator')}`",
+            f"- GPU cases passed: `{passed_cases}/{len(matrix)}`",
+            f"- Execution failures: `{len(report.get('failures') or ())}`",
+            f"- Overall: `{'PASS' if report.get('passed') else 'FAIL'}`",
+            "",
+        ]
+    )
+    return lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -313,6 +346,14 @@ def build_parser() -> argparse.ArgumentParser:
     modes = parser.add_argument_group("validation modes")
     modes.add_argument("--environment-only", action="store_true")
     modes.add_argument("--known-good-release-test", action="store_true")
+    modes.add_argument(
+        "--community-compatibility-test",
+        action="store_true",
+        help=(
+            "Probe the published MSLK/xFormers stack on an unvalidated NVIDIA GPU "
+            "without requiring the SM120 reference profile to match."
+        ),
+    )
     modes.add_argument("--model", type=Path)
     modes.add_argument("--static-model-signature", action="store_true")
     modes.add_argument("--model-signature", type=Path)
@@ -340,7 +381,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         if value not in sys.path:
             sys.path.insert(0, value)
 
-    os.environ.setdefault("MSLK_FMHA_POLICY", "blackwell_safe")
+    if args.community_compatibility_test:
+        os.environ.setdefault("MSLK_FMHA_POLICY", "auto")
+        os.environ.setdefault("MSLK_FMHA_EXPERIMENTAL_HEAD_DIMS", "40,80,160")
+    else:
+        os.environ.setdefault("MSLK_FMHA_POLICY", "blackwell_safe")
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     output = (
         args.output_dir.expanduser().resolve()
@@ -395,6 +440,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     run_gpu = not args.environment_only and (
         args.full
         or args.known_good_release_test
+        or args.community_compatibility_test
         or args.model_layouts
         or args.compare_sdpa
         or args.benchmark
@@ -414,7 +460,9 @@ def main(argv: Iterable[str] | None = None) -> int:
             )
         else:
             cases: list[dict[str, int]] = []
-            if args.full or args.compare_sdpa or args.benchmark:
+            if args.community_compatibility_test:
+                cases.extend(_community_cases())
+            elif args.full or args.compare_sdpa or args.benchmark:
                 cases.extend(_default_cases(include_k512=True))
             elif args.known_good_release_test:
                 cases.extend(_default_cases(include_k512=True)[-1:])
@@ -459,7 +507,11 @@ def main(argv: Iterable[str] | None = None) -> int:
                         _execute_case(
                             **case,
                             operator=operator_name,
-                            compare_sdpa=bool(args.full or args.compare_sdpa),
+                            compare_sdpa=bool(
+                                args.community_compatibility_test
+                                or args.full
+                                or args.compare_sdpa
+                            ),
                             benchmark=bool(args.full or args.benchmark),
                             repeat_count=args.repeat_count,
                         )
@@ -546,11 +598,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         and item.get("numerical_comparison", {}).get("allclose", True)
         for item in matrix
     )
-    passed = bool(release.get("runtime_compatible")) and not failures and case_pass
-    if args.environment_only:
-        passed = bool(release.get("runtime_compatible")) and not failures
+    if args.community_compatibility_test:
+        passed = bool(environment.get("cuda_available")) and not failures and case_pass
+        qualification_mode = "community_unverified"
+    else:
+        passed = bool(release.get("runtime_compatible")) and not failures and case_pass
+        if args.environment_only:
+            passed = bool(release.get("runtime_compatible")) and not failures
+        qualification_mode = "validated_reference"
     report = {
         "schema_version": 2,
+        "qualification_mode": qualification_mode,
         "output_directory": str(output),
         "operator": operator_name,
         "release": release,

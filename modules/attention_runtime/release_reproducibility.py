@@ -148,6 +148,66 @@ def _read_requirement_lines(path: Path) -> list[str]:
     ]
 
 
+def _requirement_include_target(line: str) -> str | None:
+    value = line.strip()
+    for prefix in ("--requirement=", "--requirement ", "-r "):
+        if value.startswith(prefix):
+            target = value[len(prefix):].strip()
+            return target.strip('"\'') or None
+    if value.startswith("-r") and len(value) > 2 and not value[2].isspace():
+        target = value[2:].strip()
+        return target.strip('"\'') or None
+    return None
+
+
+def resolve_requirement_tree(path: Path) -> dict[str, Any]:
+    """Resolve a pip requirement entry point including nested ``-r`` files.
+
+    The setup layout intentionally splits the validated environment across several
+    requirement files. Runtime compatibility checks must therefore evaluate the
+    effective requirement graph rather than only the top-level wrapper file.
+    """
+
+    root = path.resolve()
+    lines: list[str] = []
+    files: list[Path] = []
+    missing: list[Path] = []
+    cycles: list[list[Path]] = []
+    visited: set[Path] = set()
+
+    def visit(current: Path, stack: tuple[Path, ...]) -> None:
+        resolved = current.resolve()
+        if resolved in stack:
+            start = stack.index(resolved)
+            cycles.append([*stack[start:], resolved])
+            return
+        if resolved in visited:
+            return
+        visited.add(resolved)
+        if not resolved.is_file():
+            missing.append(resolved)
+            return
+        files.append(resolved)
+        next_stack = (*stack, resolved)
+        for line in _read_requirement_lines(resolved):
+            include_target = _requirement_include_target(line)
+            if include_target is None:
+                lines.append(line)
+                continue
+            include_path = Path(include_target)
+            if not include_path.is_absolute():
+                include_path = resolved.parent / include_path
+            visit(include_path, next_stack)
+
+    visit(root, ())
+    return {
+        "lines": lines,
+        "files": files,
+        "missing": missing,
+        "cycles": cycles,
+    }
+
+
 def _find_requirement(lines: list[str], package: str) -> str | None:
     pattern = re.compile(rf"^{re.escape(package)}(?:\s*@|==|>=|<=|~=|!=|>|<|\s*$)", re.I)
     return next((line for line in lines if pattern.match(line)), None)
@@ -248,15 +308,46 @@ def _check_requirements(
     packages = dict(manifest.get("packages") or {})
     for key, relative in requirements.items():
         path = root / str(relative)
-        lines = _read_requirement_lines(path)
+        tree = resolve_requirement_tree(path)
+        lines = list(tree["lines"])
+        resolved_files = list(tree["files"])
+        missing_files = list(tree["missing"])
+        cycles = list(tree["cycles"])
         reports[key] = {
             "path": str(relative).replace("\\", "/"),
             "exists": path.is_file(),
             "sha256": sha256_file(path) if path.is_file() else None,
+            "resolved_files": [
+                str(item.relative_to(root)).replace("\\", "/")
+                if item.is_relative_to(root)
+                else str(item)
+                for item in resolved_files
+            ],
+            "missing_includes": [str(item) for item in missing_files],
+            "include_cycles": [
+                [str(item) for item in cycle]
+                for cycle in cycles
+            ],
         }
         if not path.is_file():
             _append(errors, f"requirements.{key}", "file exists", "missing", str(path))
             continue
+        for missing_path in missing_files:
+            _append(
+                errors,
+                f"requirements.{key}.include",
+                "included requirement file exists",
+                "missing",
+                str(missing_path),
+            )
+        for cycle in cycles:
+            _append(
+                errors,
+                f"requirements.{key}.include_cycle",
+                "acyclic requirement includes",
+                [str(item) for item in cycle],
+                "Recursive requirement include cycle detected.",
+            )
         text = "\n".join(lines)
         if re.search(r"(?im)^logging==0\.4\.9\.6\s*$", text):
             _append(
@@ -547,6 +638,7 @@ __all__ = [
     "load_release_manifest",
     "manifest_path",
     "project_root",
+    "resolve_requirement_tree",
     "require_release_compatible_stack",
     "reset_release_verification_cache_for_testing",
     "sha256_file",

@@ -2,7 +2,7 @@
   "schema_version": 2,
   "release_id": "sm120-fp16-public-wheels-v1",
   "installation_mode": "published_wheels",
-  "description": "Published Windows SM120 MSLK and xFormers wheel contract with capability-based runtime validation.",
+  "description": "Published Windows NVIDIA MSLK and xFormers wheel contract with SM120 as the validated reference target and capability-based community qualification.",
   "packages": {
     "mslk": {
       "release_tag": "v1.3.0-blackwell-sm120",
@@ -55,7 +55,13 @@
     "published_wheel_hashes_are_installation_provenance": true,
     "mslk_profile_and_critical_file_hashes_are_runtime_gates": true,
     "explicit_operator_execution_is_required": true,
-    "automatic_mode_falls_back_to_sdpa_then_eager": true
+    "automatic_mode_falls_back_to_sdpa_then_eager": true,
+    "validated_reference_compute_capability": [
+      12,
+      0
+    ],
+    "community_capability_probe_allowed": true,
+    "community_probe_failure_falls_back_to_sdpa": true
   },
   "compatibility": {
     "platform": "win32",
@@ -74,7 +80,14 @@
     "validated_local_cuda_toolkits": [
       "12.8"
     ],
-    "bundled_cuda_runtime_supported": true
+    "bundled_cuda_runtime_supported": true,
+    "validated_compute_capabilities": [
+      "12.0"
+    ],
+    "community_compute_capabilities": [
+      "*"
+    ],
+    "community_status": "unverified_until_reported"
   },
   "installer_requirements": {
     "hardware_profiles_path": "requirements/hardware_profiles.json",
