@@ -297,4 +297,4 @@ Review diagnostic files before posting them publicly. Prompts, local paths, file
 
 ImageGen is an actively developed alpha. The current product focus is a reliable, replayable, memory-aware **SD 1.x generation environment** while the architecture is extended toward general Img2Img/Inpainting and additional Stable Diffusion model families.
 
-For planned work, see [Upcoming Features](features/UPCOMING.md). For chronological changes, see the [Changelog](changelog/README.md).
+For planned work, see [Upcoming Features](features/UPCOMING.md). For chronological changes, see the Changelog.
