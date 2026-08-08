@@ -6,6 +6,193 @@ ImageGen is a local text-to-image application built around a custom, modular Sta
 >
 > This is an early public build intended for testing and feedback. Interfaces, configuration fields, metadata formats, and runtime behavior may change between alpha releases. Keep backups of important presets and generated metadata.
 
+
+# ImageGen Changelog - 8/7/2026
+
+> **Ongoing Alpha Development:** This release continues backend and WebUI refinement focused on outpainting, generation stability, configuration consistency, and clearer runtime diagnostics.
+
+## New Features
+
+### Expanded Outpaint Runtime Support
+
+Outpaint is now represented as a first-class ImageGen generation capability rather than relying only on prototype-era settings.
+
+New outpaint controls and runtime metadata include:
+
+- Explicit outpaint enablement and target dimensions.
+- Strict preservation mode for protected source regions.
+- Preserve, generate, and feather region semantics.
+- Selectable source handoff behavior for image re-encoding, live txt2img latent reuse, or automatic selection.
+- Explicit source placement, anchor, bounds, and expansion geometry.
+- Latent-grid alignment reporting.
+- Context seed support for Edge Pad, Reflect Pad, and legacy Neutral Gray behavior.
+- Model capability reporting for supported outpaint behavior.
+
+### Live Latent and Image Re-encode Handoff Tracking
+
+ImageGen now records how an outpaint source reaches the expansion pass.
+
+The runtime can distinguish between:
+
+- Re-encoding an image through the VAE.
+- Reusing a compatible live txt2img latent.
+- Automatically falling back to image re-encoding when latent placement is not exactly aligned.
+
+Fallback reasons are recorded rather than silently changing source placement.
+
+### Outpaint Geometry and Inference Fingerprints
+
+Outpaint generations now include deterministic metadata fingerprints for easier replay verification and troubleshooting.
+
+The geometry fingerprint covers behavior such as:
+
+- Canvas dimensions.
+- Source placement.
+- Expansion amounts.
+- Preservation behavior.
+- Feathering and mask strategy.
+- Context seed mode.
+- Source handoff and latent alignment.
+
+The inference fingerprint additionally records generation settings such as:
+
+- Model identity.
+- VAE identity.
+- Sampler and scheduler.
+- Step count.
+- CFG.
+- Denoising strength.
+- Schedule information.
+- Outpaint prompt overlays.
+
+These fingerprints are metadata-only and do not hash or store full tensors.
+
+### Outpaint Audit in Advanced Output Details
+
+Advanced Output Details now includes a compact Outpaint Audit.
+
+The audit can report:
+
+- Source and canvas dimensions.
+- Source placement.
+- Expansion geometry.
+- Context seed mode.
+- Preservation strategy.
+- Feathering.
+- Denoising strength.
+- Requested and actual source handoff.
+- Latent alignment.
+- Re-encode status.
+- Geometry fingerprint.
+- Inference fingerprint.
+
+This makes common outpaint troubleshooting information visible without requiring raw console-log inspection.
+
+### Improved Generation Replay Data
+
+Replay and manifest data now preserve the newer outpaint settings directly, including:
+
+- Outpaint enablement.
+- Outpaint target width and height.
+- Preservation mode.
+- Mask strategy.
+- Source handoff mode.
+
+This gives replay data a more complete description of the generation instead of depending on older compatibility flags.
+
+## Stability and Reliability Updates
+
+### Fixed Post-generation Expansion Dimension Regression
+
+Fixed an issue where stale source dimensions could overwrite the intended outpaint target during a second generation pass.
+
+For example, a generation expanding from `360x512` to `512x512` now keeps the second pass at the requested `512x512` target instead of reverting to the original width.
+
+The runtime now keeps normal request dimensions and canonical outpaint target dimensions synchronized when building the expansion pass.
+
+### More Reliable Outpaint Geometry Handling
+
+Outpaint geometry now carries explicit source, target, requested, and internally aligned dimensions through the runtime.
+
+This reduces ambiguity between:
+
+- The original source size.
+- The requested outpaint canvas.
+- Internal alignment requirements.
+- The actual runtime canvas.
+
+ImageGen also records alignment failures instead of silently shifting the source image to satisfy the latent grid.
+
+### Safer Outpaint Mode Validation
+
+Unsupported preservation modes, mask strategies, and source-handoff modes now fail explicitly during request normalization.
+
+This prevents invalid values from progressing farther into generation and producing harder-to-diagnose runtime failures.
+
+### Preserved In-memory Generation Handoff
+
+Post-generation expansion continues to pass the source image and compatible latent state directly through memory.
+
+This avoids unnecessary save-and-reload cycles between txt2img generation and outpaint expansion.
+
+Transient handoff tensors are released after the expansion pass.
+
+### WebUI Startup Configuration Fix
+
+Fixed a startup/model-preload failure that could occur when project configuration used replay-style sampler and scheduler field names.
+
+ImageGen now correctly resolves `sampler_name` and `scheduler_name` during startup and normal generation.
+
+This prevents valid configurations from incorrectly resolving the sampler or scheduler as `None`.
+
+## Configuration Improvements
+
+### Project Configuration Now Matches Replay Naming
+
+Generation configuration now uses the same canonical field names as ImageGen replay and generation requests.
+
+Examples include:
+
+- `positive_prompt`
+- `sampler_name`
+- `scheduler_name`
+- `prompt_parser_name`
+- `prompt_shortcut_profile_name`
+- `prompt_parser_preset_name`
+- `hires_prompt_parser_name`
+- `hires_shortcut_profile_name`
+
+Older shortened field names remain readable for compatibility, but the canonical names take priority when both are present.
+
+This reduces confusion when moving settings between replay data, runtime requests, and user configuration.
+
+### Updated Default Configuration Examples
+
+The included user configuration now demonstrates the canonical replay-style naming instead of older shortened aliases.
+
+This makes configuration examples more consistent with the values shown in generation metadata and replay records.
+
+## REGION Maintenance and Attribution
+
+Expanded REGION source attribution and provenance comments throughout the parser, runtime integration, and Region Builder entrypoints.
+
+The comments now more clearly distinguish:
+
+- The original REGION syntax and regional-conditioning concepts credited to Konpr.
+- ImageGen's parser-independent integration.
+- ImageGen's native regional runtime and conditioning bridge.
+- ImageGen's sampler, CFG, batching, replay, resolution, validation, caching, and telemetry integrations.
+- ImageGen's modular Region Builder frontend and host integration.
+
+These attribution updates are documentation-only and do not change REGION generation behavior.
+
+## General Alpha Stability
+
+This update also improves consistency between WebUI requests, saved replay data, project configuration, runtime geometry, and post-generation expansion metadata.
+
+The overall goal is to make ImageGen generation state easier to inspect, reproduce, validate, and troubleshoot while keeping existing generation workflows compatible.
+
+
 ## Project Update — August 7, 2026
 
 ImageGen remains in active alpha development. This update summarizes the latest runtime-performance, hires-generation, canvas-expansion, and intermediate-image workflow improvements completed through August 7, 2026.
