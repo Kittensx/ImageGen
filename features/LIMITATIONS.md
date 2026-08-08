@@ -62,18 +62,40 @@ Large targets and aggressive tile settings can still exceed GPU or system memory
 
 ## 8. Public Installer Support Is Currently Narrow
 
-The current installer is Windows-only and requires 64-bit Python 3.10.20 exactly.
+### NVIDIA Hardware Compatibility and Validation
 
-The currently published validated hardware profile targets:
+ImageGen's current public installer targets **64-bit Windows, Python 3.10.20, and NVIDIA CUDA GPUs**.
 
-- Windows AMD64;
-- NVIDIA GPU;
-- compute capability **12.0 / SM120**; and
-- the qualified PyTorch/CUDA/custom-attention package set shipped for that profile.
+ImageGen is **not limited to NVIDIA SM120 / Blackwell hardware**.
 
-The profile manifest currently disallows unvalidated package/hardware combinations.
+Our current reference and fully validated development environment uses an NVIDIA SM120 GPU. The custom xFormers and MSLK packages distributed with ImageGen include the support required for SM120, but SM120 support should not be interpreted as an SM120-only requirement.
 
-Linux, macOS, AMD GPUs, Intel GPUs, and other NVIDIA architectures should not be represented as qualified public-release targets until corresponding profiles are tested and published.
+Other NVIDIA GPU architectures may also run ImageGen successfully when they are compatible with the installed PyTorch, CUDA, xFormers, MSLK, and runtime components.
+
+#### Hardware qualification
+
+We distinguish between hardware that is **compatible** and hardware that has been **individually validated**.
+
+**Currently validated:**
+
+* Windows AMD64
+* Python 3.10.20 x64
+* NVIDIA CUDA
+* NVIDIA compute capability 12.0 / SM120
+* The currently distributed PyTorch, CUDA, xFormers, and MSLK package set
+
+**Other NVIDIA architectures:**
+
+Other NVIDIA GPUs are not automatically considered unsupported simply because we have not yet published a dedicated validation profile for them.
+
+As ImageGen's public hardware coverage expands, users on other NVIDIA architectures will be able to help validate their systems. Successful hardware and runtime qualification results can then be used to create additional known-good hardware profiles for future releases.
+
+ImageGen can also use alternative attention paths, including PyTorch SDPA and eager attention, when a particular optimized attention path is unavailable or incompatible.
+
+Hardware that has not yet been validated should be considered **community-tested / unverified**, rather than unsupported.
+
+Linux, macOS, AMD GPUs, Intel GPUs, and CPU-only generation are not currently qualified public-release targets.
+
 
 ## 9. Python Patch Version Is Pinned
 
