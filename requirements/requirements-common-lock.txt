@@ -1,9 +1,0 @@
-# Deprecated compatibility placeholder.
-#
-# The former machine-specific contents were moved to:
-#   requirements/requirements-dev-lock.txt
-#
-# Normal user installation does not consume a shared/common lock. The installer
-# resolves requirements.txt for the selected hardware profile and generates:
-#   user_config/requirements-user-lock.txt
-# only after installation and validation succeed.
