@@ -19,6 +19,8 @@ build/
 dist/
 *.egg-info/
 *.whl
+.image-gen-ignore
+.image-gen-release-ignore
 
 # IDE and editor files
 .vscode/
@@ -77,3 +79,13 @@ config.local.json
 diagnostics/
 crash_reports/
 runtime_diagnostics/
+
+# IMAGE_GEN WebUI runtime/user state + cache + assets
+/data/
+/artifacts/
+/image_generation_data/
+/secrets/civitai_api_key.txt
+/data/webui/settings/application.json
+
+# Local pip-freeze snapshot; project requirements live under /requirements/
+/requirements.txt
