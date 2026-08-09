@@ -46,10 +46,10 @@ function applyToImageGen() {
     height: h,
     pixel_coordinates: Boolean(document.getElementById('pixelMode').checked),
   })) {
-    toast('IMAGE_GEN window is not available');
+    toast(`${window.imageGenProductName || 'Application'} window is not available`);
     return;
   }
-  toast('Applied to IMAGE_GEN');
+  toast(`Applied to ${window.imageGenProductName || 'Application'}`);
 }
 
 function applyBuilderDimensions(width, height, { rebuildPrompt = true } = {}) {

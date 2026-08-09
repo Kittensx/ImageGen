@@ -138,7 +138,7 @@
 <div class="global-row">
 <label class="global-label">Backend</label>
 <select class="global-control" id="backendSelect" onchange="rebuild()">
-<option selected="" value="latent">IMAGE_GEN native model-output blend</option>
+<option selected="" value="latent" data-product-name-template="{product} native model-output blend">Native model-output blend</option>
 </select>
 </div>
 <div class="global-row">
@@ -170,7 +170,7 @@
 <h3>Generated Prompt</h3>
 <textarea class="preview-box" id="promptText" oninput="onRawEdit()" placeholder="REGION{...}" spellcheck="false"></textarea>
 <div class="preview-actions">
-<button class="btn-copy apply-imagegen-button" onclick="applyToImageGen()">Apply to IMAGE_GEN</button>
+<button class="btn-copy apply-imagegen-button" onclick="applyToImageGen()" data-product-name-template="Apply to {product}">Apply to application</button>
 <button class="btn-copy" onclick="copyPrompt()">Copy</button>
 <button class="btn-copy copy-canvas-button" onclick="copyWithCanvas()">Copy w/ Canvas</button>
 <button class="btn-import" onclick="importPrompt()">← Import</button>

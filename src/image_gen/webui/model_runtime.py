@@ -22,6 +22,30 @@ class ModelRuntimeUnavailable(RuntimeError):
     pass
 
 
+def _process_exit_record(code: int) -> dict[str, Any]:
+    value = int(code)
+    unsigned = value & 0xFFFFFFFF
+    record: dict[str, Any] = {
+        "code": value,
+        "hex": f"0x{unsigned:08X}",
+    }
+    if unsigned == 0xC000013A:
+        record["meaning"] = "STATUS_CONTROL_C_EXIT"
+        record["summary"] = (
+            "The worker was terminated by a Windows control event "
+            "(for example Ctrl+C or console shutdown)."
+        )
+    return record
+
+
+def _process_exit_message(code: int) -> str:
+    record = _process_exit_record(code)
+    suffix = f" ({record['hex']}"
+    if record.get("meaning"):
+        suffix += f", {record['meaning']}"
+    return suffix + ")"
+
+
 class ResidentModelRuntimeClient:
     """JSONL controller for the long-lived txt2img model runtime process."""
 
@@ -146,8 +170,9 @@ class ResidentModelRuntimeClient:
                     raise ModelRuntimeUnavailable(
                         self._cancel_reason or str(self._status.get("last_cancellation") or "Model-runtime startup was cancelled.")
                     )
+                self._status["last_exit"] = _process_exit_record(code)
                 raise ModelRuntimeUnavailable(
-                    f"Model runtime exited before readiness with code {code}."
+                    f"Model runtime exited before readiness with code {code}{_process_exit_message(code)}."
                 )
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line.startswith(_READY_PREFIX):
@@ -166,6 +191,7 @@ class ResidentModelRuntimeClient:
                     "stage": "idle",
                     "residency_state": "empty",
                     "last_error": None,
+                    "last_exit": None,
                     "cuda_available": ready.get("cuda_available"),
                     "worker_python_executable": ready.get("python_executable"),
                     "worker_torch_version": ready.get("torch_version"),
@@ -223,11 +249,12 @@ class ResidentModelRuntimeClient:
                             await self._mark_dead(None, stage="recovering")
                             self._status["last_cancellation"] = reason
                             raise ModelRuntimeUnavailable(reason)
+                        self._status["last_exit"] = _process_exit_record(code)
                         await self._mark_dead(
-                            f"Model runtime exited during command {command_id} with code {code}."
+                            f"Model runtime exited during command {command_id} with code {code}{_process_exit_message(code)}."
                         )
                         raise ModelRuntimeUnavailable(
-                            f"Model runtime exited during command with code {code}."
+                            f"Model runtime exited during command with code {code}{_process_exit_message(code)}."
                         )
                     line = raw.decode("utf-8", errors="replace").rstrip()
                     if line.startswith(_STATUS_PREFIX):

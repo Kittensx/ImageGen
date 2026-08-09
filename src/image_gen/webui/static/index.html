@@ -4,27 +4,140 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>IMAGE_GEN WebUI</title>
+  <script>
+    (() => {
+      const doc = document.documentElement;
+      const THEME_STORAGE_KEY = "image-gen.theme-palette.v1";
+      const FONT_STACKS = {
+        "Inter": 'Inter, "Segoe UI", Arial, sans-serif',
+        "System UI": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        "Segoe UI": '"Segoe UI", Arial, sans-serif',
+        "Arial": 'Arial, Helvetica, sans-serif',
+        "Verdana": 'Verdana, Geneva, sans-serif',
+        "Tahoma": 'Tahoma, Geneva, sans-serif',
+        "Trebuchet MS": '"Trebuchet MS", Arial, sans-serif',
+        "Georgia": 'Georgia, "Times New Roman", serif',
+        "Monospace": 'Consolas, "SFMono-Regular", monospace',
+      };
+      const normalizeHex = (value, fallback) => {
+        const text = String(value || "").trim();
+        const short = /^#?([0-9a-f]{3})$/i.exec(text);
+        if (short) return `#${short[1].split("").map((item) => item + item).join("")}`.toLowerCase();
+        const full = /^#?([0-9a-f]{6})$/i.exec(text);
+        return full ? `#${full[1].toLowerCase()}` : fallback;
+      };
+      const hexToRgb = (hex) => {
+        const value = normalizeHex(hex, "#000000").slice(1);
+        return {
+          r: Number.parseInt(value.slice(0, 2), 16),
+          g: Number.parseInt(value.slice(2, 4), 16),
+          b: Number.parseInt(value.slice(4, 6), 16),
+        };
+      };
+      const rgbToHex = (rgb) => {
+        const channel = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+        return `#${channel(rgb.r)}${channel(rgb.g)}${channel(rgb.b)}`;
+      };
+      const mixHex = (source, target, targetWeight) => {
+        const left = hexToRgb(source);
+        const right = hexToRgb(target);
+        const weight = Math.max(0, Math.min(1, Number(targetWeight) || 0));
+        return rgbToHex({
+          r: left.r + ((right.r - left.r) * weight),
+          g: left.g + ((right.g - left.g) * weight),
+          b: left.b + ((right.b - left.b) * weight),
+        });
+      };
+      try {
+        const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const accent = normalizeHex(parsed?.accent?.color, "#179ee7");
+          const surface = normalizeHex(parsed?.surface?.color, "#111d29");
+          const fontFamily = Object.prototype.hasOwnProperty.call(FONT_STACKS, parsed?.typography?.font_family)
+            ? parsed.typography.font_family
+            : "Inter";
+          const primaryButtonText = normalizeHex(parsed?.typography?.primary_button_text, "#ffffff");
+          const secondaryButtonText = normalizeHex(parsed?.typography?.secondary_button_text, "#d5f1ff");
+          const root = doc.style;
+          root.setProperty("--sky-50", mixHex(accent, "#ffffff", 0.92));
+          root.setProperty("--sky-100", mixHex(accent, "#ffffff", 0.82));
+          root.setProperty("--sky-200", mixHex(accent, "#ffffff", 0.62));
+          root.setProperty("--sky-300", mixHex(accent, "#ffffff", 0.38));
+          root.setProperty("--sky-400", mixHex(accent, "#ffffff", 0.18));
+          root.setProperty("--sky-500", accent);
+          root.setProperty("--sky-600", mixHex(accent, "#000000", 0.18));
+          root.setProperty("--charcoal-950", mixHex(surface, "#000000", 0.48));
+          root.setProperty("--charcoal-900", mixHex(surface, "#000000", 0.24));
+          root.setProperty("--charcoal-850", surface);
+          root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
+          root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
+          root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+          root.setProperty("--font-ui", FONT_STACKS[fontFamily]);
+          root.setProperty("--primary-button-text", primaryButtonText);
+          root.setProperty("--secondary-button-text", secondaryButtonText);
+          doc.dataset.themePrepaint = "cached-inline";
+        }
+      } catch (_error) {
+        doc.dataset.themePrepaint = "cache-error";
+      }
+      const path = String(window.location.pathname || "/").replace(/\/+$/, "") || "/";
+      const hash = String(window.location.hash || "").replace(/^#/, "").trim().toLowerCase();
+      const route = ["generation", "checkpoints", "loras", "workspace-manager"].includes(hash) ? hash : "home";
+      if (path === "/" || path === "/index.html") {
+        doc.dataset.prebootWorkspace = route;
+      }
+    })();
+  </script>
+  <script src="/assets/js/theme-runtime.js?v=theme-prepaint1"></script>
+  <script>window.ImageGenThemeRuntime?.applyCached();</script>
+  <title>WebUI</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath fill=%27%23179ee7%27 d=%27M0 0h32v32H0z%27/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/assets/css/tokens.css?v=0.1.40">
   <link rel="stylesheet" href="/assets/css/base.css?v=0.1.40">
   <link rel="stylesheet" href="/assets/css/layout.css?v=0.1.74">
   <link rel="stylesheet" href="/assets/css/components.css?v=civitai-connect1">
   <link rel="stylesheet" href="/assets/css/responsive.css?v=0.1.77">
-  <link rel="stylesheet" href="/assets/css/home.css?v=home-profile-icons1">
+  <link rel="stylesheet" href="/assets/css/home.css?v=home-shell1">
+  <link rel="stylesheet" href="/assets/css/component-shell.css?v=featured-shell1">
   <link rel="stylesheet" href="/assets/css/bug-reports.css?v=bug-reporter1">
-  <link rel="stylesheet" href="/assets/css/profile.css?v=home-profile-icons1">
-  <link rel="stylesheet" href="/assets/css/ui-icons.css?v=home-profile-icons1">
+  <link rel="stylesheet" href="/assets/css/profile.css?v=home-shell1">
+  <link rel="stylesheet" href="/assets/css/ui-icons.css?v=home-shell1">
   <link rel="stylesheet" href="/assets/css/action-bar.css?v=responsive-action-bar1">
   <link rel="stylesheet" href="/assets/css/site-sidebar.css?v=shared-sidebar-r2">
+  <link rel="stylesheet" href="/assets/css/workspace-manager.css?v=workspace-manager1">
+  <style>
+    html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #homeWorkspace,
+    html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #checkpointWorkspace,
+    html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #homeWorkspace,
+    html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #workspace,
+    html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #homeWorkspace,
+    html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #workspace,
+    html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #checkpointWorkspace,
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #homeWorkspace,
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #workspace,
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #checkpointWorkspace,
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #loraWorkspace {
+      display: none !important;
+    }
+
+    html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #workspace,
+    html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #checkpointWorkspace,
+    html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #workspaceManagerWorkspace {
+      display: grid !important;
+    }
+  </style>
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <div class="brand-group">
-        <div class="brand-icon" aria-hidden="true">▧</div>
+        <div class="brand-icon" role="img" data-product-aria-template="{product} logo"></div>
         <div>
-          <h1>IMAGE_GEN</h1>
+          <h1 data-product-name></h1>
           <span class="version-label">WebUI <span id="appVersion">v0.1.0</span></span>
         </div>
       </div>
@@ -35,7 +148,7 @@
       </div>
     </header>
     <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=shared-sidebar-r2"></div>
-    <div data-fragment="/assets/views/home.html?v=home-profile-icons1"></div>
+    <div data-fragment="/assets/views/home.html?v=home-shell1"></div>
     <div data-fragment="/assets/views/bug-reports.html?v=bug-reporter1"></div>
     <main class="workspace is-hidden" id="workspace" data-active-workspace="generation">
       <section class="workspace-column left-column" id="workspaceLeftColumn" data-workspace-zone="left" aria-label="Left workspace column">
@@ -49,8 +162,9 @@
     </main>
     <div data-fragment="/assets/views/checkpoints.html?v=0.1.74"></div>
     <div data-fragment="/assets/views/loras.html?v=0.1.77"></div>
+    <div data-fragment="/assets/views/workspace-manager.html?v=workspace-manager1"></div>
     <footer class="statusbar">
-      <span>IMAGE_GEN WebUI</span>
+      <span data-product-name-template="{product} WebUI">WebUI</span>
       <span id="projectPath">Project: —</span>
       <span id="footerWorkerStatus">Worker: connecting</span>
       <span class="status-spacer"></span>
@@ -106,6 +220,6 @@ Reload UI after applying the latest patch.`;
     })();
   </script>
   <script type="module" src="/assets/js/site-sidebar.js?v=shared-sidebar-r2"></script>
-  <script type="module" src="/assets/js/main.js?v=home-profile-icons1"></script>
+  <script type="module" src="/assets/js/main.js?v=home-shell1"></script>
 </body>
 </html>

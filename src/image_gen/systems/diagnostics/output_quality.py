@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import json
 from pathlib import Path
 from typing import Any
@@ -202,7 +204,7 @@ def build_output_quality_report(
 
 def output_quality_text(report: dict[str, Any]) -> str:
     lines = [
-        "IMAGE_GEN Output Quality Diagnostic",
+        f"{PRODUCT_NAME} Output Quality Diagnostic",
         "=" * 35,
         f"Classification: {report.get('classification', 'unknown')}",
         f"Suspect output: {bool(report.get('suspect'))}",

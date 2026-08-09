@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -100,7 +102,7 @@ def runtime_profile_json_schema() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": RUNTIME_MEMORY_PROFILE_JSON_SCHEMA_ID,
-        "title": "IMAGE_GEN Runtime Memory Profile",
+        "title": f"{PRODUCT_NAME} Runtime Memory Profile",
         "description": (
             "Complete Phase 14K runtime profile consumed by CLI, WebUI, resident "
             "workers, and the Phase 14L autotuner."

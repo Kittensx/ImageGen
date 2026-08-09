@@ -1,4 +1,5 @@
 import { api } from "../api.js?v=civitai-connect1";
+import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 
@@ -414,7 +415,7 @@ export function bindLoraWorkspace({ defaultAssetsController, showGenerationWorks
     const answer = window.prompt(
       `No activation text is saved for "${model?.name || "this LoRA"}".
 
-If this LoRA needs trigger words, enter them now so IMAGE_GEN can append them automatically when the LoRA is active.
+If this LoRA needs trigger words, enter them now so ${productName()} can append them automatically when the LoRA is active.
 Leave the field blank to continue without activation text. Press Cancel to stop adding the LoRA.`,
       "",
     );
@@ -1230,7 +1231,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
   $("#loraDeleteButton")?.addEventListener("click", async () => {
     if (!selectedDetails) return;
     const filename = selectedDetails.filename || selectedDetails.name;
-    const confirmation = window.prompt(`This permanently deletes the LoRA file, its IMAGE_GEN sidecar, and its preview.\n\nType ${filename} to confirm.`);
+    const confirmation = window.prompt(`This permanently deletes the LoRA file, its ${productName()} sidecar, and its preview.\n\nType ${filename} to confirm.`);
     if (confirmation !== filename) return;
     try {
       await api.deleteLora(selectedDetails.asset_id);

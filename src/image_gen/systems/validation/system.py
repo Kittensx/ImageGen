@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import json
 import platform
 import sys
@@ -330,7 +332,7 @@ class RealCheckpointValidationSystem:
         json_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
 
         lines = [
-            "# IMAGE_GEN Phase 07 Real Checkpoint Validation",
+            f"# {PRODUCT_NAME} Phase 07 Real Checkpoint Validation",
             "",
             f"**Result:** {'PASS' if report.passed else 'FAIL'}",
             f"**Created:** {report.created_utc}",

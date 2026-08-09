@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 import { renderCfgGraph } from "./cfg-lab.js?v=0.1.45";
@@ -326,7 +327,7 @@ const SECTION_DEFINITIONS = [
       ["Metadata source", "metadata_source"],
       ["JSON sidecar", "provenance.json_sidecar"],
       ["TXT sidecar", "provenance.txt_sidecar"],
-      ["PNG IMAGE_GEN manifest", "provenance.png_manifest_available"],
+      [`PNG ${productName()} manifest`, "provenance.png_manifest_available"],
       ["PNG parameters", "provenance.png_parameters_available"],
       ["Runtime diagnostics", "provenance.runtime_diagnostics"],
     ],

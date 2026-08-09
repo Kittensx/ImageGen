@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import base64
 import hashlib
 import io
@@ -405,7 +407,7 @@ def extract_superhybrid_region_slot(
         backend_name = str(item.backend or "").strip().lower()
         if backend_name and backend_name not in {"latent"}:
             raise RegionalPromptError(
-                f"REGION backend={backend_name!r} is incompatible with IMAGE_GEN. "
+                f"REGION backend={backend_name!r} is incompatible with {PRODUCT_NAME}. "
                 "Use the native model-output backend or omit backend=."
             )
         coords_pixels = bool(item.coords_pixels)

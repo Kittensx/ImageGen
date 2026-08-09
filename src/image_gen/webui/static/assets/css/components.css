@@ -333,27 +333,41 @@
 }
 
 .generate-button__icon {
-  width: 1.15rem;
-  height: 1.15rem;
+  position: relative;
+  width: 1.35rem;
+  height: 1.35rem;
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
-  color: currentColor;
+  overflow: visible;
 }
 
-.generate-button__icon::before {
+.generate-button__icon::before,
+.generate-button__icon::after {
   content: "";
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: -0.2rem;
   display: block;
-  background: currentColor;
-  -webkit-mask: url("../icons/sidebar/generate.svg") center / contain no-repeat;
-  mask: url("../icons/sidebar/generate.svg") center / contain no-repeat;
+  background-image: var(--product-brand-mark-image);
+  background-position: center 48%;
+  background-repeat: no-repeat;
+  background-size: 160% auto;
   transform-origin: center;
   transition:
     transform 140ms ease,
     opacity 140ms ease,
     filter 180ms ease;
+}
+
+.generate-button__icon::before {
+  opacity: 0.92;
+  filter: grayscale(1) saturate(0.18) brightness(1.22) contrast(1.04);
+}
+
+.generate-button__icon::after {
+  opacity: 0;
+  clip-path: inset(0 100% 0 0);
+  filter: saturate(1.2) brightness(1.08);
 }
 
 .generate-button__content {
@@ -388,11 +402,17 @@
   opacity: 0.94;
 }
 
-.generate-button:hover:not(:disabled) .generate-button__icon::before {
+.generate-button:hover:not(:disabled) .generate-button__icon::before,
+.generate-button:hover:not(:disabled) .generate-button__icon::after {
   transform: scale(1.07);
 }
 
-.generate-button:active:not(:disabled) .generate-button__icon::before {
+.generate-button:hover:not(:disabled) .generate-button__icon::before {
+  filter: grayscale(0.72) saturate(0.5) brightness(1.2);
+}
+
+.generate-button:active:not(:disabled) .generate-button__icon::before,
+.generate-button:active:not(:disabled) .generate-button__icon::after {
   transform: scale(0.92);
 }
 
@@ -403,21 +423,15 @@
 
 .generate-button.is-generation-submitting .generate-button__icon::before,
 .generate-button.is-generating .generate-button__icon::before {
-  background-color: transparent;
-  background-image: linear-gradient(
-    135deg,
-    #ff5f6d 0%,
-    #ff9f43 16%,
-    #ffe66d 32%,
-    #63e6be 48%,
-    #74c0fc 64%,
-    #b197fc 80%,
-    #f783ff 100%
-  );
-  background-size: 240% 240%;
+  animation: ui-icon-generation-two-beat 1900ms ease-in-out infinite;
+}
+
+.generate-button.is-generation-submitting .generate-button__icon::after,
+.generate-button.is-generating .generate-button__icon::after {
+  opacity: 1;
   animation:
     ui-icon-generation-two-beat 1900ms ease-in-out infinite,
-    ui-icon-generation-prism-shift 2600ms linear infinite;
+    ui-logo-generation-color-wipe 2300ms ease-in-out infinite;
 }
 
 .generate-button[aria-busy="true"] .generate-button__status,
@@ -426,78 +440,30 @@
 }
 
 @keyframes ui-icon-generation-two-beat {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.88;
-    filter: grayscale(1) saturate(0.2) brightness(0.96);
-  }
-
-  7% {
-    transform: scale(0.97);
-    opacity: 0.96;
-    filter: grayscale(0.35) saturate(1.15) brightness(1.05);
-  }
-
-  13% {
-    transform: scale(0.9);
-    opacity: 1;
-    filter: grayscale(0) saturate(1.65) brightness(1.18);
-  }
-
-  24% {
-    transform: scale(0.97);
-    opacity: 0.95;
-    filter: grayscale(0.55) saturate(0.8) brightness(1.02);
-  }
-
-  31% {
-    transform: scale(1);
-    opacity: 0.89;
-    filter: grayscale(1) saturate(0.2) brightness(0.96);
-  }
-
-  37% {
-    transform: scale(0.97);
-    opacity: 0.96;
-    filter: grayscale(0.35) saturate(1.15) brightness(1.05);
-  }
-
-  43% {
-    transform: scale(0.9);
-    opacity: 1;
-    filter: grayscale(0) saturate(1.7) brightness(1.2);
-  }
-
-  54% {
-    transform: scale(0.97);
-    opacity: 0.95;
-    filter: grayscale(0.55) saturate(0.8) brightness(1.02);
-  }
-
-  63% {
-    transform: scale(1);
-    opacity: 0.89;
-    filter: grayscale(1) saturate(0.2) brightness(0.96);
-  }
-
-  82% {
-    transform: scale(1);
-    opacity: 0.88;
-    filter: grayscale(1) saturate(0.2) brightness(0.96);
-  }
+  0%, 100% { transform: scale(1); }
+  14% { transform: scale(0.93); }
+  28% { transform: scale(1); }
+  42% { transform: scale(0.95); }
+  58% { transform: scale(1); }
 }
 
-@keyframes ui-icon-generation-prism-shift {
-  0% {
-    background-position: 15% 50%;
+@keyframes ui-logo-generation-color-wipe {
+  0%, 10% {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0.12;
+    filter: saturate(0.8) brightness(1.02);
   }
 
-  50% {
-    background-position: 85% 50%;
+  44%, 68% {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+    filter: saturate(1.35) brightness(1.14);
   }
 
   100% {
-    background-position: 15% 50%;
+    clip-path: inset(0 0 0 100%);
+    opacity: 0.12;
+    filter: saturate(0.8) brightness(1.02);
   }
 }
 
@@ -521,20 +487,24 @@
 
 @media (prefers-reduced-motion: reduce) {
   .generate-button,
-  .generate-button__icon::before {
+  .generate-button__icon::before,
+  .generate-button__icon::after {
     transition: none !important;
   }
 
   .generate-button.is-generation-submitting,
   .generate-button.is-generating,
   .generate-button.is-generation-submitting .generate-button__icon::before,
-  .generate-button.is-generating .generate-button__icon::before {
+  .generate-button.is-generating .generate-button__icon::before,
+  .generate-button.is-generation-submitting .generate-button__icon::after,
+  .generate-button.is-generating .generate-button__icon::after {
     animation: none !important;
   }
 
-  .generate-button.is-generation-submitting .generate-button__icon::before,
-  .generate-button.is-generating .generate-button__icon::before {
-    filter: grayscale(0.2) saturate(1.15) brightness(1.05);
+  .generate-button.is-generation-submitting .generate-button__icon::after,
+  .generate-button.is-generating .generate-button__icon::after {
+    clip-path: inset(0);
+    opacity: 1;
   }
 }
 

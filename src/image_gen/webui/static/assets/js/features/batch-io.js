@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, shortText, notify } from "../utils.js";
 
@@ -45,7 +46,7 @@ export async function exportJobs(jobs, format = "native", filenameStem = "image_
   const result = await api.exportBatch({
     format,
     filename_stem: filenameStem,
-    source: "IMAGE_GEN WebUI",
+    source: `${productName()} WebUI`,
     jobs,
   });
   downloadBlob(result);

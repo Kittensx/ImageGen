@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import json
 import os
 import gc
@@ -395,8 +397,8 @@ class Txt2ImgRunner:
             "cuda_memory_before": cuda_before,
             "cuda_memory_after": dict(after.get("cuda_memory") or {}),
             "note": (
-                "System GPU monitors may still show the CUDA context or non-IMAGE_GEN allocations; "
-                "allocated_bytes is the authoritative IMAGE_GEN/PyTorch tensor allocation value."
+                f"System GPU monitors may still show the CUDA context or non-{PRODUCT_NAME} allocations; "
+                f"allocated_bytes is the authoritative {PRODUCT_NAME}/PyTorch tensor allocation value."
             ),
             "unload_time_ms": round((time.perf_counter() - started) * 1000.0, 3),
         }

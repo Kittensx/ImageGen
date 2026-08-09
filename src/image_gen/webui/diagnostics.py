@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from image_gen.program_metadata import build_program_metadata
+from image_gen.program_metadata import PRODUCT_NAME, build_program_metadata
 
 _SECRET_MARKERS = {
     "password",
@@ -156,7 +156,7 @@ def write_webui_failure_bundle(
     )
     (bundle / "traceback.txt").write_text(tb_text, encoding="utf-8")
     reproduction_lines = [
-        "IMAGE_GEN WebUI failure reproduction",
+        f"{PRODUCT_NAME} WebUI failure reproduction",
         "",
         f"Stage: {stage}",
         f"Error: {error_text}",

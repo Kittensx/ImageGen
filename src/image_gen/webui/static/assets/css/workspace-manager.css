@@ -1,0 +1,192 @@
+.workspace-manager-workspace {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px;
+  scrollbar-gutter: stable;
+}
+
+.workspace-manager-panel {
+  min-height: 100%;
+  padding: clamp(14px, 2vw, 22px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-large);
+  background: linear-gradient(150deg, color-mix(in srgb, var(--charcoal-800) 95%, var(--sky-900) 5%), var(--charcoal-900));
+  box-shadow: var(--shadow);
+}
+
+.workspace-manager-header {
+  max-width: 900px;
+}
+
+.workspace-manager-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-manager-title-icon {
+  --ui-icon-size: 28px;
+  width: 34px;
+  height: 34px;
+  color: var(--sky-300);
+}
+
+.workspace-manager-header h2 {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 1.45rem;
+}
+
+.workspace-manager-header p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.workspace-manager-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 72%, transparent);
+}
+
+.workspace-manager-toolbar label {
+  min-width: min(320px, 100%);
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.workspace-manager-toolbar select,
+.workspace-manager-row select {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--charcoal-950);
+  color: var(--text);
+  padding: 5px 8px;
+}
+
+.workspace-manager-toolbar-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.workspace-manager-summary {
+  margin: 12px 2px 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.workspace-manager-component-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-manager-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(170px, 1.25fr) auto minmax(92px, 0.5fr) minmax(125px, 0.7fr) minmax(125px, 0.7fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-850) 78%, transparent);
+}
+
+.workspace-manager-row.is-hidden-component {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+.workspace-manager-component-identity {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.workspace-manager-component-identity .ui-icon {
+  --ui-icon-size: 19px;
+  color: var(--sky-300);
+}
+
+.workspace-manager-component-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.workspace-manager-component-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.workspace-manager-component-copy small {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+.workspace-manager-move-actions,
+.workspace-manager-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.workspace-manager-row .ui-action-button {
+  --ui-action-size: 30px;
+  --ui-icon-size: 15px;
+}
+
+.workspace-manager-field {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.workspace-manager-empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (max-width: 1040px) {
+  .workspace-manager-row {
+    grid-template-columns: minmax(170px, 1fr) auto repeat(2, minmax(120px, 0.7fr)) auto;
+  }
+  .workspace-manager-row .workspace-manager-field--span {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace-manager-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .workspace-manager-toolbar label {
+    min-width: 0;
+  }
+  .workspace-manager-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .workspace-manager-row .workspace-manager-field {
+    grid-column: 1 / -1;
+  }
+}

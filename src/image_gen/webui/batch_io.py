@@ -10,6 +10,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from image_gen.program_metadata import PRODUCT_NAME
 from typing import Any, Mapping, Sequence
 
 from image_gen.webui.jobs import GenerationJobManager
@@ -963,7 +965,7 @@ class BatchIOService:
                 "format": NATIVE_FORMAT,
                 "version": NATIVE_VERSION,
                 "created_at": _utc_now(),
-                "source": str(source.get("source") or "IMAGE_GEN WebUI"),
+                "source": str(source.get("source") or f"{PRODUCT_NAME} WebUI"),
                 "defaults": _sanitize_export(source.get("defaults") or {}),
                 "jobs": jobs,
             }

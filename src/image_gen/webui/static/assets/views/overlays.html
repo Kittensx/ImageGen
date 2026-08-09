@@ -18,7 +18,7 @@
       <div class="settings-icon-action-row">
         <div class="settings-icon-action-copy">
           <strong>Theme Manager</strong>
-          <small>Customize IMAGE_GEN accent, surface, typography, and button text colors. Footer theme links remain available as quick shortcuts.</small>
+          <small>Customize ImageGen accent, surface, typography, and button text colors. Footer theme links remain available as quick shortcuts.</small>
         </div>
         <button class="ui-action-button ui-icon-control ui-action-button--large" id="openThemeManagerButton" type="button" aria-label="Open Theme Manager" title="Open Theme Manager">
           <span class="ui-icon" data-icon="theme" aria-hidden="true"></span>
@@ -31,7 +31,7 @@
         <div class="settings-icon-action-copy">
           <strong>Connect CivitAI</strong>
           <small id="civitaiSettingsStatusText">Checking connection…</small>
-          <small>Your API key is stored in IMAGE_GEN's local secrets folder, not in WebUI preferences.</small>
+          <small>Your API key is stored in ImageGen's local secrets folder, not in WebUI preferences.</small>
         </div>
         <div class="civitai-settings-actions">
           <button class="civitai-status-button" id="civitaiSettingsStatusButton" type="button" aria-label="CivitAI connection status" title="CivitAI connection status">
@@ -116,7 +116,7 @@
     </fieldset>
     <fieldset class="settings-group">
       <legend>Process-Start Runtime Settings</legend>
-      <p>These settings are fixed after the worker initializes. Saving a different value marks it pending; it does not become active until a full IMAGE_GEN restart.</p>
+      <p>These settings are fixed after the worker initializes. Saving a different value marks it pending; it does not become active until a full ImageGen restart.</p>
       <label class="field-block"><span>Attention backend</span>
         <select id="dialogAttentionBackend">
           <option value="auto">Auto</option><option value="default">Default / unchanged</option><option value="eager">PyTorch eager</option><option value="sdpa">PyTorch SDPA</option><option value="xformers">xFormers</option>
@@ -172,7 +172,7 @@
       <label class="field-block"><span>Warps</span><select id="dialogMslkNumWarps"><option value="">Automatic</option><option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></label>
       <label class="field-block"><span>Stages</span><select id="dialogMslkNumStages"><option value="">Automatic</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
       <label class="field-block"><span>Experimental head dimensions</span><input id="dialogMslkExperimentalHeadDims" type="text" inputmode="numeric" placeholder="40,80,160"></label>
-      <p>These values are immutable after process start. Saving changes stores them for the next full IMAGE_GEN restart; refreshing the browser does not activate them.</p>
+      <p>These values are immutable after process start. Saving changes stores them for the next full ImageGen restart; refreshing the browser does not activate them.</p>
     </fieldset>
     <fieldset class="settings-group">
       <legend>Diagnostics</legend>
@@ -211,7 +211,7 @@
     <div class="dialog-heading">
       <div>
         <h2>Connect CivitAI</h2>
-        <p>Connect your CivitAI account so IMAGE_GEN can fetch model metadata, activation text, and preview information.</p>
+        <p>Connect your CivitAI account so ImageGen can fetch model metadata, activation text, and preview information.</p>
       </div>
       <button class="icon-button" value="cancel" aria-label="Close CivitAI connection">×</button>
     </div>
@@ -220,7 +220,7 @@
       <img class="civitai-status-light" id="civitaiDialogStatusLight" src="/assets/icons/status/gray.svg" alt="">
       <div>
         <strong id="civitaiConnectionStatusText">Checking connection…</strong>
-        <small id="civitaiConnectionStatusDetail">IMAGE_GEN is checking the configured credential.</small>
+        <small id="civitaiConnectionStatusDetail">ImageGen is checking the configured credential.</small>
       </div>
     </div>
     <section class="civitai-connection-step">
@@ -237,13 +237,13 @@
     <section class="civitai-connection-step">
       <span class="civitai-step-number" aria-hidden="true">2</span>
       <div class="civitai-credential-entry">
-        <strong>Paste the API key into IMAGE_GEN</strong>
+        <strong data-product-name-template="Paste the API key into {product}">Paste the API key into the application</strong>
         <label class="field-block">
           <span>CivitAI API key</span>
           <input id="civitaiApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your CivitAI API key">
         </label>
         <p id="civitaiCredentialManagedNote" class="settings-warning" hidden></p>
-        <p class="settings-hint">The key is written locally to <code id="civitaiCredentialPath">secrets/civitai_api_key.txt</code>. IMAGE_GEN creates the folder/file when needed. The key is not returned to the browser after it is saved.</p>
+        <p class="settings-hint">The key is written locally to <code id="civitaiCredentialPath">secrets/civitai_api_key.txt</code>. ImageGen creates the folder/file when needed. The key is not returned to the browser after it is saved.</p>
       </div>
     </section>
     <footer class="dialog-actions civitai-connection-actions">

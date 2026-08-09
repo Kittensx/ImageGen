@@ -90,6 +90,23 @@ from image_gen.systems.upscaling import (
     resize_exact,
 )
 from image_gen.systems.diagnostics import DiagnosticSession, DiagnosticsSystem, PipelineStageError
+
+
+def _target_correction_records_match(recorded: dict[str, Any], actual: dict[str, Any]) -> bool:
+    """Compare deterministic correction records across the v1 schema's null-field addition.
+
+    Early v1 records did not serialize ``resize_scale`` when it was not applicable.
+    The field was later added to the same contract version with a null default. No
+    geometry field is ignored here; this only canonicalizes that one legacy absence.
+    """
+
+    expected = dict(recorded or {})
+    observed = dict(actual or {})
+    if "resize_scale" not in expected and observed.get("resize_scale") is None:
+        expected["resize_scale"] = None
+    return expected == observed
+
+
 from image_gen.systems.diagnostics.output_quality import (
     classify_normalized_images,
     summarize_tensor,
@@ -1665,7 +1682,9 @@ class GenerationPipeline:
                         getattr(request, "hires_recorded_target_correction", None) or {}
                     )
                     actual_target_correction = dict(upscale_metadata.get("target_correction") or {})
-                    if recorded_target_correction and recorded_target_correction != actual_target_correction:
+                    if recorded_target_correction and not _target_correction_records_match(
+                        recorded_target_correction, actual_target_correction
+                    ):
                         raise RuntimeError(format_hires_failure(
                             "target_aspect_correction",
                             "Recorded hires target-correction geometry does not match the current deterministic correction plan.",

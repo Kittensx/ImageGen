@@ -1078,8 +1078,18 @@ class WebUICatalog:
     def _iter_image_files(root: Path, *, include_subfolders: bool) -> Iterable[Path]:
         iterator = root.rglob("*") if include_subfolders else root.glob("*")
         for path in iterator:
-            if path.is_file() and path.suffix.lower() in _IMAGE_EXTENSIONS:
-                yield path
+            if not path.is_file() or path.suffix.lower() not in _IMAGE_EXTENSIONS:
+                continue
+            try:
+                relative_parts = path.relative_to(root).parts
+            except ValueError:
+                relative_parts = path.parts
+            # Output saving uses dot-prefixed image-suffix temp files such as
+            # .image.<uuid>.tmp.png before os.replace(). They are implementation
+            # details and can change size while a browser is reading them.
+            if any(part.startswith(".") for part in relative_parts):
+                continue
+            yield path
 
     @staticmethod
     def _asset_label(value: Any) -> str:

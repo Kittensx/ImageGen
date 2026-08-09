@@ -1,4 +1,6 @@
 import { $ } from "../utils.js";
+import { productName } from "../branding.js?v=brand1";
+import { setActionIcon } from "../components/action-icons.js?v=0.1.1";
 
 function requestWorkspace(workspace) {
   const target = String(workspace || "").trim().toLowerCase();
@@ -41,9 +43,9 @@ function renderReadiness(catalogs = {}) {
   if (hasCheckpoint) {
     if (badge) badge.textContent = "Ready";
     if (title) title.textContent = "Checkpoint assets are available";
-    if (message) message.textContent = "IMAGE_GEN found at least one checkpoint. VAEs and LoRAs remain optional and can be added whenever your workflow needs them.";
+    if (message) message.textContent = `${productName()} found at least one checkpoint. VAEs and LoRAs remain optional and can be added whenever your workflow needs them.`;
     if (primary) {
-      primary.textContent = "Open Generation";
+      setActionIcon(primary, "generate", { label: "Open Generation", title: "Open Generation", replace: true });
       primary.dataset.homeTarget = "generation";
     }
   } else {
@@ -51,7 +53,7 @@ function renderReadiness(catalogs = {}) {
     if (title) title.textContent = "No checkpoint models found";
     if (message) message.textContent = "Start by adding or linking checkpoint assets. The Checkpoints workspace is the current place to review the local model catalog; guided starter-asset installation can be added here later.";
     if (primary) {
-      primary.textContent = "Open Checkpoints";
+      setActionIcon(primary, "models", { label: "Open Checkpoints", title: "Open Checkpoints", replace: true });
       primary.dataset.homeTarget = "checkpoints";
     }
   }

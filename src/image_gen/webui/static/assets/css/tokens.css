@@ -1,4 +1,6 @@
 :root {
+  --product-brand-mark-image: none;
+  --product-brand-wordmark-image: none;
   --sky-50: #eaf8ff;
   --sky-100: #d5f1ff;
   --sky-200: #a8dfff;

@@ -222,6 +222,8 @@
 .ui-icon[data-icon="load"] { --ui-icon-mask: url("../icons/actions/load.svg"); }
 .ui-icon[data-icon="info"] { --ui-icon-mask: url("../icons/actions/info.svg"); }
 .ui-icon[data-icon="key"] { --ui-icon-mask: url("../icons/actions/key.svg"); }
+.ui-icon[data-icon="close"] { --ui-icon-mask: url("../icons/actions/close.svg"); }
+.ui-icon[data-icon="side-tuck"] { --ui-icon-mask: url("../icons/actions/side-tuck.svg"); }
 .ui-icon[data-icon="external-link"] { --ui-icon-mask: url("../icons/actions/external-link.svg"); }
 .ui-icon[data-icon="maximize"] { --ui-icon-mask: url("../icons/actions/maximize.svg"); }
 .ui-icon[data-icon="randomize"] { --ui-icon-mask: url("../icons/actions/randomize.svg"); }
@@ -256,6 +258,8 @@
 .ui-icon[data-icon="home-install-date"] { --ui-icon-mask: url("../icons/home/install-date.svg"); }
 .ui-icon[data-icon="home-images-created"] { --ui-icon-mask: url("../icons/home/images-created.svg"); }
 .ui-icon[data-icon="home-bug-contribution"] { --ui-icon-mask: url("../icons/home/bug-contribution.svg"); }
+.ui-icon[data-icon="workspace-manager"] { --ui-icon-mask: url("../icons/sidebar/workspace-manager.svg"); }
+.ui-icon[data-icon="discord"] { --ui-icon-mask: url("../icons/home/discord.svg"); }
 
 .ui-action-button {
   --ui-action-size: 34px;

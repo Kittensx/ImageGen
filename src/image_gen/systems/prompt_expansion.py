@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import hashlib
 import json
 import random
@@ -356,7 +358,7 @@ def _resolve_wildcard_root(
     try:
         resolved.relative_to(root)
     except ValueError as exc:
-        raise PromptExpansionError("wildcard_directory must remain inside the IMAGE_GEN project root.") from exc
+        raise PromptExpansionError(f"wildcard_directory must remain inside the {PRODUCT_NAME} project root.") from exc
     return resolved
 
 

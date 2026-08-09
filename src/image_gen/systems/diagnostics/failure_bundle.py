@@ -6,7 +6,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from image_gen.program_metadata import build_program_metadata
+from image_gen.program_metadata import PRODUCT_NAME, build_program_metadata
 
 from image_gen.systems.diagnostics.models import DiagnosticSession
 from image_gen.systems.diagnostics.serialization import json_safe
@@ -129,7 +129,7 @@ def _prompt_parser_failure_payload(
 def _prompt_parser_failure_text(payload: dict[str, Any]) -> str:
     parser = dict(payload.get("parser") or {})
     lines = [
-        "IMAGE_GEN Prompt Parser Failure",
+        f"{PRODUCT_NAME} Prompt Parser Failure",
         "=" * 31,
         f"Parser: {parser.get('id') or 'unknown'}{(' v' + str(parser.get('version'))) if parser.get('version') else ''}",
         f"Prompt role: {str(payload.get('prompt_role') or 'unknown').title()}",

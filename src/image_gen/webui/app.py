@@ -10,7 +10,7 @@ import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION
-from image_gen.program_metadata import build_program_metadata
+from image_gen.program_metadata import PRODUCT_NAME, build_program_metadata
 from image_gen.runtime.hires_sizing import resolve_hires_dimensions
 from image_gen.systems.outpainting import plan_outpaint_canvas
 from image_gen.runtime_options import (
@@ -34,6 +34,7 @@ from image_gen.webui.bug_reports import BugReportError, BugReportService
 from image_gen.webui.diagnostics import write_webui_failure_bundle
 from image_gen.webui.default_assets import resolve_default_assets
 from image_gen.webui.catalog import ASSET_CATALOG_CONTRACT_VERSION, WebUICatalog
+from image_gen.webui.changelog import ChangelogService
 from image_gen.webui.upscaler_catalog import (
     UPSCALER_CATALOG_CONTRACT_VERSION,
     WebUIUpscalerCatalog,
@@ -159,6 +160,7 @@ def create_app(
     prompt_parsers = default_prompt_parser_registry()
     prompt_configuration = PromptConfigurationService(store, parser_registry=prompt_parsers)
     bug_reports = BugReportService(context.project_root)
+    changelog = ChangelogService(context.project_root)
     static_root = Path(__file__).resolve().parent / "static"
 
     def _configured_startup_model_path() -> str:
@@ -223,7 +225,7 @@ def create_app(
                 pass
             await jobs.stop()
 
-    app = FastAPI(title="IMAGE_GEN WebUI", version=WEBUI_VERSION, lifespan=lifespan)
+    app = FastAPI(title=f"{PRODUCT_NAME} WebUI", version=WEBUI_VERSION, lifespan=lifespan)
     app.state.context = context
     app.state.catalog = catalog
     app.state.store = store
@@ -237,6 +239,7 @@ def create_app(
     app.state.prompt_configuration = prompt_configuration
     app.state.profile = profile
     app.state.bug_reports = bug_reports
+    app.state.changelog = changelog
     app.state.runtime_startup_options = resolved_runtime_startup.to_dict()
     app.state.server_instance_id = server_instance_id
     app.state.server_started_at_unix = server_started_at_unix
@@ -336,6 +339,7 @@ def create_app(
         payload: Any = None,
         request_path: str | None = None,
         status_code: int = 400,
+        extra: dict[str, Any] | None = None,
     ) -> HTTPException:
         try:
             bundle = write_webui_failure_bundle(
@@ -344,6 +348,7 @@ def create_app(
                 error=exc,
                 payload=payload,
                 request_path=request_path,
+                extra=extra,
             )
             detail = f"{exc} (diagnostic bundle: {bundle})"
         except Exception:
@@ -420,6 +425,24 @@ def create_app(
         # are prepared only by the explicit bug-report catalog/sync flows.
         return dict((bug_reports.payload().get("profile") or {}))
 
+    @app.get("/api/changelog")
+    async def changelog_catalog() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(changelog.catalog)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to load the changelog: {exc}") from exc
+
+    @app.get("/api/changelog/{entry_date}")
+    async def changelog_entry(entry_date: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(changelog.entry, entry_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to load changelog entry: {exc}") from exc
+
     @app.get("/api/profile")
     async def imagegen_profile() -> dict[str, Any]:
         try:
@@ -433,8 +456,12 @@ def create_app(
             await asyncio.to_thread(profile.update_sharing, payload or {})
             bug_profile = _cached_bug_profile()
             presence = await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
+            diagnostic = _discord_presence_diagnostic(presence, request_path="/api/profile/sharing")
             result = profile.snapshot(bug_profile)
             result["presence_publish"] = presence
+            result["presence_diagnostic_created"] = bool(diagnostic.get("diagnostic_created"))
+            if diagnostic.get("diagnostic_stage"):
+                result["presence_diagnostic_stage"] = diagnostic["diagnostic_stage"]
             return result
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail=f"Unable to update profile sharing preferences: {exc}") from exc
@@ -455,11 +482,51 @@ def create_app(
         snapshot["discord_link"] = result
         return snapshot
 
+    def _discord_presence_diagnostic(result: Mapping[str, Any], *, request_path: str) -> dict[str, Any]:
+        """Record unexpected Discord publication failures without treating setup/user states as bugs."""
+
+        state = str(result.get("state") or "unavailable").strip() or "unavailable"
+        expected_states = {
+            "disabled_by_user",
+            "discord_application_required",
+            "helper_required",
+            "native_helper_required",
+            "presence_helper_required",
+            "sdk_unavailable",
+        }
+        if bool(result.get("published")) or state in expected_states:
+            return {"diagnostic_created": False}
+        message = str(result.get("message") or "Discord did not provide an error message.").strip()
+        error = RuntimeError(f"Discord Rich Presence publish failed [{state}]: {message}")
+        try:
+            bundle = write_webui_failure_bundle(
+                project_root=context.project_root,
+                stage="discord_presence_refresh",
+                error=error,
+                payload={"activity": result.get("activity") or {}},
+                request_path=request_path,
+                extra={
+                    "presence_state": state,
+                    "presence_message": message,
+                    "discord_capabilities": profile.discord_capabilities(),
+                },
+            )
+            return {
+                "diagnostic_created": True,
+                "diagnostic_stage": "discord_presence_refresh",
+                "diagnostic_bundle": str(bundle.relative_to(context.project_root)) if bundle.is_relative_to(context.project_root) else bundle.name,
+            }
+        except Exception:
+            # Presence refresh should still return its original result even if
+            # diagnostic persistence itself is unavailable.
+            return {"diagnostic_created": False}
+
     @app.post("/api/profile/discord/presence")
     async def refresh_discord_presence() -> dict[str, Any]:
         bug_profile = _cached_bug_profile()
         result = await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
-        return {"presence": result, "profile": profile.snapshot(bug_profile)}
+        diagnostic = _discord_presence_diagnostic(result, request_path="/api/profile/discord/presence")
+        return {"presence": result, "profile": profile.snapshot(bug_profile), **diagnostic}
 
     @app.post("/api/profile/discord/disconnect")
     async def disconnect_discord_profile() -> dict[str, Any]:
@@ -515,14 +582,14 @@ def create_app(
         if not callable(callback):
             raise HTTPException(
                 status_code=503,
-                detail="Backend restart is unavailable because IMAGE_GEN was not launched through run_webui.bat.",
+                detail=f"Backend restart is unavailable because {PRODUCT_NAME} was not launched through run_webui.bat.",
             )
         loop = asyncio.get_running_loop()
         loop.call_later(0.20, callback)
         return {
             "restart_requested": True,
             "previous_instance_id": server_instance_id,
-            "message": "The IMAGE_GEN backend is restarting. The browser will reconnect automatically.",
+            "message": f"The {PRODUCT_NAME} backend is restarting. The browser will reconnect automatically.",
         }
 
     @app.get("/api/prompt-parsers")
@@ -867,7 +934,7 @@ def create_app(
             status_code=400,
             detail={
                 "code": "civitai_credentials_required",
-                "message": "Connect CivitAI in IMAGE_GEN Settings to use this action.",
+                "message": f"Connect CivitAI in {PRODUCT_NAME} Settings to use this action.",
             },
         )
 
@@ -1359,6 +1426,10 @@ def create_app(
                 payload=payload.model_dump(),
                 request_path="/api/models/activate",
                 status_code=400,
+                extra={
+                    "model_runtime_before": runtime_before,
+                    "model_runtime_after": jobs.model_runtime_status(),
+                },
             ) from exc
         return {
             "active_model": selected.to_dict(),
@@ -1738,7 +1809,7 @@ def create_app(
             result = batch_io.export({
                 "format": payload.get("format") or "native",
                 "filename_stem": payload.get("filename_stem") or "variation_matrix",
-                "source": "IMAGE_GEN Variation Matrix",
+                "source": f"{PRODUCT_NAME} Variation Matrix",
                 "jobs": [
                     {
                         "job_id": f"variation-{item['job_index']:04d}",
@@ -2060,8 +2131,21 @@ def create_app(
         }
         return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
+    def _preview_response(path: Path, *, headers: dict[str, str]) -> Response:
+        # Live preview files are atomically replaced as generation advances and the
+        # final frame may replace the last step file. FileResponse determines
+        # Content-Length from a stat call before streaming the path, so a replace in
+        # that window can produce a different byte length and make httptools abort
+        # the response. Snapshot the small preview file first; Content-Length then
+        # describes the exact immutable bytes being returned.
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="Live preview is no longer available.") from exc
+        return Response(content=content, media_type=_preview_media_type(path), headers=headers)
+
     @app.get("/api/jobs/{job_id}/preview/latest")
-    async def job_preview_latest(job_id: str) -> FileResponse:
+    async def job_preview_latest(job_id: str) -> Response:
         job = jobs.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Generation job not found.")
@@ -2072,10 +2156,10 @@ def create_app(
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
         }
-        return FileResponse(path, media_type=_preview_media_type(path), headers=headers)
+        return _preview_response(path, headers=headers)
 
     @app.get("/api/jobs/{job_id}/preview/{step_number}")
-    async def job_preview_step(job_id: str, step_number: int) -> FileResponse:
+    async def job_preview_step(job_id: str, step_number: int) -> Response:
         job = jobs.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Generation job not found.")
@@ -2083,7 +2167,7 @@ def create_app(
         if path is None or not path.is_file():
             raise HTTPException(status_code=404, detail="Requested live preview step was not found.")
         headers = {"Cache-Control": "public, max-age=31536000, immutable"}
-        return FileResponse(path, media_type=_preview_media_type(path), headers=headers)
+        return _preview_response(path, headers=headers)
 
     @app.get("/region-builder.html", include_in_schema=False)
     async def region_builder() -> FileResponse:

@@ -1,5 +1,7 @@
 import { api } from "../api.js?v=profile2";
+import { productName } from "../branding.js?v=brand1";
 import { $, notify } from "../utils.js";
+import { setActionIcon } from "../components/action-icons.js?v=0.1.1";
 
 let currentProfile = null;
 let saving = false;
@@ -86,7 +88,7 @@ function renderDiscord(profile) {
   setText(
     "#homeProfileDiscordServerState",
     discord.linked
-      ? "Linked to this local ImageGen profile"
+      ? `Linked to this local ${productName()} profile`
       : "Connect Discord to link community sharing",
   );
 
@@ -108,7 +110,7 @@ function renderDiscord(profile) {
     if (capabilities.rich_presence_ready) {
       capabilityText.textContent = discord.linked
         ? "Your Discord account is linked locally through the Social SDK. Rich Presence is controlled by your opt-in below; posting into server channels would still require a separate bot integration."
-        : "Discord Social SDK support is ready. Connect your account to link this local ImageGen profile and enable opt-in Rich Presence.";
+        : `Discord Social SDK support is ready. Connect your account to link this local ${productName()} profile and enable opt-in Rich Presence.`;
     } else if (capabilities.application_id_configured) {
       capabilityText.textContent = "The Discord application is configured; the Discord Social SDK presence helper still needs to be installed. Your sharing choices are already stored locally.";
     } else {
@@ -119,37 +121,57 @@ function renderDiscord(profile) {
   setText("#homeDiscordActivityState", activity.state || "Aggregate stats only");
 
   const refresh = $("#homeDiscordPresenceRefresh");
-  if (refresh) refresh.disabled = !(capabilities.rich_presence_ready && sharing.discord_rich_presence_enabled);
+  if (refresh) {
+    refresh.disabled = !(capabilities.rich_presence_ready && sharing.discord_rich_presence_enabled);
+    setActionIcon(refresh, "refresh", { label: "Refresh Discord Presence", title: "Refresh Discord Presence", replace: true });
+  }
 
   const serverButton = $("#homeDiscordServerButton");
   if (serverButton) {
     const url = capabilities.community_url || "";
     serverButton.disabled = !url;
-    serverButton.textContent = capabilities.invite_configured ? "Join ImageGen Server" : "Open ImageGen Server";
-    serverButton.title = capabilities.invite_configured
-      ? "Open the ImageGen community invite in Discord."
-      : "Open the ImageGen server in Discord. A public invite will replace this link when configured.";
+    const label = capabilities.invite_configured ? `Join ${productName()} Server` : `Open ${productName()} Server`;
+    const title = capabilities.invite_configured
+      ? `Open the ${productName()} community invite in Discord.`
+      : `Open the ${productName()} server in Discord. A public invite will replace this link when configured.`;
+    setActionIcon(serverButton, "external-link", { label, title, replace: true });
   }
 
   const connect = $("#homeDiscordConnectButton");
   if (connect) {
     const ready = Boolean(capabilities.account_linking_ready);
     connect.disabled = !discord.linked && !ready;
-    connect.textContent = discord.linked ? "Disconnect Discord" : "Connect Discord";
-    connect.title = discord.linked
-      ? "Disconnect this local ImageGen profile from Discord."
+    const label = discord.linked ? "Disconnect Discord" : "Connect Discord";
+    const title = discord.linked
+      ? `Disconnect this local ${productName()} profile from Discord.`
       : ready
-        ? "Authorize ImageGen through Discord. The WebUI stores only your public Discord identity, not OAuth tokens."
+        ? `Authorize ${productName()} through Discord. The WebUI stores only your public Discord identity, not OAuth tokens.`
         : capabilities.application_id_configured
-          ? "Install the ImageGen Discord native helper to enable account linking."
-          : "Configure the ImageGen Discord application ID to enable account linking.";
+          ? `Install the ${productName()} Discord native helper to enable account linking.`
+          : `Configure the ${productName()} Discord application ID to enable account linking.`;
+    setActionIcon(connect, "discord", { label, title, replace: true });
   }
+}
+
+function profileGreetingName(profile) {
+  const discord = profile?.discord || {};
+  if (!discord.linked) return "";
+  return String(discord.display_name || discord.username || "").trim().slice(0, 80);
+}
+
+function renderWelcomeGreeting(profile) {
+  const greeting = $("#homeWelcomeGreeting");
+  if (!greeting) return;
+  const name = profileGreetingName(profile);
+  greeting.hidden = !name;
+  greeting.textContent = name ? `Hello, ${name}.` : "";
 }
 
 function renderProfile(profile) {
   currentProfile = profile || {};
   const usage = currentProfile.usage || {};
   const bugs = currentProfile.bugs || {};
+  renderWelcomeGreeting(currentProfile);
 
   setText("#homeProfileInstalledLabel", profileStartLabel(currentProfile.install_date_source));
   setText("#homeProfileInstalledAt", formatDate(currentProfile.installed_at));
@@ -189,10 +211,18 @@ async function saveSharing() {
     const profile = await api.updateProfileSharing(sharingValues());
     renderProfile(profile);
     const presence = profile?.presence_publish || {};
+    if (profile?.presence_diagnostic_created) {
+      window.dispatchEvent(new CustomEvent("image-gen-bug-report-refresh", {
+        detail: { source: "discord_presence", stage: profile.presence_diagnostic_stage || "discord_presence_refresh" },
+      }));
+    }
     if (sharingValues().discord_rich_presence_enabled && presence.state === "discord_application_required") {
-      notify("Discord sharing preference saved. Rich Presence will activate after the ImageGen Discord application is configured.");
-    } else if (sharingValues().discord_rich_presence_enabled && presence.state === "presence_helper_required") {
+      notify(`Discord sharing preference saved. Rich Presence will activate after the ${productName()} Discord application is configured.`);
+    } else if (sharingValues().discord_rich_presence_enabled && ["presence_helper_required", "native_helper_required", "helper_required"].includes(presence.state)) {
       notify("Discord sharing preference saved. Rich Presence will activate after the Social SDK presence helper is installed.");
+    } else if (sharingValues().discord_rich_presence_enabled && !presence.published && profile?.presence_diagnostic_created) {
+      const detail = String(presence.message || "").trim();
+      notify(`Discord sharing was saved, but presence failed: ${presence.state || "unavailable"}.${detail ? ` ${detail}` : ""} A diagnostic was added to Bug Reports.`, "error");
     }
   } catch (error) {
     notify(`Unable to save profile sharing preferences: ${error.message}`, "error");
@@ -217,7 +247,12 @@ async function toggleDiscordConnection() {
   const linked = Boolean(currentProfile?.discord?.linked);
   if (button) {
     button.disabled = true;
-    button.textContent = linked ? "Disconnecting…" : "Waiting for Discord…";
+    button.classList.add("is-working");
+    setActionIcon(button, "discord", {
+      label: linked ? "Disconnecting Discord" : "Waiting for Discord",
+      title: linked ? "Disconnecting Discord…" : "Waiting for Discord…",
+      replace: true,
+    });
   }
   try {
     const profile = linked
@@ -225,21 +260,24 @@ async function toggleDiscordConnection() {
       : await api.connectDiscordProfile();
     renderProfile(profile);
     if (linked) {
-      notify("Discord disconnected from this ImageGen profile.");
+      notify(`Discord disconnected from this ${productName()} profile.`);
     } else {
       const name = profile?.discord?.display_name || profile?.discord?.username || "Discord account";
-      notify(`${name} connected to ImageGen.`);
+      notify(`${name} connected to ${productName()}.`);
     }
   } catch (error) {
     notify(`Unable to ${linked ? "disconnect" : "connect"} Discord: ${error.message}`, "error");
     await refreshProfile();
+  } finally {
+    button?.classList.remove("is-working");
+    renderDiscord(currentProfile || {});
   }
 }
 
 function openDiscordServer() {
   const url = String(currentProfile?.discord_capabilities?.community_url || "");
   if (!url.startsWith("https://discord.com/") && !url.startsWith("https://discord.gg/")) {
-    notify("The ImageGen Discord server link is not configured yet.", "error");
+    notify(`The ${productName()} Discord server link is not configured yet.`, "error");
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
@@ -247,15 +285,31 @@ function openDiscordServer() {
 
 async function refreshPresence() {
   const button = $("#homeDiscordPresenceRefresh");
-  if (button) button.disabled = true;
+  if (button) {
+    button.disabled = true;
+    button.classList.add("is-working");
+  }
   try {
     const result = await api.refreshDiscordPresence();
     renderProfile(result?.profile || currentProfile || {});
     const presence = result?.presence || {};
-    notify(presence.published ? "Discord Rich Presence refreshed." : `Discord presence was not published: ${presence.state || "unavailable"}.`);
+    const state = presence.state || "unavailable";
+    const detail = String(presence.message || "").trim();
+    if (result?.diagnostic_created) {
+      window.dispatchEvent(new CustomEvent("image-gen-bug-report-refresh", {
+        detail: { source: "discord_presence", stage: result.diagnostic_stage || "discord_presence_refresh" },
+      }));
+    }
+    notify(
+      presence.published
+        ? "Discord Rich Presence refreshed."
+        : `Discord presence was not published: ${state}.${detail ? ` ${detail}` : ""}${result?.diagnostic_created ? " A diagnostic was added to Bug Reports." : ""}`,
+      presence.published ? undefined : "error",
+    );
   } catch (error) {
     notify(`Unable to refresh Discord presence: ${error.message}`, "error");
   } finally {
+    button?.classList.remove("is-working");
     renderDiscord(currentProfile || {});
   }
 }

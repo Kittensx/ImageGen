@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -1011,9 +1013,9 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
                 manifest = loaded
                 metadata_source = "png_manifest"
             else:
-                warnings.append("The embedded IMAGE_GEN manifest was not an object and was skipped.")
+                warnings.append(f"The embedded {PRODUCT_NAME} manifest was not an object and was skipped.")
         except json.JSONDecodeError as exc:
-            warnings.append(f"The embedded IMAGE_GEN manifest was invalid JSON: {exc}")
+            warnings.append(f"The embedded {PRODUCT_NAME} manifest was invalid JSON: {exc}")
 
     if manifest is None and image_info.get("parameters"):
         manifest = parse_a1111_parameters(str(image_info["parameters"]))

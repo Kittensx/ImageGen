@@ -16,7 +16,88 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>IMAGE_GEN REGION Builder</title>
+  <script>
+    (() => {
+      const doc = document.documentElement;
+      const THEME_STORAGE_KEY = "image-gen.theme-palette.v1";
+      const FONT_STACKS = {
+        "Inter": 'Inter, "Segoe UI", Arial, sans-serif',
+        "System UI": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        "Segoe UI": '"Segoe UI", Arial, sans-serif',
+        "Arial": 'Arial, Helvetica, sans-serif',
+        "Verdana": 'Verdana, Geneva, sans-serif',
+        "Tahoma": 'Tahoma, Geneva, sans-serif',
+        "Trebuchet MS": '"Trebuchet MS", Arial, sans-serif',
+        "Georgia": 'Georgia, "Times New Roman", serif',
+        "Monospace": 'Consolas, "SFMono-Regular", monospace',
+      };
+      const normalizeHex = (value, fallback) => {
+        const text = String(value || "").trim();
+        const short = /^#?([0-9a-f]{3})$/i.exec(text);
+        if (short) return `#${short[1].split("").map((item) => item + item).join("")}`.toLowerCase();
+        const full = /^#?([0-9a-f]{6})$/i.exec(text);
+        return full ? `#${full[1].toLowerCase()}` : fallback;
+      };
+      const hexToRgb = (hex) => {
+        const value = normalizeHex(hex, "#000000").slice(1);
+        return {
+          r: Number.parseInt(value.slice(0, 2), 16),
+          g: Number.parseInt(value.slice(2, 4), 16),
+          b: Number.parseInt(value.slice(4, 6), 16),
+        };
+      };
+      const rgbToHex = (rgb) => {
+        const channel = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+        return `#${channel(rgb.r)}${channel(rgb.g)}${channel(rgb.b)}`;
+      };
+      const mixHex = (source, target, targetWeight) => {
+        const left = hexToRgb(source);
+        const right = hexToRgb(target);
+        const weight = Math.max(0, Math.min(1, Number(targetWeight) || 0));
+        return rgbToHex({
+          r: left.r + ((right.r - left.r) * weight),
+          g: left.g + ((right.g - left.g) * weight),
+          b: left.b + ((right.b - left.b) * weight),
+        });
+      };
+      try {
+        const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const accent = normalizeHex(parsed?.accent?.color, "#179ee7");
+          const surface = normalizeHex(parsed?.surface?.color, "#111d29");
+          const fontFamily = Object.prototype.hasOwnProperty.call(FONT_STACKS, parsed?.typography?.font_family)
+            ? parsed.typography.font_family
+            : "Inter";
+          const primaryButtonText = normalizeHex(parsed?.typography?.primary_button_text, "#ffffff");
+          const secondaryButtonText = normalizeHex(parsed?.typography?.secondary_button_text, "#d5f1ff");
+          const root = doc.style;
+          root.setProperty("--sky-50", mixHex(accent, "#ffffff", 0.92));
+          root.setProperty("--sky-100", mixHex(accent, "#ffffff", 0.82));
+          root.setProperty("--sky-200", mixHex(accent, "#ffffff", 0.62));
+          root.setProperty("--sky-300", mixHex(accent, "#ffffff", 0.38));
+          root.setProperty("--sky-400", mixHex(accent, "#ffffff", 0.18));
+          root.setProperty("--sky-500", accent);
+          root.setProperty("--sky-600", mixHex(accent, "#000000", 0.18));
+          root.setProperty("--charcoal-950", mixHex(surface, "#000000", 0.48));
+          root.setProperty("--charcoal-900", mixHex(surface, "#000000", 0.24));
+          root.setProperty("--charcoal-850", surface);
+          root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
+          root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
+          root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+          root.setProperty("--font-ui", FONT_STACKS[fontFamily]);
+          root.setProperty("--primary-button-text", primaryButtonText);
+          root.setProperty("--secondary-button-text", secondaryButtonText);
+          doc.dataset.themePrepaint = "cached-inline";
+        }
+      } catch (_error) {
+        doc.dataset.themePrepaint = "cache-error";
+      }
+    })();
+  </script>
+  <script src="/assets/js/theme-runtime.js?v=theme-prepaint1"></script>
+  <script>window.ImageGenThemeRuntime?.applyCached();</script>
+  <title>REGION Builder</title>
   <link rel="stylesheet" href="/assets/css/tokens.css">
   <link rel="stylesheet" href="/assets/css/region-builder/base.css?v=0.1.66-rb3">
   <link rel="stylesheet" href="/assets/css/region-builder/layout.css?v=0.1.66-rb3">
@@ -32,7 +113,7 @@
   <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=shared-sidebar-r2"></div>
   <div class="container">
 <div class="header">
-<h1>IMAGE_GEN REGION <small>SuperHybrid builder · native model-output backend</small></h1>
+<h1><span data-product-name></span> REGION <small>SuperHybrid builder · native model-output backend</small></h1>
 <div class="header-actions header-controls">
 <label class="compact-label">Resolution</label>
 <input class="resolution-input" id="resW" max="2048" min="64" onchange="onResChange()" step="8" type="number" value="512"/>
@@ -283,7 +364,7 @@
 <div class="global-row">
 <label class="global-label">Backend</label>
 <select class="global-control" id="backendSelect" onchange="rebuild()">
-<option selected="" value="latent">IMAGE_GEN native model-output blend</option>
+<option selected="" value="latent" data-product-name-template="{product} native model-output blend">Native model-output blend</option>
 </select>
 </div>
 <div class="global-row">
@@ -315,7 +396,7 @@
 <h3>Generated Prompt</h3>
 <textarea class="preview-box" id="promptText" oninput="onRawEdit()" placeholder="REGION{...}" spellcheck="false"></textarea>
 <div class="preview-actions">
-<button class="btn-copy apply-imagegen-button" onclick="applyToImageGen()">Apply to IMAGE_GEN</button>
+<button class="btn-copy apply-imagegen-button" onclick="applyToImageGen()" data-product-name-template="Apply to {product}">Apply to application</button>
 <button class="btn-copy" onclick="copyPrompt()">Copy</button>
 <button class="btn-copy copy-canvas-button" onclick="copyWithCanvas()">Copy w/ Canvas</button>
 <button class="btn-import" onclick="importPrompt()">← Import</button>

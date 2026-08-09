@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 PRODUCT_NAME = "ImageGen"
+BRAND_MARK_ASSET = "/assets/css/assets/imagegen-logo.png"
+BRAND_WORDMARK_ASSET = "/assets/css/assets/imagegen-with-logo2.png"
 APPLICATION_VERSION = "0.1.0-alpha.1"
 RELEASE_CHANNEL = "alpha"
 METADATA_SCHEMA_VERSION = "1"
@@ -117,6 +119,10 @@ def build_program_metadata(project_root: str | Path | None = None) -> dict[str, 
     build = resolve_build_identity(project_root)
     return {
         "name": PRODUCT_NAME,
+        "branding": {
+            "mark_asset": BRAND_MARK_ASSET,
+            "wordmark_asset": BRAND_WORDMARK_ASSET,
+        },
         "version": APPLICATION_VERSION,
         "release_channel": RELEASE_CHANNEL,
         "metadata_schema_version": METADATA_SCHEMA_VERSION,
@@ -130,6 +136,8 @@ __all__ = [
     "ALPHA_BASELINE_COMMIT_SHORT",
     "ALPHA_BASELINE_LABEL",
     "APPLICATION_VERSION",
+    "BRAND_MARK_ASSET",
+    "BRAND_WORDMARK_ASSET",
     "METADATA_SCHEMA_VERSION",
     "PRODUCT_NAME",
     "RELEASE_CHANNEL",

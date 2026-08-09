@@ -151,14 +151,34 @@ function shapePlacement(baseWidth, baseHeight, targetWidth, targetHeight, anchor
   return { x, y, maxX, maxY };
 }
 
-function syncShapeSquareTarget() {
-  if (($("#outpaintShapeTargetMode")?.value || "square") !== "square") return;
-  const baseWidth = Number($("#width")?.value || 0);
-  const baseHeight = Number($("#height")?.value || 0);
-  const side = Math.max(baseWidth, baseHeight);
-  if (side < 1) return;
-  if ($("#outpaintShapeTargetWidth")) $("#outpaintShapeTargetWidth").value = String(side);
-  if ($("#outpaintShapeTargetHeight")) $("#outpaintShapeTargetHeight").value = String(side);
+function alignShapeDimension(value) {
+  return Math.max(64, Math.ceil(Number(value || 0) / 8) * 8);
+}
+
+function syncShapeTargetForMode() {
+  const mode = $("#outpaintShapeTargetMode")?.value || "square";
+  if (mode === "custom") return;
+  const baseWidth = alignShapeDimension($("#width")?.value || 0);
+  const baseHeight = alignShapeDimension($("#height")?.value || 0);
+  const widthInput = $("#outpaintShapeTargetWidth");
+  const heightInput = $("#outpaintShapeTargetHeight");
+  if (!widthInput || !heightInput) return;
+
+  let targetWidth = alignShapeDimension(widthInput.value || baseWidth);
+  let targetHeight = alignShapeDimension(heightInput.value || baseHeight);
+  if (mode === "square") {
+    const side = alignShapeDimension(Math.max(baseWidth, baseHeight));
+    targetWidth = side;
+    targetHeight = side;
+  } else if (mode === "landscape") {
+    targetHeight = alignShapeDimension(Math.max(baseHeight, targetHeight));
+    targetWidth = alignShapeDimension(Math.max(baseWidth, targetWidth, targetHeight + 8));
+  } else if (mode === "portrait") {
+    targetWidth = alignShapeDimension(Math.max(baseWidth, targetWidth));
+    targetHeight = alignShapeDimension(Math.max(baseHeight, targetHeight, targetWidth + 8));
+  }
+  widthInput.value = String(targetWidth);
+  heightInput.value = String(targetHeight);
 }
 
 function renderShapeExpansionStatus() {
@@ -174,9 +194,20 @@ function renderShapeExpansionStatus() {
   const bh = Number($("#height")?.value || 0);
   const tw = Number($("#outpaintShapeTargetWidth")?.value || 0);
   const th = Number($("#outpaintShapeTargetHeight")?.value || 0);
+  const mode = $("#outpaintShapeTargetMode")?.value || "square";
   const anchor = $("#outpaintShapeAnchor")?.value || "center";
   if (tw < bw || th < bh || tw < 1 || th < 1) {
     status.textContent = `Target ${tw}x${th} must contain the full ${bw}x${bh} base generation.`;
+    status.className = "field-status error";
+    return;
+  }
+  if ((mode === "square" && tw !== th) || (mode === "landscape" && tw <= th) || (mode === "portrait" && th <= tw)) {
+    status.textContent = `${mode[0].toUpperCase()}${mode.slice(1)} target ${tw}x${th} does not match the selected shape.`;
+    status.className = "field-status error";
+    return;
+  }
+  if (tw % 8 !== 0 || th % 8 !== 0) {
+    status.textContent = `Target ${tw}x${th} must use dimensions divisible by 8.`;
     status.className = "field-status error";
     return;
   }
@@ -326,12 +357,12 @@ export function bindOutpaintPrototype(saveSessionSoon = () => {}) {
   if (shapeEnabled) {
     shapeEnabled.addEventListener("change", () => {
       enforceShapeExpansionExclusivity();
-      if (shapeEnabled.checked) syncShapeSquareTarget();
+      if (shapeEnabled.checked) syncShapeTargetForMode();
       renderShapeExpansionStatus();
       saveSessionSoon();
     });
     $("#outpaintShapeTargetMode")?.addEventListener("change", () => {
-      syncShapeSquareTarget();
+      syncShapeTargetForMode();
       renderShapeExpansionStatus();
       saveSessionSoon();
     });
@@ -341,7 +372,7 @@ export function bindOutpaintPrototype(saveSessionSoon = () => {}) {
       "#outpaintShapePromptMode", "#outpaintShapeDenoisingStrength", "#outpaintShapeSaveBase",
     ].forEach((selector) => {
       $(selector)?.addEventListener("change", () => {
-        if (selector === "#width" || selector === "#height") syncShapeSquareTarget();
+        if (selector === "#width" || selector === "#height") syncShapeTargetForMode();
         renderShapeExpansionStatus();
         saveSessionSoon();
       });

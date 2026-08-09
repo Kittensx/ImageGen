@@ -1,4 +1,4 @@
-"""Local, source-readable IMAGE_GEN WebUI.
+"""Local, source-readable ImageGen WebUI.
 
 ``create_app`` is loaded lazily so ``image_gen.webui.server`` can establish
 process-start CUDA allocator settings before the WebUI job modules import

@@ -1,4 +1,5 @@
 import { $ } from "../utils.js";
+import { productName } from "../branding.js?v=brand1";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 
 function formatBytes(value) {
@@ -223,7 +224,7 @@ export function renderRuntimeStartupStatus(status) {
       : pendingBlocked
         ? "A saved runtime override is blocked until configuration is corrected."
         : restartRequired
-          ? "Runtime settings have changed and require a full IMAGE_GEN restart."
+          ? `${productName()} runtime settings have changed and require a full restart.`
           : "Process-start runtime settings are active.",
     detail: status?.message || (restartSettings.length ? `Restart settings: ${restartSettings.join(", ")}.` : `Attention backend: ${requested} → ${effective}.`),
     facts: {

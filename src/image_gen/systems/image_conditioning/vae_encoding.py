@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import hashlib
 import json
 import math
@@ -109,7 +111,7 @@ def _resolve_backend(vae: Any) -> _VAEBackend:
 
     if not isinstance(vae, torch.nn.Module):
         raise TypeError(
-            "vae must be a torch.nn.Module or an IMAGE_GEN-compatible VAE execution owner."
+            f"vae must be a torch.nn.Module or a {PRODUCT_NAME}-compatible VAE execution owner."
         )
     return _VAEBackend(
         owner=VAEExecutionController(vae),
@@ -220,7 +222,7 @@ def _validate_source(image: torch.Tensor, *, channel_order: str) -> None:
     maximum = float(image.detach().amax().cpu())
     if minimum < 0.0 or maximum > 1.0:
         raise ValueError(
-            "VAE sampling encode expects IMAGE_GEN RGB values in [0, 1]; "
+            f"VAE sampling encode expects {PRODUCT_NAME} RGB values in [0, 1]; "
             f"received range [{minimum:.8g}, {maximum:.8g}]."
         )
 

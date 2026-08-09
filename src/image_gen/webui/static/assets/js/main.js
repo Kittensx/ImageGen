@@ -1,4 +1,5 @@
 import { loadFragments } from "./fragments.js";
+import { configureBranding, productName } from "./branding.js?v=brand1";
 
 import { api } from "./api.js?v=civitai-connect1";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
@@ -19,9 +20,12 @@ import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
 import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=civitai-connect1";
 import { bindLoraWorkspace } from "./features/loras.js?v=civitai-connect1";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
-import { bindHomeWorkspace } from "./features/home.js?v=home-profile-icons1";
-import { bindBugReporter } from "./features/bug-reports.js?v=bug-reporter1";
-import { bindImageGenProfile } from "./features/profile.js?v=home-profile-icons1";
+import { bindHomeWorkspace } from "./features/home.js?v=home-shell1";
+import { bindHomeComponents } from "./features/home-components.js?v=featured-shell1";
+import { bindWorkspaceManager } from "./features/workspace-manager.js?v=workspace-manager1";
+import { bindChangelog } from "./features/changelog.js?v=home-shell1";
+import { bindBugReporter } from "./features/bug-reports.js?v=home-shell1";
+import { bindImageGenProfile } from "./features/profile.js?v=home-shell1";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
 import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
@@ -418,7 +422,7 @@ async function enrichSelectedVaeFromCivitai() {
   }
   const record = state.vaes.find((item) => normalizedModelPath(item.path) === normalizedModelPath(select.value));
   if (!record?.asset_id) {
-    notify("The selected VAE is not registered in the IMAGE_GEN asset catalog. Refresh models and try again.", "warning");
+    notify(`The selected VAE is not registered in the ${productName()} asset catalog. Refresh models and try again.`, "warning");
     return;
   }
   const previousTitle = button?.title || "Refresh selected VAE metadata from CivitAI";
@@ -817,7 +821,7 @@ function waitForBackendRestart(previousInstanceId, timeoutMs = 120000) {
 
 async function reloadWorkspace() {
   const accepted = window.confirm(
-    "Restart the IMAGE_GEN WebUI backend?\n\n"
+    `Restart the ${productName()} WebUI backend?\n\n`
       + "This stops active and queued generation work, recreates the Python backend process, and reloads all modules and startup-only settings. "
       + "The browser tab will remain open and reconnect automatically.",
   );
@@ -852,6 +856,7 @@ async function start() {
     await loadFragments();
     enforceExactDimensionInputs();
     const bootstrap = await api.bootstrap();
+    configureBranding(bootstrap.application || {});
     state.bootstrap = bootstrap;
     state.settings = bootstrap.settings || {};
     state.activeModel = bootstrap.active_model || null;
@@ -885,6 +890,7 @@ async function start() {
     await refreshAdvancedEditors({ preservePresetSelection: true });
     renderModelArchitectureStatus(state.activeModel);
     const workspaceLayout = bindWorkspaceLayout(bootstrap.settings || {});
+    bindHomeComponents(document);
     initResponsiveActionBars(document);
     const defaultAssetsController = bindDefaultAssets(bootstrap.default_assets || {});
     const promptLoraSync = bindPromptLoraSync({ defaultAssetsController });
@@ -919,11 +925,13 @@ async function start() {
       showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
     });
     workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace });
+    bindWorkspaceManager();
     bindHomeWorkspace({
       models: state.models,
       vaes: state.vaes,
       loras: state.loras,
     });
+    bindChangelog();
     bindBugReporter();
     bindImageGenProfile();
     window.addEventListener("image-gen-active-prompt-assets-updated", saveSessionSoon);

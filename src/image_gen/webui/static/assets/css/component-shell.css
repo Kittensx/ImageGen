@@ -1,0 +1,460 @@
+/* Reusable workspace component shell. Feature modules own their data; this
+   shell owns component identity, compact states, actions and extensible slots. */
+.component-shell {
+  --component-shell-side-span: 2;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.component-shell__header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.component-shell__identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.component-shell__icon {
+  --ui-icon-size: 18px;
+  color: var(--sky-300);
+}
+
+.component-shell__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.component-shell__variant-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--sky-300) 52%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sky-700) 32%, var(--charcoal-900));
+  color: var(--sky-200);
+  font-size: 0.61rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.component-shell__variant-badge[hidden] {
+  display: none !important;
+}
+
+/* Featured is a semantic shell variant, not a Home-only card style. Any
+   registered workspace component can opt in without changing its feature code. */
+.component-shell--variant-featured {
+  position: relative;
+  isolation: isolate;
+  border-color: color-mix(in srgb, var(--sky-300) 58%, var(--line)) !important;
+  background:
+    radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--sky-500) 22%, transparent), transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--charcoal-800) 82%, var(--sky-800) 18%), var(--charcoal-900)) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sky-400) 18%, transparent),
+    0 18px 42px color-mix(in srgb, #000 42%, transparent),
+    0 0 28px color-mix(in srgb, var(--sky-500) 13%, transparent) !important;
+}
+
+.component-shell--variant-featured::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: var(--radius-large) 0 0 var(--radius-large);
+  background: linear-gradient(180deg, var(--sky-300), var(--sky-600));
+}
+
+.component-shell--variant-featured .component-shell__icon {
+  color: var(--sky-200);
+}
+
+.component-shell--variant-featured .component-shell__title {
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.component-shell--variant-featured.component-shell--summary,
+.component-shell--variant-featured.component-shell--collapsed,
+.component-shell--variant-featured.component-shell--side {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sky-400) 16%, transparent),
+    0 10px 24px color-mix(in srgb, #000 34%, transparent) !important;
+}
+
+.component-shell__actions {
+  margin-left: auto;
+  min-width: 72px;
+  flex: 0 1 auto !important;
+}
+
+.component-shell__actions .ui-action-button {
+  --ui-action-size: 29px;
+  --ui-icon-size: 15px;
+}
+
+.component-shell__body {
+  min-width: 0;
+}
+
+.component-shell__body[hidden] {
+  display: none !important;
+}
+
+.component-shell__summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.component-shell__summary[hidden] {
+  display: none !important;
+}
+
+.component-shell__summary-item {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.component-shell__summary-item strong {
+  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+  font-size: 0.63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.component-shell--summary .component-shell__header,
+.component-shell--collapsed .component-shell__header,
+.component-shell--side .component-shell__header {
+  margin-bottom: 0;
+}
+
+.component-shell--summary .component-shell__header {
+  margin-bottom: 7px;
+}
+
+.component-shell--collapsed,
+.component-shell--side {
+  overflow: visible;
+}
+
+.home-component-grid > .component-shell--side {
+  --home-component-span: var(--component-shell-side-span);
+  align-self: start;
+  padding: 9px;
+}
+
+.component-shell--side .component-shell__header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.component-shell--side .component-shell__identity {
+  max-width: 100%;
+}
+
+.component-shell--side .component-shell__actions {
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+}
+
+.component-shell--side .ui-action-bar__primary {
+  justify-content: flex-start;
+}
+
+.component-shell--error {
+  border-color: color-mix(in srgb, #ff7777 58%, var(--line));
+}
+
+.component-shell__registry-error {
+  margin: 10px 0 0;
+  color: #ffb0b0;
+  font-size: 0.72rem;
+}
+
+.component-shell-field {
+  min-width: 0;
+}
+
+.component-shell-field--text {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.component-shell-field--image {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.component-shell-media-frame {
+  --component-shell-image-fit: contain;
+  --component-shell-image-position: center;
+  --component-shell-image-padding: 8px;
+  --component-shell-image-min-height: 120px;
+  --component-shell-image-height: 220px;
+  --component-shell-image-max-height: 420px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: clamp(
+    var(--component-shell-image-min-height),
+    var(--component-shell-image-height),
+    var(--component-shell-image-max-height)
+  );
+  box-sizing: border-box;
+  overflow: hidden;
+  place-items: center;
+  padding: var(--component-shell-image-padding);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 78%, transparent);
+}
+
+.component-shell-media-frame--plain {
+  border-color: transparent;
+  background: transparent;
+}
+
+.component-shell-media-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+  object-fit: var(--component-shell-image-fit);
+  object-position: var(--component-shell-image-position);
+}
+
+.component-shell-media-link {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  border-radius: inherit;
+  color: inherit;
+  text-decoration: none;
+}
+
+.component-shell-media-link:focus-visible {
+  outline: 2px solid var(--sky-300);
+  outline-offset: 3px;
+}
+
+.component-shell-media-link .component-shell-media-image {
+  width: 100%;
+  height: 100%;
+}
+
+/* Alpha-aware contrast assistance. drop-shadow follows transparent image pixels,
+   so outlines trace logos, glyphs, and wordmarks rather than the PNG rectangle. */
+.component-shell-media-frame[data-component-image-contrast="soft"] .component-shell-media-image {
+  filter:
+    drop-shadow(0 0 1px color-mix(in srgb, var(--text) 42%, transparent))
+    drop-shadow(0 4px 10px rgba(0, 0, 0, 0.22));
+}
+
+.component-shell-media-frame[data-component-image-contrast="outline"] .component-shell-media-image {
+  filter:
+    drop-shadow(1px 0 0 color-mix(in srgb, var(--text) 54%, transparent))
+    drop-shadow(-1px 0 0 color-mix(in srgb, var(--text) 54%, transparent))
+    drop-shadow(0 1px 0 color-mix(in srgb, var(--text) 54%, transparent))
+    drop-shadow(0 -1px 0 color-mix(in srgb, var(--text) 54%, transparent))
+    drop-shadow(0 4px 10px rgba(0, 0, 0, 0.24));
+}
+
+.component-shell-media-frame[data-component-image-contrast="plate"] {
+  position: relative;
+  isolation: isolate;
+}
+
+.component-shell-media-frame[data-component-image-contrast="plate"]::before {
+  content: "";
+  position: absolute;
+  inset: max(6px, var(--component-shell-image-padding));
+  z-index: -1;
+  border-radius: calc(var(--radius) - 2px);
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--text) 12%, transparent),
+    color-mix(in srgb, var(--charcoal-950) 8%, transparent) 60%,
+    transparent 82%
+  );
+}
+
+.component-shell-media-frame[data-component-image-contrast="plate"] .component-shell-media-image {
+  filter:
+    drop-shadow(0 0 1px color-mix(in srgb, var(--text) 38%, transparent))
+    drop-shadow(0 4px 12px rgba(0, 0, 0, 0.22));
+}
+
+.component-shell-image-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.component-shell-links,
+.component-shell-attachments {
+  display: grid;
+  gap: 7px;
+}
+
+.component-shell-link {
+  color: var(--sky-300);
+}
+
+.component-shell-attachment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+}
+
+.component-shell-attachment__copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.component-shell-attachment__copy small {
+  color: var(--muted);
+}
+
+.component-shell-metadata {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 7px;
+  margin: 0;
+}
+
+.component-shell-metadata__item {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: var(--radius);
+}
+
+.component-shell-metadata dt {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.component-shell-metadata dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.component-shell-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.component-shell-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 72%, transparent);
+}
+
+.component-shell-card__body {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+
+@media (max-width: 760px) {
+  .home-component-grid > .component-shell--side {
+    --home-component-span: 12;
+    padding: 10px 12px;
+  }
+
+  .component-shell--side .component-shell__header {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .component-shell--side .component-shell__actions {
+    width: auto;
+    margin-left: auto;
+  }
+}
+
+.component-markdown-reader {
+  width: min(980px, calc(100vw - 36px));
+  max-width: 980px;
+  max-height: min(88vh, 920px);
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--sky-400) 34%, var(--line));
+  border-radius: var(--radius-large);
+  background: var(--charcoal-900);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+}
+
+.component-markdown-reader::backdrop {
+  background: rgba(4, 11, 18, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.component-markdown-reader__shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: min(88vh, 920px);
+}
+
+.component-markdown-reader__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.component-markdown-reader__header h3 {
+  margin: 2px 0 0;
+}
+
+.component-markdown-reader__header small {
+  color: var(--muted);
+}
+
+.component-markdown-reader__actions {
+  display: flex;
+  gap: 6px;
+}

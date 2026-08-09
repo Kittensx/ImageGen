@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+from image_gen.program_metadata import PRODUCT_NAME
 from image_gen.runtime_options import (
     add_runtime_startup_arguments,
     argv_for_primary_parser,
@@ -22,7 +23,7 @@ DEFAULT_PORT_SEARCH_LIMIT = 100
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the local IMAGE_GEN WebUI")
+    parser = argparse.ArgumentParser(description=f"Run the local {PRODUCT_NAME} WebUI")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
@@ -266,7 +267,7 @@ def main() -> None:
                 "restart_file": str(args.restart_file) if args.restart_file else None,
             },
         )
-        print(f"IMAGE_GEN WebUI startup failed: {exc}", flush=True)
+        print(f"{PRODUCT_NAME} WebUI startup failed: {exc}", flush=True)
         print(f"Diagnostic bundle: {bundle}", flush=True)
         print(f"(failure bundle: {bundle})", flush=True)
         raise
@@ -282,7 +283,7 @@ def development_app():
             stage="development_startup",
             error=exc,
         )
-        print(f"IMAGE_GEN development WebUI failed (failure bundle: {bundle})", flush=True)
+        print(f"{PRODUCT_NAME} development WebUI failed (failure bundle: {bundle})", flush=True)
         raise
 
 

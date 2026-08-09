@@ -31,6 +31,7 @@ from image_gen.systems.outpainting import (
     OUTPAINT_PROMPT_MODES,
     OUTPAINT_SHAPE_TARGET_MODES,
     OUTPAINT_SOURCE_HANDOFF_MODES,
+    resolve_outpaint_shape_target,
     extract_outpaint_failure_stage,
     outpaint_failure_label,
 )
@@ -485,6 +486,17 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
             and not normalized["outpaint_shape_overlay_positive_prompt"]
         ):
             raise ValueError("Extension prompt only requires an extension prompt.")
+        shape_target = resolve_outpaint_shape_target(
+            base_width=int(normalized.get("width") or 0),
+            base_height=int(normalized.get("height") or 0),
+            target_mode=normalized["outpaint_shape_target_mode"],
+            target_width=int(normalized["outpaint_shape_target_width"] or 0),
+            target_height=int(normalized["outpaint_shape_target_height"] or 0),
+        )
+        normalized["outpaint_shape_base_width"] = int(shape_target["base_width"])
+        normalized["outpaint_shape_base_height"] = int(shape_target["base_height"])
+        normalized["outpaint_shape_target_width"] = int(shape_target["target_width"])
+        normalized["outpaint_shape_target_height"] = int(shape_target["target_height"])
     if normalized["outpaint_prototype_enabled"]:
         if normalized["hires_enabled"]:
             raise ValueError("Existing-image expansion cannot run with hires enabled.")

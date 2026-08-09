@@ -1,4 +1,5 @@
 import { api } from "../api.js?v=bug-reporter1";
+import { productName } from "../branding.js?v=brand1";
 import { $ , notify } from "../utils.js";
 
 const GITHUB_SYNC_INTERVAL_MS = 30 * 60 * 1000;
@@ -41,6 +42,7 @@ function renderHomeProfile(payload) {
   setText("#homeBugResolvedCount", profile.resolved || 0);
   setText("#homeBugResolutionRate", percent(profile.resolution_rate));
   setText("#homeBugPendingCount", profile.pending || 0);
+  setText("#homeBugNeedsReproductionCount", profile.needs_reproduction || 0);
 
   const syncStatus = $("#homeBugSyncStatus");
   if (syncStatus) {
@@ -68,6 +70,15 @@ function reportStatus(report, githubReady) {
   }
   if (!report.local_artifact_present) {
     return { label: "History", className: "" };
+  }
+  if (report.requires_reproduction) {
+    return { label: "Needs current-build reproduction", className: "is-pending" };
+  }
+  if (report.classification === "validation_event") {
+    return { label: "Validation event · Review only", className: "is-known" };
+  }
+  if (report.classification === "wrapper_failure") {
+    return { label: "Wrapper · Review underlying failure", className: "is-known" };
   }
   if (!githubReady) {
     return { label: "Awaiting duplicate check", className: "is-pending" };
@@ -110,7 +121,7 @@ async function revealBundle(report) {
 async function openIssue(report) {
   const popup = window.open("about:blank", "_blank");
   if (!popup) {
-    notify("The browser blocked the GitHub issue window. Allow popups for the local IMAGE_GEN WebUI and try again.", "error");
+    notify(`The browser blocked the GitHub issue window. Allow popups for the local ${productName()} WebUI and try again.`, "error");
     return;
   }
   popup.document.title = "Opening GitHub issue…";
@@ -160,6 +171,17 @@ function buildReportCard(report, githubReady) {
   error.textContent = report.error_message || "No error message was recorded.";
   card.append(error);
 
+  if (!report.reportable && report.review_note) {
+    const review = document.createElement("div");
+    review.className = "bug-report-notice";
+    const strong = document.createElement("strong");
+    strong.textContent = report.requires_reproduction ? "Reproduction required" : "Local review only";
+    const detail = document.createElement("span");
+    detail.textContent = report.review_note;
+    review.append(strong, detail);
+    card.append(review);
+  }
+
   if (report.compact_bundle) {
     const compact = document.createElement("div");
     compact.className = "bug-report-notice";
@@ -199,10 +221,10 @@ function buildReportCard(report, githubReady) {
   const knownIssue = report.github_issue || {};
   if (report.github_match === "known_issue" || report.github_match === "local_report") {
     if (knownIssue.url) actions.append(makeLink(`Open GitHub #${knownIssue.number || ""}`, knownIssue.url, "primary-button"));
-  } else if (report.local_artifact_present) {
+  } else if (report.local_artifact_present && report.reportable) {
     const submit = makeButton("Open GitHub Issue", "primary-button");
     submit.disabled = !githubReady || !report.bundle_within_github_limit;
-    if (!githubReady) submit.title = "IMAGE_GEN must check GitHub for an existing fingerprint before creating a new issue.";
+    if (!githubReady) submit.title = `${productName()} must check GitHub for an existing fingerprint before creating a new issue.`;
     if (!report.bundle_within_github_limit) submit.title = "The prepared ZIP is still larger than GitHub's attachment limit.";
     submit.addEventListener("click", () => openIssue(report));
     actions.append(submit);
@@ -312,6 +334,9 @@ export function bindBugReporter() {
   $("#closeBugReportDialog")?.addEventListener("click", () => $("#bugReportDialog")?.close());
   $("#bugReportDialog")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) event.currentTarget.close();
+  });
+  window.addEventListener("image-gen-bug-report-refresh", () => {
+    loadLocalReports({ renderDialogAfter: Boolean($("#bugReportDialog")?.open) });
   });
 
   loadLocalReports().then(() => syncGithub());

@@ -1,6 +1,6 @@
 import { $ } from "../utils.js";
 
-const WORKSPACES = new Set(["home", "generation", "checkpoints", "loras"]);
+const WORKSPACES = new Set(["home", "generation", "checkpoints", "loras", "workspace-manager"]);
 
 /*
  * Historical filename retained for compatibility. Workspace switching is no
@@ -12,6 +12,7 @@ export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
   const generation = $("#workspace");
   const checkpoints = $("#checkpointWorkspace");
   const loras = $("#loraWorkspace");
+  const workspaceManager = $("#workspaceManagerWorkspace");
 
   const legacyTabs = {
     generation: $("#generationWorkspaceTab"),
@@ -25,6 +26,7 @@ export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
     generation?.classList.toggle("is-hidden", target !== "generation");
     checkpoints?.classList.toggle("is-hidden", target !== "checkpoints");
     loras?.classList.toggle("is-hidden", target !== "loras");
+    workspaceManager?.classList.toggle("is-hidden", target !== "workspace-manager");
 
     Object.entries(legacyTabs).forEach(([key, tab]) => {
       const active = key === target;
@@ -56,5 +58,6 @@ export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
     showGeneration: () => activate("generation"),
     showCheckpoints: () => activate("checkpoints"),
     showLoras: () => activate("loras"),
+    showWorkspaceManager: () => activate("workspace-manager"),
   };
 }

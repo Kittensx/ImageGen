@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import argparse
 import ctypes
 import json
@@ -269,7 +271,7 @@ def add_runtime_startup_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=None,
         help=(
-            "Use IMAGE_GEN-owned overlap-add tiled VAE encode/decode. This does not "
+            f"Use {PRODUCT_NAME}-owned overlap-add tiled VAE encode/decode. This does not "
             "call nonexistent Diffusers tiling methods on the custom LDM VAE."
         ),
     )
@@ -278,7 +280,7 @@ def add_runtime_startup_arguments(parser: argparse.ArgumentParser) -> None:
         dest="vae_tiling",
         action="store_false",
         default=None,
-        help="Disable IMAGE_GEN-owned tiled VAE encode/decode.",
+        help=f"Disable {PRODUCT_NAME}-owned tiled VAE encode/decode.",
     )
     vae_slicing_group = memory_group.add_mutually_exclusive_group()
     vae_slicing_group.add_argument(

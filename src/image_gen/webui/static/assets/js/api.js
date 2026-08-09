@@ -76,6 +76,8 @@ function encodeOutputPath(outputId) {
 export const api = {
   bootstrap: () => request("/api/bootstrap"),
   health: () => request("/api/health"),
+  changelog: () => request("/api/changelog"),
+  changelogEntry: (entryDate) => request(`/api/changelog/${encodeURIComponent(entryDate)}`),
   profile: () => request("/api/profile"),
   updateProfileSharing: (values = {}) => request("/api/profile/sharing", {
     method: "PATCH",

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from image_gen.program_metadata import APPLICATION_VERSION
+from image_gen.program_metadata import APPLICATION_VERSION, PRODUCT_NAME
 from image_gen.webui.discord_native import DiscordNativeBridge
 
 
@@ -295,10 +295,10 @@ class ImageGenProfileService:
             "schema": DISCORD_ACTIVITY_SCHEMA,
             "enabled": bool(sharing.get("discord_rich_presence_enabled", False)),
             "activity_type": "playing",
-            "details": "Currently using ImageGen",
+            "details": f"Currently using {PRODUCT_NAME}",
             "state": " · ".join(state_bits),
             "large_image_key": "imagegen",
-            "large_image_text": "ImageGen",
+            "large_image_text": PRODUCT_NAME,
             "privacy": "aggregate_stats_only",
         }
 

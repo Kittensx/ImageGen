@@ -1,0 +1,32 @@
+<main class="workspace-manager-workspace is-hidden" id="workspaceManagerWorkspace" aria-label="Workspace Manager">
+  <section class="workspace-manager-panel">
+    <header class="workspace-manager-header">
+      <div class="workspace-manager-title-row">
+        <span class="ui-icon workspace-manager-title-icon" data-icon="workspace-manager" aria-hidden="true"></span>
+        <div>
+          <span class="home-eyebrow">Workspace configuration</span>
+          <h2>Workspace Manager</h2>
+        </div>
+      </div>
+      <p>Arrange registered components, show compatible hidden components, choose their width and shell presentation, and save the layout for that workspace.</p>
+    </header>
+
+    <div class="workspace-manager-toolbar">
+      <label>
+        <span>Workspace</span>
+        <select id="workspaceManagerPageSelect" aria-label="Workspace to manage"></select>
+      </label>
+      <div class="workspace-manager-toolbar-actions">
+        <button class="ui-action-button ui-icon-control" id="workspaceManagerOpenPage" type="button" aria-label="Open selected workspace" title="Open selected workspace">
+          <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
+        </button>
+        <button class="ui-action-button ui-icon-control" id="workspaceManagerReset" type="button" aria-label="Reset selected workspace layout" title="Reset selected workspace layout">
+          <span class="ui-icon" data-icon="reset" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="workspace-manager-summary" id="workspaceManagerSummary" role="status">Loading registered workspaces…</div>
+    <div class="workspace-manager-component-list" id="workspaceManagerComponentList" aria-live="polite"></div>
+  </section>
+</main>

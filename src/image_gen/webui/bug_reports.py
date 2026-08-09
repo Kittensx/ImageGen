@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from image_gen.program_metadata import APPLICATION_VERSION, build_program_metadata
+from image_gen.program_metadata import APPLICATION_VERSION, PRODUCT_NAME, build_program_metadata
 
 
 BUG_REPORT_SCHEMA = "image-gen-bug-report-v1"
@@ -286,6 +286,49 @@ class BugReportService:
         fingerprint = hashlib.sha256(
             json.dumps(signature, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         ).hexdigest()
+
+        has_application_metadata = bool(application and version.casefold() != "unknown")
+        has_request_payload = (directory / "request.json").is_file() or bool(
+            report.get("submitted_payload") if isinstance(report, dict) else {}
+        )
+        if kind == "generation" and has_request_payload and traceback_text:
+            evidence_quality = "full"
+        elif has_request_payload and traceback_text:
+            evidence_quality = "standard"
+        else:
+            evidence_quality = "limited"
+
+        classification = "failure"
+        reportable = True
+        requires_reproduction = False
+        review_note = "Diagnostic evidence is current enough for normal review."
+        if (
+            kind == "webui"
+            and error_type.casefold() == "valueerror"
+            and operation.casefold() in {"scheduler_prequeue_validation", "job_submission_validation"}
+        ):
+            classification = "validation_event"
+            reportable = False
+            review_note = (
+                "This is an expected request-validation rejection, not an unhandled application failure. "
+                "Keep it for local review; report the UI path that produced the invalid request instead."
+            )
+        elif kind == "webui" and "(failure bundle:" in error_message.casefold():
+            classification = "wrapper_failure"
+            reportable = False
+            review_note = (
+                "This WebUI failure wraps a lower-level diagnostic bundle. Review/report the underlying "
+                "generation or model-loading failure instead of creating a duplicate issue."
+            )
+        elif not has_application_metadata:
+            classification = "legacy_failure"
+            reportable = False
+            requires_reproduction = True
+            review_note = (
+                "This diagnostic predates application version/build capture. Reproduce it on the current "
+                "build before opening a GitHub issue so already-fixed failures are not resurfaced."
+            )
+
         return {
             "fingerprint": fingerprint,
             "source_path": str(directory),
@@ -302,6 +345,12 @@ class BugReportService:
             "build": build_display,
             "created_at": created_at,
             "modified_ns": directory.stat().st_mtime_ns,
+            "evidence_quality": evidence_quality,
+            "classification": classification,
+            "reportable": reportable,
+            "requires_reproduction": requires_reproduction,
+            "review_note": review_note,
+            "captured_application_metadata": has_application_metadata,
         }
 
     def discover(self) -> list[dict[str, Any]]:
@@ -373,6 +422,14 @@ class BugReportService:
                 "policy": "Highest application version wins; ties prefer the newest occurrence.",
                 "occurrences": list(candidate.get("occurrences") or []),
             },
+            "review": {
+                "classification": candidate.get("classification"),
+                "evidence_quality": candidate.get("evidence_quality"),
+                "reportable": bool(candidate.get("reportable", True)),
+                "requires_reproduction": bool(candidate.get("requires_reproduction", False)),
+                "note": candidate.get("review_note"),
+            },
+            "reporter_application": build_program_metadata(self.project_root),
             "privacy": {
                 "redaction_applied": True,
                 "notes": [
@@ -540,12 +597,14 @@ class BugReportService:
         frame_text = "\n".join(f"- `{frame}`" for frame in frames) if frames else "- No normalized Python frames were available."
         message = _redact_text(str(candidate.get("error_message") or ""), self.project_root)
         return (
-            "## ImageGen automated bug report\n\n"
-            "> This issue was prepared locally by ImageGen and reviewed by the user before submission.\n\n"
-            f"**Latest affected ImageGen version:** `{candidate.get('version') or 'unknown'}`\n\n"
+            f"## {PRODUCT_NAME} automated bug report\n\n"
+            f"> This issue was prepared locally by {PRODUCT_NAME} and reviewed by the user before submission.\n\n"
+            f"**Latest affected {PRODUCT_NAME} version:** `{candidate.get('version') or 'unknown'}`\n\n"
             f"**Build:** `{candidate.get('build') or 'unknown'}`\n\n"
             f"**Failure area:** `{candidate.get('stage') or candidate.get('component') or 'unknown'}`\n\n"
             f"**Exception:** `{candidate.get('error_type') or 'Error'}`\n\n"
+            f"**Diagnostic evidence:** `{candidate.get('evidence_quality') or 'unknown'}`\n\n"
+            f"**Local review:** {_redact_text(str(candidate.get('review_note') or ''), self.project_root)}\n\n"
             "### Error\n\n"
             f"```text\n{message[:4000]}\n```\n\n"
             "### Deduplication\n\n"
@@ -595,6 +654,13 @@ class BugReportService:
                     "version": candidate.get("version"),
                     "build": candidate.get("build"),
                     "created_at": candidate.get("created_at"),
+                    "evidence_quality": candidate.get("evidence_quality"),
+                    "classification": candidate.get("classification"),
+                    "reportable": bool(candidate.get("reportable", True)),
+                    "requires_reproduction": bool(candidate.get("requires_reproduction", False)),
+                    "review_note": candidate.get("review_note"),
+                    "captured_application_metadata": bool(candidate.get("captured_application_metadata", False)),
+                    "reporter_application": build_program_metadata(self.project_root),
                     "occurrence_count": len(candidate.get("occurrences") or []),
                     "occurrences": candidate.get("occurrences") or [],
                     "versions_seen": candidate.get("versions_seen") or [],
@@ -627,7 +693,7 @@ class BugReportService:
             headers={
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": f"ImageGen-BugReporter/{APPLICATION_VERSION}",
+                "User-Agent": f"{PRODUCT_NAME}-BugReporter/{APPLICATION_VERSION}",
             },
         )
         with urllib.request.urlopen(request, timeout=8) as response:
@@ -743,6 +809,11 @@ class BugReportService:
         if not isinstance(record, dict):
             raise KeyError("Bug report not found.")
 
+        if not bool(record.get("reportable", True)):
+            raise BugReportError(
+                str(record.get("review_note") or "This local diagnostic is not eligible for direct GitHub submission.")
+            )
+
         # A previously synchronized match is authoritative enough to reuse.
         if record.get("github_match") in {"known_issue", "local_report"} and record.get("github_issue"):
             return {
@@ -760,7 +831,7 @@ class BugReportService:
         except (BugReportError, OSError, TimeoutError, ValueError, urllib.error.URLError, urllib.error.HTTPError) as exc:
             raise BugReportError(
                 "GitHub could not be checked for an existing copy of this bug. "
-                "IMAGE_GEN will not open a new issue until duplicate verification succeeds."
+                f"{PRODUCT_NAME} will not open a new issue until duplicate verification succeeds."
             ) from exc
 
         matches: list[dict[str, Any]] = []
@@ -864,7 +935,17 @@ class BugReportService:
         pending = [
             item for item in reports
             if item.get("local_artifact_present")
+            and bool(item.get("reportable", True))
             and item.get("github_match") not in {"known_issue", "local_report"}
+        ]
+        needs_reproduction = [
+            item for item in reports
+            if item.get("local_artifact_present") and item.get("requires_reproduction")
+        ]
+        review_only = [
+            item for item in reports
+            if item.get("local_artifact_present") and not bool(item.get("reportable", True))
+            and not item.get("requires_reproduction")
         ]
         total_reported = len(confirmed)
         resolution_rate = (len(resolved) / total_reported) if total_reported else 0.0
@@ -893,6 +974,8 @@ class BugReportService:
                 "resolution_rate": resolution_rate,
                 "known_existing": len(known_existing),
                 "pending": len(pending),
+                "needs_reproduction": len(needs_reproduction),
+                "review_only": len(review_only),
             },
             "reports": public_reports,
         }

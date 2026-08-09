@@ -10,6 +10,8 @@ from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 
 DEFAULT_IMAGEGEN_DISCORD_GUILD_ID = "1535734882494316746"
 DISCORD_CONFIG_SCHEMA = "image-gen-discord-integration-v1"
@@ -95,7 +97,7 @@ class DiscordNativeBridge:
             url,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "ImageGen-WebUI Discord-Community-Status",
+                "User-Agent": f"{PRODUCT_NAME}-WebUI Discord-Community-Status",
             },
         )
         try:
@@ -113,7 +115,7 @@ class DiscordNativeBridge:
                 "ok": True,
                 "state": "ready",
                 "guild_id": self.guild_id,
-                "server_name": str(payload.get("name") or "ImageGen")[:120],
+                "server_name": str(payload.get("name") or PRODUCT_NAME)[:120],
                 "online_count": online_count,
                 "community_url": self.invite_url or self.server_url,
                 "privacy": "count_only",

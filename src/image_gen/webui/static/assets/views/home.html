@@ -1,186 +1,282 @@
-<main class="home-workspace" id="homeWorkspace" data-active-workspace="home" aria-label="IMAGE_GEN Home">
+<main class="home-workspace" id="homeWorkspace" data-active-workspace="home" aria-label="Home" data-product-aria-template="{product} Home">
   <div class="home-component-grid" id="homeComponentGrid" data-workspace-page="home">
-    <section class="home-component home-hero" data-workspace-component="home.welcome" data-component-variant="feature" data-component-span="12">
-      <div class="home-hero-copy">
-        <span class="home-eyebrow">IMAGE_GEN</span>
-        <h2>Welcome to your workspace</h2>
-        <p>Start a generation, manage your local assets, or continue configuring IMAGE_GEN. Home is designed to grow with optional cards for recent work, developer updates, system status, and the tools you use most.</p>
-      </div>
-      <button class="primary-button home-primary-action" id="homePrimaryAction" type="button">Open Generation</button>
-    </section>
-
-    <section class="home-component home-readiness" id="homeReadinessComponent" data-workspace-component="home.readiness" data-component-variant="standard" data-component-span="7">
-      <div class="home-component-heading">
-        <div>
-          <span class="home-eyebrow">Start here</span>
-          <h3 id="homeReadinessTitle">Checking your local assets…</h3>
+    <section class="home-component home-hero" data-workspace-component="home.welcome" data-component-shell data-component-variant="featured" data-component-span="12">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="home" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Welcome</strong>
         </div>
-        <span class="home-status-pill" id="homeReadinessBadge">Checking</span>
-      </div>
-      <p class="home-component-copy" id="homeReadinessMessage">IMAGE_GEN is checking whether a checkpoint is available for generation.</p>
-      <div class="home-asset-summary" aria-label="Installed asset summary">
-        <div><strong id="homeCheckpointCount">0</strong><span>Checkpoints</span></div>
-        <div><strong id="homeVaeCount">0</strong><span>VAEs</span></div>
-        <div><strong id="homeLoraCount">0</strong><span>LoRAs</span></div>
-      </div>
-    </section>
-
-    <section class="home-component" data-workspace-component="home.quick-launch" data-component-variant="standard" data-component-span="5">
-      <div class="home-component-heading">
-        <div>
-          <span class="home-eyebrow">Quick launch</span>
-          <h3>Go directly to a working page</h3>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Welcome actions">
+          <button class="ui-action-button ui-icon-control" id="homePrimaryAction" type="button" aria-label="Open Generation" title="Open Generation" data-action-priority="90">
+            <span class="ui-icon" data-icon="generate" aria-hidden="true"></span>
+          </button>
         </div>
-      </div>
-      <div class="home-quick-launch" role="group" aria-label="Quick launch">
-        <button class="home-launch-button ui-icon-control" id="homeQuickGeneration" type="button">
-          <span class="home-launch-icon ui-icon" data-icon="generate" aria-hidden="true"></span>
-          <span class="home-launch-copy"><strong>Generation</strong><span>txt2img controls and queue</span></span>
-        </button>
-        <button class="home-launch-button ui-icon-control" id="homeQuickCheckpoints" type="button">
-          <span class="home-launch-icon ui-icon" data-icon="models" aria-hidden="true"></span>
-          <span class="home-launch-copy"><strong>Checkpoints</strong><span>Browse and activate models</span></span>
-        </button>
-        <button class="home-launch-button ui-icon-control" id="homeQuickLoras" type="button">
-          <span class="home-launch-icon ui-icon" data-icon="loras" aria-hidden="true"></span>
-          <span class="home-launch-copy"><strong>LoRAs</strong><span>Browse and manage LoRAs</span></span>
-        </button>
-        <a class="home-launch-button ui-icon-control" id="homeQuickRegion" href="/region-builder.html">
-          <span class="home-launch-icon ui-icon" data-icon="region-outpaint" aria-hidden="true"></span>
-          <span class="home-launch-copy"><strong>Region / Outpaint</strong><span>Open the REGION editor</span></span>
-        </a>
-        <button class="home-launch-button ui-icon-control" id="homeQuickSettings" type="button">
-          <span class="home-launch-icon ui-icon" data-icon="settings" aria-hidden="true"></span>
-          <span class="home-launch-copy"><strong>Settings</strong><span>WebUI and runtime settings</span></span>
-        </button>
+      </header>
+      <div class="component-shell__body home-hero-body" data-component-shell-body>
+        <figure class="home-brand-wordmark component-shell-media-frame component-shell-media-frame--plain" data-component-image-contrast="outline" aria-label="Application logo" data-product-aria-template="{product} logo">
+          <img class="component-shell-media-image" src="/assets/css/assets/imagegen-with-logo2.png" data-product-brand-asset="wordmark" alt="Application logo" data-product-alt-template="{product} logo" decoding="async">
+        </figure>
+        <div class="home-hero-copy">
+          <span class="home-eyebrow" data-product-name></span>
+          <p class="home-personal-greeting" id="homeWelcomeGreeting" hidden></p>
+          <h2>Welcome to your workspace</h2>
+          <p data-product-name-template="Start a generation, manage your local assets, or continue configuring {product}. Home is designed to grow with optional cards for recent work, developer updates, system status, and the tools you use most.">Start a generation, manage your local assets, or continue configuring the application.</p>
+        </div>
       </div>
     </section>
 
-    <section class="home-component home-profile" id="homeProfileComponent" data-workspace-component="home.profile" data-component-variant="feature" data-component-span="12">
-      <div class="home-component-heading home-profile-heading">
-        <div>
-          <span class="home-eyebrow">Your ImageGen profile</span>
-          <h3>Usage, contributions & community</h3>
+    <section class="home-component home-readiness" id="homeReadinessComponent" data-workspace-component="home.readiness" data-component-shell data-component-variant="standard" data-component-span="4">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="info" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Readiness</strong>
         </div>
-        <div class="home-profile-badges" aria-label="Profile badges">
-          <span class="home-status-pill" id="homeProfileInstallBadge">Local profile</span>
-          <span class="home-status-pill home-contributor-badge" id="homeBugReporterBadge">Bug Reporter · 0</span>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Readiness actions"></div>
+      </header>
+      <div class="component-shell__body" data-component-shell-body>
+        <div class="home-component-heading">
+          <div>
+            <span class="home-eyebrow">Start here</span>
+            <h3 id="homeReadinessTitle">Checking your local assets…</h3>
+          </div>
+          <span class="home-status-pill" id="homeReadinessBadge">Checking</span>
         </div>
-      </div>
-      <p class="home-component-copy">A privacy-safe profile for this ImageGen installation. It tracks aggregate usage and contribution milestones only; prompts, generated images, filenames, and image contents are never part of the public/shareable profile.</p>
-
-      <div class="home-profile-layout">
-        <div class="home-profile-main">
-          <div class="home-profile-identity" aria-label="Installation profile">
-            <div>
-              <span class="home-profile-label" id="homeProfileInstalledLabel">Profile started</span>
-              <strong id="homeProfileInstalledAt">—</strong>
-              <small id="homeProfileInstalledFor">First profile load pending</small>
-            </div>
-            <div>
-              <span class="home-profile-label">ImageGen version</span>
-              <strong id="homeProfileVersion">—</strong>
-              <small id="homeProfileFirstVersion">First seen version —</small>
-            </div>
-            <div>
-              <span class="home-profile-label">Discord</span>
-              <strong id="homeProfileDiscordState">Not connected</strong>
-              <small id="homeProfileDiscordServerState">Server membership not linked</small>
-            </div>
-          </div>
-
-          <div class="home-profile-metrics" aria-label="ImageGen profile statistics">
-            <div class="home-profile-primary-stat">
-              <strong id="homeProfileImagesCreated">0</strong>
-              <span>Images created</span>
-            </div>
-            <div><strong id="homeBugReportedCount">0</strong><span>Bugs reported</span></div>
-            <div><strong id="homeBugResolvedCount">0</strong><span>Bugs resolved</span></div>
-            <div><strong id="homeBugOpenCount">0</strong><span>Bugs open</span></div>
-            <div><strong id="homeBugResolutionRate">0%</strong><span>Resolution rate</span></div>
-            <div><strong id="homeBugPendingCount">0</strong><span>Pending review</span></div>
-          </div>
-
-          <div class="home-component-actions home-profile-actions">
-            <button class="primary-button" id="homeReviewBugReports" type="button">Review Bug Reports</button>
-            <button class="secondary-button" id="homeSyncBugReports" type="button">Refresh GitHub Status</button>
-            <span class="home-bug-sync-status" id="homeBugSyncStatus">Local reports not scanned yet.</span>
-          </div>
+        <p class="home-component-copy" id="homeReadinessMessage" data-product-name-template="{product} is checking whether a checkpoint is available for generation.">Checking whether a checkpoint is available for generation.</p>
+        <div class="home-asset-summary" aria-label="Installed asset summary">
+          <div><strong id="homeCheckpointCount">0</strong><span>Checkpoints</span></div>
+          <div><strong id="homeVaeCount">0</strong><span>VAEs</span></div>
+          <div><strong id="homeLoraCount">0</strong><span>LoRAs</span></div>
         </div>
-
-        <aside class="home-profile-discord" aria-label="Discord profile sharing">
-          <div class="home-profile-discord-heading">
-            <div>
-              <span class="home-eyebrow">Discord sharing</span>
-              <h4>Community presence</h4>
-            </div>
-            <span class="home-status-pill" id="homeDiscordCapabilityBadge">Setup pending</span>
-          </div>
-          <p id="homeDiscordCapabilityText">Connect this ImageGen installation to your Discord account. Account identity is stored locally; OAuth access and refresh tokens are never stored by the WebUI.</p>
-
-          <div class="home-discord-community-status" id="homeDiscordCommunityStatus" aria-live="polite">
-            <span class="home-discord-online-dot" id="homeDiscordOnlineDot" aria-hidden="true"></span>
-            <div>
-              <span class="home-profile-label">ImageGen community</span>
-              <strong id="homeDiscordOnlineCount">Checking members online...</strong>
-              <small id="homeDiscordOnlinePrivacy">Only the server total is displayed; member names are not shown.</small>
-            </div>
-          </div>
-
-          <label class="home-profile-toggle">
-            <input id="homeDiscordPresenceEnabled" type="checkbox">
-            <span><strong>Show “Currently using ImageGen”</strong><small>Opt in to Discord Rich Presence while ImageGen is running.</small></span>
-          </label>
-          <label class="home-profile-toggle">
-            <input id="homeDiscordIntroEnabled" type="checkbox">
-            <span><strong>Share my intro profile on the server</strong><small>Let the future ImageGen bot post one privacy-safe first-impression card after your linked account joins.</small></span>
-          </label>
-
-          <details class="home-profile-sharing-details">
-            <summary>Choose stats I can share</summary>
-            <p class="home-profile-sharing-note">Only aggregate profile statistics are eligible for Discord sharing. Prompts, filenames, image contents, and local paths stay private.</p>
-            <div class="home-profile-sharing-options">
-              <label class="home-profile-sharing-option">
-                <span class="home-share-icon ui-icon" data-icon="home-install-date" aria-hidden="true"></span>
-                <span class="home-share-copy"><strong>Profile start date</strong><small>Share when this local ImageGen profile began.</small></span>
-                <input id="homeShareInstallDate" type="checkbox">
-              </label>
-              <label class="home-profile-sharing-option">
-                <span class="home-share-icon ui-icon" data-icon="home-images-created" aria-hidden="true"></span>
-                <span class="home-share-copy"><strong>Images created</strong><small>Share only the lifetime generated-image count.</small></span>
-                <input id="homeShareImageCount" type="checkbox">
-              </label>
-              <label class="home-profile-sharing-option">
-                <span class="home-share-icon ui-icon" data-icon="home-bug-contribution" aria-hidden="true"></span>
-                <span class="home-share-copy"><strong>Bug contribution stats</strong><small>Share aggregate reported, open, and resolved counts.</small></span>
-                <input id="homeShareBugStats" type="checkbox">
-              </label>
-            </div>
-          </details>
-
-          <div class="home-profile-discord-preview" id="homeDiscordPreview">
-            <span>Discord activity preview</span>
-            <strong>Currently using ImageGen</strong>
-            <small id="homeDiscordActivityState">Aggregate stats only</small>
-          </div>
-
-          <div class="home-component-actions">
-            <button class="secondary-button" id="homeDiscordConnectButton" type="button">Connect Discord</button>
-            <button class="secondary-button" id="homeDiscordServerButton" type="button">Open ImageGen Server</button>
-            <button class="secondary-button" id="homeDiscordPresenceRefresh" type="button" disabled>Refresh Presence</button>
-          </div>
-        </aside>
       </div>
     </section>
 
-    <section class="home-component" data-workspace-component="home.developer-updates" data-component-variant="horizontal" data-component-span="12">
-      <div class="home-component-heading">
-        <div>
-          <span class="home-eyebrow">Developer updates</span>
-          <h3>Changelog component reserved</h3>
+    <section class="home-component" data-workspace-component="home.quick-launch" data-workspace-default-visible="false" data-component-shell data-component-variant="standard" data-component-span="5" hidden>
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="generate" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Quick launch</strong>
+        </div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Quick launch component actions"></div>
+      </header>
+      <div class="component-shell__body" data-component-shell-body>
+        <div class="home-component-heading">
+          <div>
+            <span class="home-eyebrow">Quick launch</span>
+            <h3>Go directly to a working page</h3>
+          </div>
+        </div>
+        <div class="home-quick-launch ui-action-bar" role="group" aria-label="Quick launch" data-action-bar data-action-bar-align="start" data-action-bar-overflow-label="More destinations">
+          <button class="ui-action-button ui-icon-control" id="homeQuickGeneration" type="button" aria-label="Open Generation" title="Open Generation" data-action-priority="100">
+            <span class="ui-icon" data-icon="generate" aria-hidden="true"></span>
+          </button>
+          <button class="ui-action-button ui-icon-control" id="homeQuickCheckpoints" type="button" aria-label="Open Checkpoints" title="Open Checkpoints" data-action-priority="90">
+            <span class="ui-icon" data-icon="models" aria-hidden="true"></span>
+          </button>
+          <button class="ui-action-button ui-icon-control" id="homeQuickLoras" type="button" aria-label="Open LoRAs" title="Open LoRAs" data-action-priority="80">
+            <span class="ui-icon" data-icon="loras" aria-hidden="true"></span>
+          </button>
+          <a class="ui-action-button ui-icon-control" id="homeQuickRegion" href="/region-builder.html" aria-label="Open Region and Outpaint editor" title="Open Region and Outpaint editor" data-action-priority="70">
+            <span class="ui-icon" data-icon="region-outpaint" aria-hidden="true"></span>
+          </a>
+          <button class="ui-action-button ui-icon-control" id="homeQuickSettings" type="button" aria-label="Open Settings" title="Open Settings" data-action-priority="60">
+            <span class="ui-icon" data-icon="settings" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
-      <p class="home-component-copy">Release notes and developer changelog entries will appear here once the local changelog feed is connected.</p>
+    </section>
+
+    <section class="home-component home-profile" id="homeProfileComponent" data-workspace-component="home.profile" data-component-shell data-component-variant="feature" data-component-span="4">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="home-bug-contribution" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title data-product-name-template="{product} profile">Profile</strong>
+        </div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Profile actions">
+          <button class="ui-action-button ui-icon-control" id="homeReviewBugReports" type="button" aria-label="Review Bug Reports" title="Review Bug Reports" data-action-priority="90">
+            <span class="ui-icon" data-icon="diagnostics" aria-hidden="true"></span>
+          </button>
+          <button class="ui-action-button ui-icon-control" id="homeSyncBugReports" type="button" aria-label="Refresh GitHub Status" title="Refresh GitHub Status" data-action-priority="80">
+            <span class="ui-icon" data-icon="refresh" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+      <div class="component-shell__summary home-profile-summary" data-component-shell-summary hidden aria-label="Profile summary">
+        <span class="component-shell__summary-item"><strong>Started</strong><span data-component-summary-source="#homeProfileInstalledAt">—</span></span>
+        <span class="component-shell__summary-item"><strong>Version</strong><span data-component-summary-source="#homeProfileVersion">—</span></span>
+        <span class="component-shell__summary-item"><strong>Discord</strong><span data-component-summary-source="#homeProfileDiscordState">Not connected</span></span>
+        <span class="component-shell__summary-item"><strong>Images</strong><span data-component-summary-source="#homeProfileImagesCreated">0</span></span>
+        <span class="component-shell__summary-item"><strong>Reported</strong><span data-component-summary-source="#homeBugReportedCount">0</span></span>
+        <span class="component-shell__summary-item"><strong>Open</strong><span data-component-summary-source="#homeBugOpenCount">0</span></span>
+        <span class="component-shell__summary-item"><strong>Pending</strong><span data-component-summary-source="#homeBugPendingCount">0</span></span>
+      </div>
+      <div class="component-shell__body home-profile-main" data-component-shell-body>
+        <div class="home-component-heading home-profile-heading">
+          <div>
+            <span class="home-eyebrow" data-product-name-template="Your {product} profile">Your profile</span>
+            <h3>Usage & contributions</h3>
+          </div>
+          <div class="home-profile-badges" aria-label="Profile badges">
+            <span class="home-status-pill" id="homeProfileInstallBadge">Local profile</span>
+            <span class="home-status-pill home-contributor-badge" id="homeBugReporterBadge">Bug Reporter · 0</span>
+          </div>
+        </div>
+        <p class="home-component-copy" data-product-name-template="A privacy-safe profile for this {product} installation. It tracks aggregate usage and contribution milestones only; prompts, generated images, filenames, and image contents are never part of the public/shareable profile.">A privacy-safe profile for this installation.</p>
+
+        <div class="home-profile-identity" aria-label="Installation profile">
+          <div>
+            <span class="home-profile-label" id="homeProfileInstalledLabel">Profile started</span>
+            <strong id="homeProfileInstalledAt">—</strong>
+            <small id="homeProfileInstalledFor">First profile load pending</small>
+          </div>
+          <div>
+            <span class="home-profile-label" data-product-name-template="{product} version">Application version</span>
+            <strong id="homeProfileVersion">—</strong>
+            <small id="homeProfileFirstVersion">First seen version —</small>
+          </div>
+          <div>
+            <span class="home-profile-label">Discord</span>
+            <strong id="homeProfileDiscordState">Not connected</strong>
+            <small id="homeProfileDiscordServerState">Server membership not linked</small>
+          </div>
+        </div>
+
+        <div class="home-profile-metrics" aria-label="Profile statistics" data-product-aria-template="{product} profile statistics">
+          <div class="home-profile-primary-stat"><strong id="homeProfileImagesCreated">0</strong><span>Images created</span></div>
+          <div><strong id="homeBugReportedCount">0</strong><span>Bugs reported</span></div>
+          <div><strong id="homeBugResolvedCount">0</strong><span>Bugs resolved</span></div>
+          <div><strong id="homeBugOpenCount">0</strong><span>Bugs open</span></div>
+          <div><strong id="homeBugResolutionRate">0%</strong><span>Resolution rate</span></div>
+          <div><strong id="homeBugPendingCount">0</strong><span>Pending review</span></div>
+          <div><strong id="homeBugNeedsReproductionCount">0</strong><span>Needs reproduction</span></div>
+        </div>
+        <div class="home-bug-sync-status" id="homeBugSyncStatus">Local reports not scanned yet.</div>
+      </div>
+    </section>
+
+    <section class="home-component home-discord" id="homeDiscordComponent" data-workspace-component="home.discord" data-component-shell data-component-variant="feature" data-component-span="4">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="discord" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Discord</strong>
+        </div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Discord actions">
+          <button class="ui-action-button ui-icon-control" id="homeDiscordConnectButton" type="button" aria-label="Connect Discord" title="Connect Discord" data-action-priority="90">
+            <span class="ui-icon" data-icon="discord" aria-hidden="true"></span>
+          </button>
+          <button class="ui-action-button ui-icon-control" id="homeDiscordServerButton" type="button" aria-label="Open community server" title="Open community server" data-product-aria-template="Open {product} Server" data-product-title-template="Open {product} Server" data-action-priority="80">
+            <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
+          </button>
+          <button class="ui-action-button ui-icon-control" id="homeDiscordPresenceRefresh" type="button" aria-label="Refresh Discord Presence" title="Refresh Discord Presence" data-action-priority="70" disabled>
+            <span class="ui-icon" data-icon="refresh" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+      <div class="component-shell__body home-profile-discord" data-component-shell-body aria-label="Discord profile sharing">
+        <div class="home-profile-discord-heading">
+          <div>
+            <span class="home-eyebrow">Discord sharing</span>
+            <h4>Community presence</h4>
+          </div>
+          <span class="home-status-pill" id="homeDiscordCapabilityBadge">Setup pending</span>
+        </div>
+        <p id="homeDiscordCapabilityText" data-product-name-template="Connect this {product} installation to your Discord account. Account identity is stored locally; OAuth access and refresh tokens are never stored by the WebUI.">Connect this installation to your Discord account.</p>
+
+        <div class="home-discord-community-status" id="homeDiscordCommunityStatus" aria-live="polite">
+          <span class="home-discord-online-dot" id="homeDiscordOnlineDot" aria-hidden="true"></span>
+          <div>
+            <span class="home-profile-label" data-product-name-template="{product} community">Community</span>
+            <strong id="homeDiscordOnlineCount">Checking members online...</strong>
+            <small id="homeDiscordOnlinePrivacy">Only the server total is displayed; member names are not shown.</small>
+          </div>
+        </div>
+
+        <label class="home-profile-toggle">
+          <input id="homeDiscordPresenceEnabled" type="checkbox">
+          <span><strong data-product-name-template="Show “Currently using {product}”">Show Rich Presence</strong><small data-product-name-template="Opt in to Discord Rich Presence while {product} is running.">Opt in to Discord Rich Presence while the application is running.</small></span>
+        </label>
+        <label class="home-profile-toggle">
+          <input id="homeDiscordIntroEnabled" type="checkbox">
+          <span><strong>Share my intro profile on the server</strong><small data-product-name-template="Let the future {product} bot post one privacy-safe first-impression card after your linked account joins.">Let the future community bot post one privacy-safe first-impression card after your linked account joins.</small></span>
+        </label>
+
+        <details class="home-profile-sharing-details">
+          <summary>Choose stats I can share</summary>
+          <p class="home-profile-sharing-note">Only aggregate profile statistics are eligible for Discord sharing. Prompts, filenames, image contents, and local paths stay private.</p>
+          <div class="home-profile-sharing-options">
+            <label class="home-profile-sharing-option">
+              <span class="home-share-icon ui-icon" data-icon="home-install-date" aria-hidden="true"></span>
+              <span class="home-share-copy"><strong>Profile start date</strong><small data-product-name-template="Share when this local {product} profile began.">Share when this local profile began.</small></span>
+              <input id="homeShareInstallDate" type="checkbox">
+            </label>
+            <label class="home-profile-sharing-option">
+              <span class="home-share-icon ui-icon" data-icon="home-images-created" aria-hidden="true"></span>
+              <span class="home-share-copy"><strong>Images created</strong><small>Share only the lifetime generated-image count.</small></span>
+              <input id="homeShareImageCount" type="checkbox">
+            </label>
+            <label class="home-profile-sharing-option">
+              <span class="home-share-icon ui-icon" data-icon="home-bug-contribution" aria-hidden="true"></span>
+              <span class="home-share-copy"><strong>Bug contribution stats</strong><small>Share aggregate reported, open, and resolved counts.</small></span>
+              <input id="homeShareBugStats" type="checkbox">
+            </label>
+          </div>
+        </details>
+
+        <div class="home-profile-discord-preview" id="homeDiscordPreview">
+          <span>Discord activity preview</span>
+          <strong data-product-name-template="Currently using {product}">Currently using the application</strong>
+          <small id="homeDiscordActivityState">Aggregate stats only</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-component home-changelog" data-workspace-component="home.developer-updates" data-component-shell data-home-section="changelog" data-component-variant="horizontal" data-component-span="12">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="external-link" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Changelog</strong>
+        </div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Changelog actions">
+          <a class="ui-action-button ui-icon-control" id="homeChangelogGitHub" href="https://github.com/Kittensx/ImageGen/tree/main/changelog" target="_blank" rel="noopener noreferrer" aria-label="Open Changelog on GitHub" title="Open Changelog on GitHub" data-action-priority="90">
+            <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
+          </a>
+          <button class="ui-action-button ui-icon-control" id="homeChangelogViewAll" type="button" aria-label="View all changelog entries" title="View all changelog entries" aria-expanded="false" hidden data-action-priority="80">
+            <span class="ui-icon" data-icon="chevron-down" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+      <div class="component-shell__body" data-component-shell-body>
+        <div class="home-component-heading home-changelog-heading">
+          <div>
+            <span class="home-eyebrow">Developer updates</span>
+            <h3>Changelog</h3>
+          </div>
+        </div>
+        <p class="home-component-copy" data-product-name-template="Read the latest {product} development notes. New entries appear first; older entries stay collapsed until you choose View all.">Read the latest development notes.</p>
+        <div class="home-changelog-list" id="homeChangelogList" aria-live="polite">
+          <p class="home-changelog-empty">Loading changelog entries...</p>
+        </div>
+        <div class="home-changelog-footer"><span class="home-changelog-status" id="homeChangelogStatus">Checking for developer updates...</span></div>
+      </div>
+
+      <dialog class="home-changelog-reader" id="homeChangelogReader" aria-labelledby="homeChangelogReaderTitle">
+        <div class="home-changelog-reader-shell">
+          <header class="home-changelog-reader-header">
+            <div>
+              <span class="home-eyebrow" id="homeChangelogReaderDate">Changelog</span>
+              <h3 id="homeChangelogReaderTitle" data-product-name-template="{product} update">Application update</h3>
+            </div>
+            <div class="home-changelog-reader-actions ui-action-bar" data-action-bar data-action-bar-overflow-label="Changelog reader actions">
+              <a class="ui-action-button ui-icon-control" id="homeChangelogReaderSource" href="https://github.com/Kittensx/ImageGen/tree/main/changelog" target="_blank" rel="noopener noreferrer" aria-label="View changelog source" title="View changelog source" hidden>
+                <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
+              </a>
+              <button class="ui-action-button ui-icon-control" id="homeChangelogReaderClose" type="button" aria-label="Close changelog reader" title="Close changelog reader">
+                <span class="ui-icon" data-icon="close" aria-hidden="true"></span>
+              </button>
+            </div>
+          </header>
+          <article class="home-markdown-reader" id="homeChangelogMarkdown" tabindex="0"></article>
+        </div>
+      </dialog>
     </section>
   </div>
 </main>

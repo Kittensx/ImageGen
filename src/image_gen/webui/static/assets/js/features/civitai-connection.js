@@ -1,4 +1,5 @@
 import { api } from "../api.js?v=civitai-connect1";
+import { productName } from "../branding.js?v=brand1";
 import { $, notify } from "../utils.js";
 
 const STATUS_ICON = Object.freeze({
@@ -61,7 +62,7 @@ function renderStatus(status = {}, { overrideState = "", overrideMessage = "" } 
   if (input) {
     input.disabled = externallyManaged;
     input.placeholder = externallyManaged
-      ? "Credential file is managed outside the IMAGE_GEN project"
+      ? `${productName()} credential file is managed outside the project`
       : "Paste your CivitAI API key";
   }
   if (save) save.disabled = externallyManaged;
@@ -69,7 +70,7 @@ function renderStatus(status = {}, { overrideState = "", overrideMessage = "" } 
   if (managedNote) {
     managedNote.hidden = !externallyManaged;
     managedNote.textContent = externallyManaged
-      ? "This IMAGE_GEN instance is configured to use a credential file outside the project. For safety, the WebUI will not overwrite that external file."
+      ? `${productName()} is configured to use a credential file outside the project. For safety, the WebUI will not overwrite that external file.`
       : "";
   }
 }
@@ -118,7 +119,7 @@ async function saveCredential() {
     try {
       await api.testCivitaiConnection();
       renderStatus(status, { overrideState: "healthy", overrideMessage: "Connected and verified." });
-      notify("CivitAI connected. The API key was saved to the local IMAGE_GEN secrets folder.", "success");
+      notify(`CivitAI connected. The API key was saved to the local ${productName()} secrets folder.`, "success");
     } catch (error) {
       renderStatus(status, { overrideState: "warning", overrideMessage: "Credential saved, but CivitAI could not be verified right now." });
       notify(`CivitAI key saved, but connection verification failed: ${error.message}`, "warning");
@@ -137,7 +138,7 @@ async function removeCredential() {
   try {
     const status = await api.removeCivitaiCredential();
     renderStatus(status);
-    notify("CivitAI credential removed from this IMAGE_GEN project.");
+    notify(`CivitAI credential removed from this ${productName()} project.`);
   } catch (error) {
     notify(error.message, "error");
   } finally {

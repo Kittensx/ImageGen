@@ -7,6 +7,7 @@
  */
 
 import { loadFragments } from "./fragments.js";
+import { configureBranding } from "./branding.js?v=brand1";
 
 const REGION_BUILDER_SCRIPTS = [
   "/assets/js/region-builder/state.js",
@@ -44,6 +45,16 @@ function loadScript(src) {
 
 async function bootRegionBuilder() {
   await loadFragments();
+  try {
+    const response = await fetch("/api/health", { cache: "no-store" });
+    if (response.ok) {
+      const health = await response.json();
+      configureBranding(health.application || {});
+      document.title = `${window.imageGenProductName || "Application"} REGION Builder`;
+    }
+  } catch (error) {
+    console.warn("Unable to load application branding for Region Builder:", error);
+  }
   for (const src of REGION_BUILDER_SCRIPTS) await loadScript(src);
 }
 

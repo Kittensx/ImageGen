@@ -34,13 +34,15 @@
 }
 
 .brand-icon {
-  display: grid;
-  place-items: center;
   width: 42px;
   height: 42px;
-  border: 2px solid white;
-  border-radius: 8px;
-  font-size: 1.65rem;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  background-image: var(--product-brand-mark-image);
+  background-position: center 48%;
+  background-repeat: no-repeat;
+  background-size: 160% auto;
+  filter: drop-shadow(0 2px 4px rgba(6, 18, 31, 0.34));
 }
 
 .version-label {

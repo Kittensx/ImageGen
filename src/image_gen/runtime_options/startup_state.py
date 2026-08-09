@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from image_gen.program_metadata import PRODUCT_NAME
+
 import hashlib
 import json
 from typing import Any, Mapping
@@ -13,13 +15,13 @@ from .cuda_allocator import (
 from .normalization import resolve_runtime_startup_options, runtime_request_settings
 
 MSLK_RESTART_MESSAGE = (
-    "MSLK/Triton startup settings have changed. Restart IMAGE_GEN to compile "
+    f"MSLK/Triton startup settings have changed. Restart {PRODUCT_NAME} to compile "
     "and use the new attention configuration."
 )
 MSLK_OVERRIDE_MESSAGE = (
     "Saved MSLK/Triton settings differ, but one or more values are controlled "
     "by environment or command-line startup options. Remove those overrides "
-    "before restarting IMAGE_GEN to use the saved settings."
+    f"before restarting {PRODUCT_NAME} to use the saved settings."
 )
 MSLK_FIELDS = (
     "policy",
@@ -306,13 +308,13 @@ def build_runtime_startup_status(
             changed.append("CUDA allocator")
         message = (
             "Saved process-start runtime settings differ from the active process "
-            f"({', '.join(changed)}). Restart IMAGE_GEN to activate them."
+            f"({', '.join(changed)}). Restart {PRODUCT_NAME} to activate them."
         )
     elif runtime_pending_blocked and not message:
         message = (
             "Saved process-start runtime settings are overridden by environment or "
             "command-line options. Remove the higher-precedence override, then restart "
-            "IMAGE_GEN to activate the saved values."
+            f"{PRODUCT_NAME} to activate the saved values."
         )
 
     return {

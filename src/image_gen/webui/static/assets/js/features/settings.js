@@ -167,9 +167,12 @@ function updateThemeLabels(palette) {
 
 const FORCED_LIVE_PREVIEW_MODE = "fast";
 
-export function applyThemePalette(value) {
-  const palette = normalizePalette(value);
-  applyThemeVariables(palette);
+export function applyThemePalette(value, { persist = false } = {}) {
+  const runtime = window.ImageGenThemeRuntime;
+  const palette = runtime?.apply
+    ? runtime.apply(value, { persist })
+    : normalizePalette(value);
+  if (!runtime?.apply) applyThemeVariables(palette);
   updateThemeLabels(palette);
   return palette;
 }
@@ -276,7 +279,7 @@ function bindThemePalette(settings) {
   const dialog = $("#themePaletteDialog");
   if (!dialog) return;
 
-  let savedPalette = applyThemePalette(settings.theme_palette || DEFAULT_THEME_PALETTE);
+  let savedPalette = applyThemePalette(settings.theme_palette || DEFAULT_THEME_PALETTE, { persist: true });
   let workingPalette = clonePalette(savedPalette);
   let savedDuringOpen = false;
   const manualNameEdits = { accent: false, surface: false };
@@ -424,7 +427,7 @@ function bindThemePalette(settings) {
 
   $("#cancelThemePaletteButton")?.addEventListener("click", () => {
     workingPalette = clonePalette(savedPalette);
-    applyThemePalette(savedPalette);
+    applyThemePalette(savedPalette, { persist: true });
     dialog.close("cancel");
   });
 
@@ -434,7 +437,7 @@ function bindThemePalette(settings) {
       if (button) button.disabled = true;
       workingPalette = readThemeEditorValues(workingPalette);
       const saved = await api.saveSettings({ theme_palette: workingPalette });
-      savedPalette = applyThemePalette(saved.theme_palette || workingPalette);
+      savedPalette = applyThemePalette(saved.theme_palette || workingPalette, { persist: true });
       settings.theme_palette = clonePalette(savedPalette);
       workingPalette = clonePalette(savedPalette);
       savedDuringOpen = true;
@@ -450,7 +453,7 @@ function bindThemePalette(settings) {
   dialog.addEventListener("close", () => {
     if (!savedDuringOpen && dialog.returnValue !== "saved") {
       workingPalette = clonePalette(savedPalette);
-      applyThemePalette(savedPalette);
+      applyThemePalette(savedPalette, { persist: true });
     }
   });
 }

@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from image_gen.program_metadata import PRODUCT_NAME
 from image_gen.webui.asset_metadata import (
     load_asset_metadata,
     replace_asset_preview,
@@ -25,7 +26,7 @@ from modules.project_context import ProjectContext
 CIVITAI_ASSET_METADATA_SCHEMA_VERSION = 3
 _DEFAULT_KEY_FILE = Path("secrets") / "civitai_api_key.txt"
 _API_ROOT = "https://civitai.com/api/v1"
-_USER_AGENT = "IMAGE_GEN-WebUI"
+_USER_AGENT = f"{PRODUCT_NAME}-WebUI"
 _PLACEHOLDER_KEYS = {
     "",
     "paste_your_civitai_api_key_here",
@@ -245,7 +246,7 @@ def write_civitai_api_key(context: ProjectContext, value: Any) -> dict[str, Any]
     path, managed = _ui_managed_key_path(context)
     if not managed:
         raise CivitaiCredentialError(
-            "The configured CivitAI API key file is outside the IMAGE_GEN project. "
+            f"The configured CivitAI API key file is outside the {PRODUCT_NAME} project. "
             "For safety, update that externally managed credential file manually."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -286,7 +287,7 @@ def delete_civitai_api_key(context: ProjectContext) -> dict[str, Any]:
     path, managed = _ui_managed_key_path(context)
     if not managed:
         raise CivitaiCredentialError(
-            "The configured CivitAI API key file is outside the IMAGE_GEN project and cannot be removed from the WebUI."
+            f"The configured CivitAI API key file is outside the {PRODUCT_NAME} project and cannot be removed from the WebUI."
         )
     try:
         path.unlink(missing_ok=True)
@@ -595,7 +596,7 @@ class CivitaiAssetMetadataService:
         candidates = _normalize_hashes(hashes)
         if not candidates:
             raise CivitaiMetadataError(
-                "This asset has no usable SHA-256 or Civitai-compatible hash. Scan the asset first or allow IMAGE_GEN to hash it."
+                f"This asset has no usable SHA-256 or Civitai-compatible hash. Scan the asset first or allow {PRODUCT_NAME} to hash it."
             )
         _, api_key = read_civitai_api_key(self.context)
         last_not_found: CivitaiMetadataNotFound | None = None
@@ -626,7 +627,7 @@ class CivitaiAssetMetadataService:
                 requested_asset_type=asset_type,
             )
         raise last_not_found or CivitaiMetadataNotFound(
-            "No Civitai model version matched the hashes calculated by IMAGE_GEN."
+            f"No Civitai model version matched the hashes calculated by {PRODUCT_NAME}."
         )
 
     @staticmethod
