@@ -16,14 +16,20 @@ function formatDate(value) {
   return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(date);
 }
 
-function installedFor(value) {
-  if (!value) return "Install date unavailable";
+function profileAge(value) {
+  if (!value) return "Profile start date unavailable";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Install date unavailable";
+  if (Number.isNaN(date.getTime())) return "Profile start date unavailable";
   const days = Math.max(0, Math.floor((Date.now() - date.getTime()) / 86400000));
-  if (days < 1) return "Installed today";
-  if (days === 1) return "Installed 1 day ago";
-  return `Installed ${days.toLocaleString()} days ago`;
+  if (days < 1) return "Profile started today";
+  if (days === 1) return "Profile started 1 day ago";
+  return `Profile started ${days.toLocaleString()} days ago`;
+}
+
+function profileStartLabel(source) {
+  if (source === "install_artifact") return "Installed";
+  if (source === "environment_marker") return "Environment created";
+  return "Profile started";
 }
 
 function percent(value) {
@@ -79,9 +85,9 @@ function renderDiscord(profile) {
   setText("#homeProfileDiscordState", discord.linked ? (discord.display_name || "Discord linked") : "Not connected");
   setText(
     "#homeProfileDiscordServerState",
-    discord.server_member
-      ? `Connected${discord.server_name ? ` · ${discord.server_name}` : ""}`
-      : "Server membership not linked",
+    discord.linked
+      ? "Linked to this local ImageGen profile"
+      : "Connect Discord to link community sharing",
   );
 
   setCheckbox("#homeDiscordPresenceEnabled", sharing.discord_rich_presence_enabled);
@@ -101,12 +107,12 @@ function renderDiscord(profile) {
   if (capabilityText) {
     if (capabilities.rich_presence_ready) {
       capabilityText.textContent = discord.linked
-        ? "Discord sharing is available. Rich Presence is controlled by your opt-in below; server profile posting remains bot-backed."
-        : "Rich Presence support is configured. Account/server linking will be completed by the ImageGen Discord integration.";
+        ? "Your Discord account is linked locally through the Social SDK. Rich Presence is controlled by your opt-in below; posting into server channels would still require a separate bot integration."
+        : "Discord Social SDK support is ready. Connect your account to link this local ImageGen profile and enable opt-in Rich Presence.";
     } else if (capabilities.application_id_configured) {
       capabilityText.textContent = "The Discord application is configured; the Discord Social SDK presence helper still needs to be installed. Your sharing choices are already stored locally.";
     } else {
-      capabilityText.textContent = "Discord account linking and the server bot are not configured yet. Your choices below are stored locally until those integrations are available.";
+      capabilityText.textContent = "Discord account linking is not configured yet. Your sharing choices are stored locally until the Social SDK integration is available.";
     }
   }
 
@@ -145,8 +151,9 @@ function renderProfile(profile) {
   const usage = currentProfile.usage || {};
   const bugs = currentProfile.bugs || {};
 
+  setText("#homeProfileInstalledLabel", profileStartLabel(currentProfile.install_date_source));
   setText("#homeProfileInstalledAt", formatDate(currentProfile.installed_at));
-  setText("#homeProfileInstalledFor", installedFor(currentProfile.installed_at));
+  setText("#homeProfileInstalledFor", profileAge(currentProfile.installed_at));
   setText("#homeProfileVersion", currentProfile.last_seen_version || "Unknown");
   setText("#homeProfileFirstVersion", `First seen version ${currentProfile.first_seen_version || "unknown"}`);
   setText("#homeProfileImagesCreated", Number(usage.images_generated || 0).toLocaleString());

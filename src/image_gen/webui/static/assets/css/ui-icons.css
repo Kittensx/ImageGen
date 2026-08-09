@@ -249,6 +249,13 @@
 .ui-icon[data-icon="play"] { --ui-icon-mask: url("../icons/media/play.svg"); }
 .ui-icon[data-icon="console-log"] { --ui-icon-mask: url("../icons/system/console-log.svg"); }
 .ui-icon[data-icon="settings"] { --ui-icon-mask: url("../icons/system/settings.svg"); }
+.ui-icon[data-icon="generate"] { --ui-icon-mask: url("../icons/sidebar/generate.svg"); }
+.ui-icon[data-icon="models"] { --ui-icon-mask: url("../icons/sidebar/models.svg"); }
+.ui-icon[data-icon="loras"] { --ui-icon-mask: url("../icons/sidebar/loras.svg"); }
+.ui-icon[data-icon="region-outpaint"] { --ui-icon-mask: url("../icons/sidebar/region-outpaint.svg"); }
+.ui-icon[data-icon="home-install-date"] { --ui-icon-mask: url("../icons/home/install-date.svg"); }
+.ui-icon[data-icon="home-images-created"] { --ui-icon-mask: url("../icons/home/images-created.svg"); }
+.ui-icon[data-icon="home-bug-contribution"] { --ui-icon-mask: url("../icons/home/bug-contribution.svg"); }
 
 .ui-action-button {
   --ui-action-size: 34px;

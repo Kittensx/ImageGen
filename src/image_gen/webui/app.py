@@ -127,6 +127,7 @@ def create_app(
         context.project_root,
         context.data_root,
         context.txt2img_output_root,
+        startup_timestamp=server_started_at_unix,
     )
     if isinstance(runtime_startup_options, RuntimeStartupOptions):
         resolved_runtime_startup = merge_runtime_startup_settings(
@@ -414,11 +415,15 @@ def create_app(
             "prompt_parsers": prompt_parsers.descriptors(),
         }
 
+    def _cached_bug_profile() -> dict[str, Any]:
+        # Profile/Discord controls should never rebuild diagnostic ZIPs. Bug bundles
+        # are prepared only by the explicit bug-report catalog/sync flows.
+        return dict((bug_reports.payload().get("profile") or {}))
+
     @app.get("/api/profile")
     async def imagegen_profile() -> dict[str, Any]:
         try:
-            bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
-            return profile.snapshot(bug_payload.get("profile", {}))
+            return profile.snapshot(_cached_bug_profile())
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail=f"Unable to load the local profile: {exc}") from exc
 
@@ -426,8 +431,7 @@ def create_app(
     async def update_profile_sharing(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             await asyncio.to_thread(profile.update_sharing, payload or {})
-            bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
-            bug_profile = bug_payload.get("profile", {})
+            bug_profile = _cached_bug_profile()
             presence = await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
             result = profile.snapshot(bug_profile)
             result["presence_publish"] = presence
@@ -447,15 +451,13 @@ def create_app(
             message = str(result.get("message") or "Unable to link Discord.")
             status = 503 if state in {"discord_application_required", "helper_required", "native_helper_required", "sdk_unavailable"} else 400
             raise HTTPException(status_code=status, detail=message)
-        bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
-        snapshot = profile.snapshot(bug_payload.get("profile", {}))
+        snapshot = profile.snapshot(_cached_bug_profile())
         snapshot["discord_link"] = result
         return snapshot
 
     @app.post("/api/profile/discord/presence")
     async def refresh_discord_presence() -> dict[str, Any]:
-        bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
-        bug_profile = bug_payload.get("profile", {})
+        bug_profile = _cached_bug_profile()
         result = await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
         return {"presence": result, "profile": profile.snapshot(bug_profile)}
 
@@ -463,8 +465,7 @@ def create_app(
     async def disconnect_discord_profile() -> dict[str, Any]:
         await asyncio.to_thread(profile.publish_presence, {}, active=False)
         await asyncio.to_thread(profile.disconnect_discord)
-        bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
-        return profile.snapshot(bug_payload.get("profile", {}))
+        return profile.snapshot(_cached_bug_profile())
 
     @app.get("/api/bug-reports")
     async def bug_report_catalog() -> dict[str, Any]:

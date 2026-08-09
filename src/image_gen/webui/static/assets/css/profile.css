@@ -263,3 +263,50 @@
     justify-content: flex-start;
   }
 }
+
+.home-profile-sharing-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.4;
+}
+
+.home-profile-sharing-option {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center !important;
+  gap: 9px !important;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in srgb, var(--charcoal-900) 62%, transparent);
+  cursor: pointer;
+}
+
+.home-share-icon {
+  --ui-icon-size: 20px;
+  color: var(--sky-300);
+}
+
+.home-share-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.home-share-copy strong {
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.home-share-copy small {
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.home-profile-sharing-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}

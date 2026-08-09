@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -191,6 +192,7 @@ class BugReportService:
         self.bundle_root = self.bug_root / "bundles"
         self.ledger_path = self.bug_root / "ledger.json"
         self.failure_root = self.project_root / "artifacts" / "diagnostics" / "failures"
+        self._refresh_lock = threading.RLock()
         self.bug_root.mkdir(parents=True, exist_ok=True)
         self.bundle_root.mkdir(parents=True, exist_ok=True)
 
@@ -384,6 +386,46 @@ class BugReportService:
     def _iter_source_files(self, source_dir: Path) -> list[Path]:
         return [path for path in sorted(source_dir.rglob("*")) if path.is_file() and not path.is_symlink()]
 
+    def _bundle_revision(self, candidate: Mapping[str, Any], reporter_record_id: str) -> str:
+        """Return a deterministic revision for the selected diagnostic bundle.
+
+        The revision changes when report metadata or any selected source file changes.
+        Keeping it in the filename lets Windows continue serving/opening an older ZIP
+        while a newer diagnostic revision is prepared, instead of replacing an in-use
+        file and raising WinError 5.
+        """
+
+        source_dir = Path(str(candidate["source_path"]))
+        digest = hashlib.sha256()
+        digest.update(
+            json.dumps(
+                self._metadata_document(candidate, reporter_record_id),
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        for path in self._iter_source_files(source_dir):
+            relative = str(path.relative_to(source_dir)).replace("\\", "/")
+            digest.update(relative.encode("utf-8", errors="replace"))
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            digest.update(str(stat.st_size).encode("ascii"))
+            digest.update(str(stat.st_mtime_ns).encode("ascii"))
+        return digest.hexdigest()[:16]
+
+    @staticmethod
+    def _valid_zip(path: Path) -> bool:
+        try:
+            if not path.is_file():
+                return False
+            with zipfile.ZipFile(path, "r") as archive:
+                return archive.testzip() is None
+        except (OSError, zipfile.BadZipFile):
+            return False
+
     def _write_sanitized_file(self, archive: zipfile.ZipFile, path: Path, arcname: str) -> None:
         suffix = path.suffix.casefold()
         if suffix == ".json":
@@ -401,22 +443,32 @@ class BugReportService:
             return
         archive.write(path, arcname)
 
-    def _build_zip(self, candidate: Mapping[str, Any], reporter_record_id: str, *, compact: bool = False) -> Path:
+    def _build_zip(
+        self,
+        candidate: Mapping[str, Any],
+        reporter_record_id: str,
+        bundle_revision: str,
+        *,
+        compact: bool = False,
+    ) -> Path:
         fingerprint = str(candidate["fingerprint"])
         version = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate.get("version") or "unknown"))[:80]
         report_dir = self.bundle_root / fingerprint[:16]
         report_dir.mkdir(parents=True, exist_ok=True)
-        target = report_dir / f"imagegen-bug-{fingerprint[:12]}-v{version}.zip"
+        compact_suffix = "-compact" if compact else ""
+        target = report_dir / (
+            f"imagegen-bug-{fingerprint[:12]}-v{version}-{bundle_revision}{compact_suffix}.zip"
+        )
 
-        for existing in report_dir.glob("imagegen-bug-*.zip"):
-            if existing != target:
-                try:
-                    existing.unlink()
-                except OSError:
-                    pass
+        # A repeated Home/profile refresh must never rewrite the same archive. Apart
+        # from avoiding unnecessary work, this prevents Windows from denying an
+        # overwrite while Explorer, a browser download, or antivirus has the ZIP open.
+        if self._valid_zip(target):
+            return target
 
         source_dir = Path(str(candidate["source_path"]))
         metadata = self._metadata_document(candidate, reporter_record_id)
+        metadata["bundle_revision"] = bundle_revision
         omitted: list[str] = []
         with tempfile.NamedTemporaryFile(prefix="imagegen-bug-", suffix=".zip", dir=report_dir, delete=False) as handle:
             temp_path = Path(handle.name)
@@ -443,22 +495,33 @@ class BugReportService:
                         + "\n".join(omitted)
                         + "\n",
                     )
-            temp_path.replace(target)
+            os.replace(temp_path, target)
         finally:
             if temp_path.exists():
                 try:
                     temp_path.unlink()
                 except OSError:
                     pass
+
+        # Retire stale revisions only after the new archive is safely available. If
+        # Windows currently has an older ZIP open, deletion is intentionally best-effort.
+        for existing in report_dir.glob("imagegen-bug-*.zip"):
+            if existing == target:
+                continue
+            try:
+                existing.unlink()
+            except OSError:
+                pass
         return target
 
-    def _ensure_bundle(self, candidate: Mapping[str, Any], reporter_record_id: str) -> tuple[Path, bool]:
-        path = self._build_zip(candidate, reporter_record_id, compact=False)
+    def _ensure_bundle(self, candidate: Mapping[str, Any], reporter_record_id: str) -> tuple[Path, bool, str]:
+        bundle_revision = self._bundle_revision(candidate, reporter_record_id)
+        path = self._build_zip(candidate, reporter_record_id, bundle_revision, compact=False)
         compact = False
         if path.stat().st_size > TARGET_BUNDLE_LIMIT_BYTES:
-            path = self._build_zip(candidate, reporter_record_id, compact=True)
+            path = self._build_zip(candidate, reporter_record_id, bundle_revision, compact=True)
             compact = True
-        return path, compact
+        return path, compact, bundle_revision
 
     def _issue_title(self, candidate: Mapping[str, Any]) -> str:
         error_type = str(candidate.get("error_type") or "Error").strip()
@@ -509,52 +572,54 @@ class BugReportService:
         return f"{GITHUB_REPOSITORY_URL}/issues/new?{query}"
 
     def refresh_local(self) -> dict[str, Any]:
-        ledger = self.load_ledger()
-        reports: dict[str, Any] = dict(ledger.get("reports") or {})
-        grouped = self._group_candidates(self.discover())
-        now = _utc_now()
-
-        for fingerprint, candidate in grouped.items():
-            previous = dict(reports.get(fingerprint) or {})
-            reporter_record_id = self._reporter_record_id(ledger, fingerprint)
-            bundle_path, compact = self._ensure_bundle(candidate, reporter_record_id)
-            record = {
-                **previous,
-                "fingerprint": fingerprint,
-                "reporter_record_id": reporter_record_id,
-                "kind": candidate.get("kind"),
-                "component": candidate.get("component"),
-                "operation": candidate.get("operation"),
-                "stage": candidate.get("stage"),
-                "error_type": candidate.get("error_type"),
-                "error_message": _redact_text(str(candidate.get("error_message") or ""), self.project_root),
-                "version": candidate.get("version"),
-                "build": candidate.get("build"),
-                "created_at": candidate.get("created_at"),
-                "occurrence_count": len(candidate.get("occurrences") or []),
-                "occurrences": candidate.get("occurrences") or [],
-                "versions_seen": candidate.get("versions_seen") or [],
-                "source_relative": candidate.get("source_relative"),
-                "bundle_path": str(bundle_path),
-                "bundle_relative": _safe_relative(bundle_path, self.project_root),
-                "bundle_filename": bundle_path.name,
-                "bundle_size": bundle_path.stat().st_size,
-                "bundle_within_github_limit": bundle_path.stat().st_size <= GITHUB_ATTACHMENT_LIMIT_BYTES,
-                "compact_bundle": compact,
-                "issue_title": self._issue_title(candidate),
-                "issue_body": self._issue_body(candidate, reporter_record_id, bundle_path),
-                "new_issue_url": self._issue_url(candidate, reporter_record_id, bundle_path),
-                "last_local_scan_at": now,
-            }
-            reports[fingerprint] = record
-
-        # Keep previously submitted/linked records even if the original failure artifact was removed.
-        for fingerprint, record in list(reports.items()):
-            record["local_artifact_present"] = fingerprint in grouped
-
-        ledger["reports"] = reports
-        self.save_ledger(ledger)
-        return self.payload(ledger)
+        with self._refresh_lock:
+            ledger = self.load_ledger()
+            reports: dict[str, Any] = dict(ledger.get("reports") or {})
+            grouped = self._group_candidates(self.discover())
+            now = _utc_now()
+    
+            for fingerprint, candidate in grouped.items():
+                previous = dict(reports.get(fingerprint) or {})
+                reporter_record_id = self._reporter_record_id(ledger, fingerprint)
+                bundle_path, compact, bundle_revision = self._ensure_bundle(candidate, reporter_record_id)
+                record = {
+                    **previous,
+                    "fingerprint": fingerprint,
+                    "reporter_record_id": reporter_record_id,
+                    "kind": candidate.get("kind"),
+                    "component": candidate.get("component"),
+                    "operation": candidate.get("operation"),
+                    "stage": candidate.get("stage"),
+                    "error_type": candidate.get("error_type"),
+                    "error_message": _redact_text(str(candidate.get("error_message") or ""), self.project_root),
+                    "version": candidate.get("version"),
+                    "build": candidate.get("build"),
+                    "created_at": candidate.get("created_at"),
+                    "occurrence_count": len(candidate.get("occurrences") or []),
+                    "occurrences": candidate.get("occurrences") or [],
+                    "versions_seen": candidate.get("versions_seen") or [],
+                    "source_relative": candidate.get("source_relative"),
+                    "bundle_path": str(bundle_path),
+                    "bundle_relative": _safe_relative(bundle_path, self.project_root),
+                    "bundle_filename": bundle_path.name,
+                    "bundle_size": bundle_path.stat().st_size,
+                    "bundle_within_github_limit": bundle_path.stat().st_size <= GITHUB_ATTACHMENT_LIMIT_BYTES,
+                    "compact_bundle": compact,
+                    "bundle_revision": bundle_revision,
+                    "issue_title": self._issue_title(candidate),
+                    "issue_body": self._issue_body(candidate, reporter_record_id, bundle_path),
+                    "new_issue_url": self._issue_url(candidate, reporter_record_id, bundle_path),
+                    "last_local_scan_at": now,
+                }
+                reports[fingerprint] = record
+    
+            # Keep previously submitted/linked records even if the original failure artifact was removed.
+            for fingerprint, record in list(reports.items()):
+                record["local_artifact_present"] = fingerprint in grouped
+    
+            ledger["reports"] = reports
+            self.save_ledger(ledger)
+            return self.payload(ledger)
 
     def _github_request(self, url: str) -> tuple[Any, Mapping[str, str]]:
         request = urllib.request.Request(

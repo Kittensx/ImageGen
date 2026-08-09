@@ -173,11 +173,12 @@
   background: color-mix(in srgb, var(--sky-700) 18%, var(--charcoal-850));
 }
 
-.home-launch-button strong {
+.home-launch-copy strong {
+  color: var(--text);
   font-size: 0.78rem;
 }
 
-.home-launch-button span {
+.home-launch-copy > span {
   color: var(--muted);
   font-size: 0.67rem;
   line-height: 1.35;
@@ -213,4 +214,23 @@
   .home-asset-summary {
     grid-template-columns: 1fr;
   }
+}
+
+/* Home icon treatment: reuse shared SVG identities instead of introducing
+   page-specific Unicode glyphs. */
+.home-launch-button {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+}
+
+.home-launch-icon {
+  --ui-icon-size: 20px;
+  color: var(--sky-300);
+}
+
+.home-launch-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
 }

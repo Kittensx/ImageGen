@@ -63,8 +63,6 @@ export function bindHomeWorkspace(catalogs = {}) {
   $("#homePrimaryAction")?.addEventListener("click", (event) => {
     requestWorkspace(event.currentTarget.dataset.homeTarget || "generation");
   });
-  $("#homeCheckpointsButton")?.addEventListener("click", () => requestWorkspace("checkpoints"));
-  $("#homeGenerationButton")?.addEventListener("click", () => requestWorkspace("generation"));
   $("#homeQuickGeneration")?.addEventListener("click", () => requestWorkspace("generation"));
   $("#homeQuickCheckpoints")?.addEventListener("click", () => requestWorkspace("checkpoints"));
   $("#homeQuickLoras")?.addEventListener("click", () => requestWorkspace("loras"));

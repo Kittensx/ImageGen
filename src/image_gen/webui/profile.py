@@ -40,12 +40,20 @@ def _safe_int(value: Any, default: int = 0) -> int:
 class ImageGenProfileService:
     """Persistent, privacy-safe local profile and shareable usage statistics."""
 
-    def __init__(self, project_root: str | Path, data_root: str | Path, output_root: str | Path) -> None:
+    def __init__(
+        self,
+        project_root: str | Path,
+        data_root: str | Path,
+        output_root: str | Path,
+        *,
+        startup_timestamp: float | None = None,
+    ) -> None:
         self.project_root = Path(project_root).expanduser().resolve()
         self.profile_root = Path(data_root).expanduser().resolve() / "webui" / "profile"
         self.output_root = Path(output_root).expanduser().resolve()
         self.profile_path = self.profile_root / "profile.json"
         self.discord_bridge = DiscordNativeBridge(self.project_root)
+        self.startup_timestamp = startup_timestamp
         self._lock = threading.RLock()
         self.profile_root.mkdir(parents=True, exist_ok=True)
         self.ensure_profile()
@@ -68,6 +76,11 @@ class ImageGenProfileService:
         if candidates:
             timestamp, source = min(candidates, key=lambda item: item[0])
             return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(), source
+        if self.startup_timestamp is not None:
+            try:
+                return datetime.fromtimestamp(float(self.startup_timestamp), tz=timezone.utc).isoformat(), "app_startup"
+            except (TypeError, ValueError, OSError, OverflowError):
+                pass
         return _utc_now(), "profile_initialized"
 
     def _existing_output_count(self) -> int:

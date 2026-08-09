@@ -23,10 +23,6 @@
         <div><strong id="homeVaeCount">0</strong><span>VAEs</span></div>
         <div><strong id="homeLoraCount">0</strong><span>LoRAs</span></div>
       </div>
-      <div class="home-component-actions">
-        <button class="primary-button" id="homeCheckpointsButton" type="button">Open Checkpoints</button>
-        <button class="secondary-button" id="homeGenerationButton" type="button">Open Generation</button>
-      </div>
     </section>
 
     <section class="home-component" data-workspace-component="home.quick-launch" data-component-variant="standard" data-component-span="5">
@@ -37,11 +33,26 @@
         </div>
       </div>
       <div class="home-quick-launch" role="group" aria-label="Quick launch">
-        <button class="home-launch-button" id="homeQuickGeneration" type="button"><strong>Generation</strong><span>txt2img controls and queue</span></button>
-        <button class="home-launch-button" id="homeQuickCheckpoints" type="button"><strong>Checkpoints</strong><span>Browse and activate models</span></button>
-        <button class="home-launch-button" id="homeQuickLoras" type="button"><strong>LoRAs</strong><span>Browse and manage LoRAs</span></button>
-        <a class="home-launch-button" id="homeQuickRegion" href="/region-builder.html"><strong>Region / Outpaint</strong><span>Open the REGION editor</span></a>
-        <button class="home-launch-button" id="homeQuickSettings" type="button"><strong>Settings</strong><span>WebUI and runtime settings</span></button>
+        <button class="home-launch-button ui-icon-control" id="homeQuickGeneration" type="button">
+          <span class="home-launch-icon ui-icon" data-icon="generate" aria-hidden="true"></span>
+          <span class="home-launch-copy"><strong>Generation</strong><span>txt2img controls and queue</span></span>
+        </button>
+        <button class="home-launch-button ui-icon-control" id="homeQuickCheckpoints" type="button">
+          <span class="home-launch-icon ui-icon" data-icon="models" aria-hidden="true"></span>
+          <span class="home-launch-copy"><strong>Checkpoints</strong><span>Browse and activate models</span></span>
+        </button>
+        <button class="home-launch-button ui-icon-control" id="homeQuickLoras" type="button">
+          <span class="home-launch-icon ui-icon" data-icon="loras" aria-hidden="true"></span>
+          <span class="home-launch-copy"><strong>LoRAs</strong><span>Browse and manage LoRAs</span></span>
+        </button>
+        <a class="home-launch-button ui-icon-control" id="homeQuickRegion" href="/region-builder.html">
+          <span class="home-launch-icon ui-icon" data-icon="region-outpaint" aria-hidden="true"></span>
+          <span class="home-launch-copy"><strong>Region / Outpaint</strong><span>Open the REGION editor</span></span>
+        </a>
+        <button class="home-launch-button ui-icon-control" id="homeQuickSettings" type="button">
+          <span class="home-launch-icon ui-icon" data-icon="settings" aria-hidden="true"></span>
+          <span class="home-launch-copy"><strong>Settings</strong><span>WebUI and runtime settings</span></span>
+        </button>
       </div>
     </section>
 
@@ -62,7 +73,7 @@
         <div class="home-profile-main">
           <div class="home-profile-identity" aria-label="Installation profile">
             <div>
-              <span class="home-profile-label">Installed</span>
+              <span class="home-profile-label" id="homeProfileInstalledLabel">Profile started</span>
               <strong id="homeProfileInstalledAt">—</strong>
               <small id="homeProfileInstalledFor">First profile load pending</small>
             </div>
@@ -127,10 +138,23 @@
 
           <details class="home-profile-sharing-details">
             <summary>Choose stats I can share</summary>
+            <p class="home-profile-sharing-note">Only aggregate profile statistics are eligible for Discord sharing. Prompts, filenames, image contents, and local paths stay private.</p>
             <div class="home-profile-sharing-options">
-              <label><input id="homeShareInstallDate" type="checkbox"> Installed since</label>
-              <label><input id="homeShareImageCount" type="checkbox"> Images created</label>
-              <label><input id="homeShareBugStats" type="checkbox"> Bug contribution stats</label>
+              <label class="home-profile-sharing-option">
+                <span class="home-share-icon ui-icon" data-icon="home-install-date" aria-hidden="true"></span>
+                <span class="home-share-copy"><strong>Profile start date</strong><small>Share when this local ImageGen profile began.</small></span>
+                <input id="homeShareInstallDate" type="checkbox">
+              </label>
+              <label class="home-profile-sharing-option">
+                <span class="home-share-icon ui-icon" data-icon="home-images-created" aria-hidden="true"></span>
+                <span class="home-share-copy"><strong>Images created</strong><small>Share only the lifetime generated-image count.</small></span>
+                <input id="homeShareImageCount" type="checkbox">
+              </label>
+              <label class="home-profile-sharing-option">
+                <span class="home-share-icon ui-icon" data-icon="home-bug-contribution" aria-hidden="true"></span>
+                <span class="home-share-copy"><strong>Bug contribution stats</strong><small>Share aggregate reported, open, and resolved counts.</small></span>
+                <input id="homeShareBugStats" type="checkbox">
+              </label>
             </div>
           </details>
 
