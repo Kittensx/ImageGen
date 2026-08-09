@@ -594,7 +594,7 @@ def _choose_install_choice(
             ]
     if not filtered:
         raise InstallError(
-            "The requested CUDA/profile combination is not present in the validated hardware manifest."
+            "The requested CUDA/profile combination is not available for the selected hardware profile or community-qualification candidate."
         )
     if non_interactive:
         bundled = [item for item in filtered if item.mode == "bundled"]

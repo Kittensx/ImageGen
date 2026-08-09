@@ -12,11 +12,13 @@ The installer detects:
 * Python 3.10 x64 and the Microsoft Visual C++ x64 Runtime.
 
 PyTorch wheels include their own CUDA runtime. A locally installed CUDA toolkit
-is therefore not required for the validated IMAGE_GEN environment. When more
-than one compatible toolkit/profile is installed, the installer presents a
-choice. It never selects an arbitrary Torch/CUDA/MSLK/xFormers combination.
+is therefore not required for the current IMAGE_GEN reference stack. The
+bundled PyTorch CUDA runtime is preferred. If a compatible local CUDA 12.8
+toolkit is present, the installer can offer it as an alternative for the same
+published profile. It never selects an arbitrary Torch/CUDA/MSLK/xFormers
+combination.
 
-The current published custom attention profile is:
+The current published validated reference profile is:
 
 * NVIDIA compute capability 12.0 / SM120;
 * PyTorch 2.11.0 + CUDA runtime 12.8;
@@ -24,9 +26,15 @@ The current published custom attention profile is:
 * custom MSLK v1.3.0;
 * custom xFormers v1.1.0.
 
-Other GPU families require their own tested entry in
-requirements/hardware_profiles.json and a published attention wheel manifest.
-The installer will stop instead of installing an unvalidated custom stack.
+Other NVIDIA GPU architectures are not automatically promoted to validated
+status. When community validation is enabled by
+requirements/hardware_profiles.json, the installer can reuse the published
+reference package stack for an eligible NVIDIA GPU, record capability probes,
+and allow verified SDPA fallback. That result remains community/unverified
+until the hardware configuration is reviewed and published as a validated
+profile. The installer stops when neither a validated profile nor an eligible
+community-qualification candidate can be offered for the detected host, GPU,
+driver, and package contract.
 
 Useful commands:
 

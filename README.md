@@ -30,7 +30,7 @@ The current public build is designed around:
 
 - **Windows 10 or Windows 11, 64-bit**
 - **Python 3.10.20, 64-bit — exactly**
-- An NVIDIA CUDA GPU supported by a published ImageGen hardware profile
+- An NVIDIA CUDA GPU compatible with a published ImageGen package profile; **SM120 / compute capability 12.0 is the current validated reference target**
 - A legally obtained, compatible **full SD 1.x `.safetensors` checkpoint**
 - Enough disk space for ImageGen, the Python environment, checkpoints, LoRAs, upscalers, and generated images
 
@@ -46,9 +46,9 @@ You do **not** need to manually build the ImageGen virtual environment or instal
 
 ImageGen uses explicit hardware profiles rather than silently guessing at CUDA, PyTorch, xFormers, or MSLK combinations.
 
-The current published Windows profile is qualified for **NVIDIA Blackwell SM120 / compute capability 12.0** hardware. The installer rejects hardware combinations for which a validated profile has not been published.
+The current published Windows **validated reference profile** is **NVIDIA Blackwell SM120 / compute capability 12.0**. Other NVIDIA architectures are not treated as validated simply because the package stack installs. When the hardware manifest allows it, the installer can instead offer a **community qualification** path that reuses the published package stack, records capability probes, and allows a verified SDPA fallback. A community-qualified result remains **community/unverified** until that hardware configuration is reviewed and published as a validated profile.
 
-For the current qualified profile, the PyTorch package supplies the required CUDA 12.8 runtime, so a separately installed CUDA Toolkit is optional. If a compatible local CUDA Toolkit is present, the installer can evaluate it against the validated profile.
+For the current reference stack, PyTorch supplies the CUDA 12.8 runtime, so a separately installed CUDA Toolkit is optional. The bundled PyTorch runtime is preferred. If a compatible local CUDA 12.8 Toolkit is present, the installer can offer it as an alternative for the same package profile.
 
 ### 1. Download or Clone ImageGen
 
@@ -64,16 +64,16 @@ From the ImageGen folder, run:
 install.bat
 ```
 
-The installer handles the environment setup for the supported machine. It will:
+The installer handles environment setup for an eligible machine. It will:
 
 1. verify Windows, 64-bit Python, and **Python 3.10.20**;
 2. inspect the NVIDIA GPU and driver;
-3. match the machine to a validated ImageGen hardware profile;
+3. select either a validated ImageGen hardware profile or an eligible community-qualification candidate from the published profile manifest;
 4. create the project `.venv`;
-5. install the qualified PyTorch/CUDA package stack;
-6. install the qualified xFormers/MSLK attention stack and remaining ImageGen requirements;
+5. install the profile's published PyTorch/CUDA package stack;
+6. install the published xFormers/MSLK attention stack and remaining ImageGen requirements;
 7. create machine-specific runtime configuration; and
-8. validate the completed environment before reporting success.
+8. validate the completed environment before reporting either validated or community/unverified qualification status.
 
 If setup replaces an existing ImageGen `.venv`, the installer is designed to preserve the previous environment as a backup and restore it if installation fails.
 
