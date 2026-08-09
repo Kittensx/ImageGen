@@ -2,12 +2,12 @@
   <section class="panel live-preview-panel is-idle" id="livePreviewPanel" data-panel-scale-key="live_preview" data-workspace-panel="live_preview" data-default-zone="right">
     <div class="panel-heading">
       <div class="live-preview-title-group">
-        <h2>Live Preview</h2>
+        <div class="panel-heading-title-with-status"><h2>Live Preview</h2><span class="status-light-host" id="livePreviewStatusLightHost"></span></div>
         <span class="live-stream-status idle" id="livePreviewStreamStatus">Idle</span>
       </div>
       <div class="live-preview-heading-actions">
-        <button class="text-button" id="livePreviewOpenLargeButton" type="button" disabled>Open Large</button>
-        <button class="icon-button" id="livePreviewToggle" type="button" aria-label="Collapse live preview" aria-expanded="true">⌃</button>
+        <button class="ui-action-button ui-icon-control" id="livePreviewOpenLargeButton" type="button" aria-label="Open large live preview" title="Open large live preview" disabled><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control panel-toggle" id="livePreviewToggle" type="button" aria-label="Collapse live preview" title="Collapse live preview" aria-expanded="true"><span class="ui-icon" data-icon="chevron-up" aria-hidden="true"></span></button>
       </div>
     </div>
     <div class="live-preview-idle-line" id="livePreviewIdleLine">No active or recent generation.</div>
@@ -36,10 +36,10 @@
         </div>
       </section>
       <div class="live-preview-controls" role="toolbar" aria-label="Live preview controls">
-        <button class="text-button" id="livePreviewFollowButton" type="button" aria-pressed="true">Following Latest</button>
-        <button class="text-button" id="livePreviewPauseButton" type="button" aria-pressed="false">Pause Preview</button>
-        <button class="text-button is-hidden" id="livePreviewJumpLatestButton" type="button">Jump to Latest</button>
-        <button class="text-button is-hidden" id="livePreviewViewFinalButton" type="button">View Final</button>
+        <button class="ui-action-button ui-icon-control" id="livePreviewFollowButton" type="button" aria-pressed="true" aria-label="Following latest preview" title="Following latest preview"><span class="ui-icon" data-icon="follow-latest" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="livePreviewPauseButton" type="button" aria-pressed="false" aria-label="Pause live preview" title="Pause live preview"><span class="ui-icon" data-icon="pause" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control is-hidden" id="livePreviewJumpLatestButton" type="button" aria-label="Jump to latest preview" title="Jump to latest preview"><span class="ui-icon" data-icon="jump-latest" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control is-hidden" id="livePreviewViewFinalButton" type="button" aria-label="View final image" title="View final image"><span class="ui-icon" data-icon="final-image" aria-hidden="true"></span></button>
       </div>
       <div class="preview-meta live-preview-meta">
         <span id="livePreviewJobStatus">Status: Idle</span>
@@ -58,9 +58,9 @@
         <div class="live-preview-history" id="livePreviewHistory" aria-label="Intermediate preview frames"></div>
       </div>
       <div class="live-preview-footer-actions">
-        <a class="small-button is-hidden" id="livePreviewDiagnosticsLink" target="_blank" rel="noopener">Run Diagnostics</a>
-        <a class="small-button is-hidden" id="livePreviewConsoleLink" target="_blank" rel="noopener">Console Log</a>
-        <button class="secondary-button is-hidden" id="livePreviewCancelButton" type="button">Cancel Generation</button>
+        <a class="ui-action-button ui-icon-control is-hidden" id="livePreviewDiagnosticsLink" target="_blank" rel="noopener" aria-label="Run job diagnostics" title="Run job diagnostics"><span class="ui-icon" data-icon="diagnostics" aria-hidden="true"></span></a>
+        <a class="ui-action-button ui-icon-control is-hidden" id="livePreviewConsoleLink" target="_blank" rel="noopener" aria-label="Open console log" title="Open console log"><span class="ui-icon" data-icon="console-log" aria-hidden="true"></span></a>
+        <button class="ui-action-button ui-icon-control is-critical is-hidden" id="livePreviewCancelButton" type="button" aria-label="Cancel generation" title="Cancel generation"><span class="ui-icon" data-icon="stop" aria-hidden="true"></span></button>
       </div>
     </div>
   </section>
@@ -99,7 +99,7 @@
   </section>
 
   <section class="panel utility-panel memory-status-panel" id="memoryStatusPanel" data-panel-scale-key="memory_status" data-workspace-panel="memory_status" data-default-zone="right">
-    <div class="panel-heading"><h2>Memory</h2><span id="memoryPolicyBadge" class="status-badge">Auto</span></div>
+    <div class="panel-heading"><div class="panel-heading-title-with-status"><h2>Memory</h2><span class="status-light-host" id="memoryStatusLightHost"></span></div><span id="memoryPolicyBadge" class="status-badge">Auto</span></div>
     <div class="memory-status-grid">
       <article><strong>Physical VRAM used</strong><span id="memoryPhysicalVramUsed">Unavailable</span></article>
       <article><strong>Physical VRAM free</strong><span id="memoryPhysicalVramFree">Unavailable</span></article>
@@ -121,7 +121,7 @@
   </section>
 
   <section class="panel utility-panel runtime-status-panel" id="runtimeStatusPanel" data-panel-scale-key="runtime_status" data-workspace-panel="runtime_status" data-default-zone="right">
-    <div class="panel-heading"><h2>Runtime</h2><span id="runtimeRestartBadge" class="status-badge">Active</span></div>
+    <div class="panel-heading"><div class="panel-heading-title-with-status"><h2>Runtime</h2><span class="status-light-host" id="runtimeStatusLightHost"></span></div><span id="runtimeRestartBadge" class="status-badge">Active</span></div>
     <dl class="runtime-status-list">
       <div><dt>Profile</dt><dd id="runtimeProfileStatus">Loading…</dd></div>
       <div><dt>Attention</dt><dd id="runtimeAttentionStatus">Loading…</dd></div>
@@ -140,10 +140,10 @@
   </section>
 
   <section class="panel utility-panel" id="queuePanel" data-panel-scale-key="queue" data-workspace-panel="queue" data-default-zone="right">
-    <div class="panel-heading"><h2>Queue</h2><button class="icon-button panel-toggle" data-target="queuePanel" type="button" aria-label="Collapse queue">⌃</button></div>
+    <div class="panel-heading"><div class="panel-heading-title-with-status"><h2>Queue</h2><span class="status-light-host" id="queueStatusLightHost"></span></div><button class="ui-action-button ui-icon-control panel-toggle" data-target="queuePanel" type="button" aria-label="Collapse queue" title="Collapse queue" aria-expanded="true"><span class="ui-icon" data-icon="chevron-up" aria-hidden="true"></span></button></div>
     <div class="queue-toolbar" role="toolbar" aria-label="Queue controls">
-      <button class="small-button queue-toolbar-button" id="clearCompletedQueueButton" type="button"><span class="queue-action-icon" aria-hidden="true">✓</span><span class="queue-action-label">Clear finished</span></button>
-      <button class="small-button queue-toolbar-button" id="queueFilterToggleButton" type="button" aria-controls="queueFilterPanel" aria-expanded="false"><span class="queue-action-icon" aria-hidden="true">☰</span><span class="queue-action-label">Filter</span></button>
+      <button class="ui-action-button ui-icon-control queue-toolbar-button" id="clearCompletedQueueButton" type="button" aria-label="Clear finished queue items" title="Clear finished queue items"><span class="ui-icon" data-icon="clear-finished" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control queue-toolbar-button" id="queueFilterToggleButton" type="button" aria-controls="queueFilterPanel" aria-expanded="false" aria-label="Filter queue" title="Filter queue"><span class="ui-icon" data-icon="filter" aria-hidden="true"></span></button>
     </div>
     <div class="queue-filter-panel is-hidden" id="queueFilterPanel">
       <label><input type="checkbox" data-queue-filter="queued" checked> Pending</label>

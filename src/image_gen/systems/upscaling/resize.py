@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import math
+import time
 from typing import Any
 
 import torch
@@ -11,6 +12,7 @@ SUPPORTED_EXACT_RESIZE_FILTERS = frozenset({"nearest", "bilinear", "bicubic", "a
 SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS = frozenset({"auto", *SUPPORTED_EXACT_RESIZE_FILTERS})
 SUPPORTED_ASPECT_POLICIES = frozenset({"stretch", "crop_to_fill", "pad_to_fit"})
 SUPPORTED_PADDING_MODES = frozenset({"reflect", "replicate", "blurred_edge", "black"})
+SUPPORTED_BLURRED_EDGE_METHODS = frozenset({"box", "gaussian_1d"})
 TARGET_CORRECTION_CONTRACT_VERSION = "phase14n12b-target-correction-v1"
 
 
@@ -340,6 +342,133 @@ def _pad_reflect_unbounded(
     return images.index_select(-2, y_index).index_select(-1, x_index)
 
 
+def _build_blurred_edge_mask(
+    *,
+    source_height: int,
+    source_width: int,
+    target_height: int,
+    target_width: int,
+    pad_top: int,
+    pad_left: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    mask = torch.ones((1, 1, target_height, target_width), device=device, dtype=dtype)
+    mask[:, :, pad_top : pad_top + source_height, pad_left : pad_left + source_width] = 0.0
+    return mask
+
+
+def _edge_band_stats(image: torch.Tensor, mask: torch.Tensor) -> dict[str, Any]:
+    sample = image.detach().to(device="cpu", dtype=torch.float32)
+    band = mask.detach().to(device="cpu", dtype=torch.float32).expand(sample.shape[0], sample.shape[1], -1, -1) > 0.5
+    values = sample[band]
+    if values.numel() == 0:
+        return {"available": False, "pixel_count": 0}
+    horizontal = float((sample[..., 1:] - sample[..., :-1]).abs().mean().item()) if sample.shape[-1] > 1 else 0.0
+    vertical = float((sample[..., 1:, :] - sample[..., :-1, :]).abs().mean().item()) if sample.shape[-2] > 1 else 0.0
+    return {
+        "available": True,
+        "pixel_count": int(values.numel()),
+        "mean": float(values.mean().item()),
+        "std": float(values.std(unbiased=False).item()),
+        "min": float(values.min().item()),
+        "max": float(values.max().item()),
+        "spatial_delta_mean": (horizontal + vertical) / 2.0,
+    }
+
+
+def _compare_blurred_edge_outputs(
+    selected: torch.Tensor,
+    alternate: torch.Tensor,
+    *,
+    mask: torch.Tensor,
+) -> dict[str, Any]:
+    lhs = selected.detach().to(device="cpu", dtype=torch.float32)
+    rhs = alternate.detach().to(device="cpu", dtype=torch.float32)
+    diff = (lhs - rhs).abs()
+    mse = float(((lhs - rhs) ** 2).mean().item())
+    psnr = float("inf") if mse == 0.0 else float(20.0 * math.log10(1.0 / max(math.sqrt(mse), 1e-12)))
+    expanded_mask = mask.detach().to(device="cpu", dtype=torch.float32).expand(lhs.shape[0], lhs.shape[1], -1, -1) > 0.5
+    edge_values = diff[expanded_mask]
+    edge_rmse = 0.0
+    if edge_values.numel() > 0:
+        edge_rmse = math.sqrt(float(((lhs[expanded_mask] - rhs[expanded_mask]) ** 2).mean().item()))
+    return {
+        "available": True,
+        "mae": float(diff.mean().item()),
+        "rmse": float(math.sqrt(max(mse, 0.0))),
+        "max_abs": float(diff.max().item()),
+        "psnr": psnr,
+        "edge_band_mae": float(edge_values.mean().item()) if edge_values.numel() > 0 else 0.0,
+        "edge_band_rmse": edge_rmse,
+    }
+
+
+def _gaussian_sigma_for_kernel(kernel_size: int) -> float:
+    return max(0.8, float(max(1, kernel_size)) / 6.0)
+
+
+def _blur_tensor_box(image: torch.Tensor, *, kernel_size: int) -> torch.Tensor:
+    radius = max(0, int(kernel_size) // 2)
+    if radius < 1:
+        return image
+    padded = F.pad(image, (radius, radius, radius, radius), mode="replicate")
+    return F.avg_pool2d(padded, kernel_size=kernel_size, stride=1)
+
+
+def _blur_tensor_gaussian_1d(image: torch.Tensor, *, kernel_size: int, sigma: float) -> torch.Tensor:
+    radius = max(0, int(kernel_size) // 2)
+    if radius < 1:
+        return image
+    coords = torch.arange(-radius, radius + 1, device=image.device, dtype=image.dtype)
+    kernel_1d = torch.exp(-(coords ** 2) / (2.0 * float(sigma) ** 2))
+    kernel_1d = kernel_1d / kernel_1d.sum().clamp_min(1e-12)
+    channels = int(image.shape[1])
+    padded_x = F.pad(image, (radius, radius, 0, 0), mode="replicate")
+    weight_x = kernel_1d.view(1, 1, 1, kernel_size).repeat(channels, 1, 1, 1)
+    blurred_x = F.conv2d(padded_x, weight_x, groups=channels)
+    padded_y = F.pad(blurred_x, (0, 0, radius, radius), mode="replicate")
+    weight_y = kernel_1d.view(1, 1, kernel_size, 1).repeat(channels, 1, 1, 1)
+    return F.conv2d(padded_y, weight_y, groups=channels)
+
+
+def _render_blurred_edge(
+    image: torch.Tensor,
+    *,
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
+    method: str,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    padded = F.pad(image, (left, right, top, bottom), mode="replicate")
+    if not any((left, right, top, bottom)):
+        return padded, {
+            "method": method,
+            "kernel_size": 1,
+            "radius": 0,
+            "sigma": None,
+            "duration_ms": 0.0,
+        }
+    kernel = max(3, max(left, right, top, bottom) * 2 + 1)
+    if kernel % 2 == 0:
+        kernel += 1
+    sigma = _gaussian_sigma_for_kernel(kernel) if method == "gaussian_1d" else None
+    started = time.perf_counter()
+    if method == "gaussian_1d":
+        blurred = _blur_tensor_gaussian_1d(padded, kernel_size=kernel, sigma=float(sigma))
+    else:
+        blurred = _blur_tensor_box(padded, kernel_size=kernel)
+    blurred[..., top : top + image.shape[-2], left : left + image.shape[-1]] = image
+    return blurred.clamp(0.0, 1.0), {
+        "method": method,
+        "kernel_size": int(kernel),
+        "radius": int(kernel // 2),
+        "sigma": float(sigma) if sigma is not None else None,
+        "duration_ms": float((time.perf_counter() - started) * 1000.0),
+    }
+
+
 def _pad_blurred_edge(
     images: torch.Tensor,
     *,
@@ -347,17 +476,62 @@ def _pad_blurred_edge(
     right: int,
     top: int,
     bottom: int,
-) -> torch.Tensor:
-    padded = F.pad(images, (left, right, top, bottom), mode="replicate")
-    if not any((left, right, top, bottom)):
-        return padded
-    max_pad = max(left, right, top, bottom)
-    kernel = min(31, max(3, (max_pad // 4) * 2 + 1))
-    radius = kernel // 2
-    blurred_source = F.pad(padded, (radius, radius, radius, radius), mode="replicate")
-    blurred = F.avg_pool2d(blurred_source, kernel_size=kernel, stride=1)
-    blurred[..., top : top + images.shape[-2], left : left + images.shape[-1]] = images
-    return blurred.clamp(0.0, 1.0)
+    method: str = "box",
+    compare_diagnostics: bool = False,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    selected_method = str(method or "box").strip().casefold()
+    if selected_method not in SUPPORTED_BLURRED_EDGE_METHODS:
+        raise ValueError(f"Unsupported blurred-edge method: {method!r}.")
+    result, selected_runtime = _render_blurred_edge(
+        images,
+        left=left,
+        right=right,
+        top=top,
+        bottom=bottom,
+        method=selected_method,
+    )
+    mask = _build_blurred_edge_mask(
+        source_height=int(images.shape[-2]),
+        source_width=int(images.shape[-1]),
+        target_height=int(result.shape[-2]),
+        target_width=int(result.shape[-1]),
+        pad_top=top,
+        pad_left=left,
+        device=images.device,
+        dtype=images.dtype,
+    )
+    metadata: dict[str, Any] = {
+        "mode": "blurred_edge",
+        "selected_method": selected_method,
+        "pad_left": int(left),
+        "pad_right": int(right),
+        "pad_top": int(top),
+        "pad_bottom": int(bottom),
+        "selected_runtime": selected_runtime,
+        "selected_quality_proxy": _edge_band_stats(result, mask),
+        "comparison_enabled": bool(compare_diagnostics),
+    }
+    if compare_diagnostics:
+        alternate_method = "gaussian_1d" if selected_method == "box" else "box"
+        alternate, alternate_runtime = _render_blurred_edge(
+            images,
+            left=left,
+            right=right,
+            top=top,
+            bottom=bottom,
+            method=alternate_method,
+        )
+        metadata["comparison"] = {
+            "mode": "same_input_dual_render",
+            "selected_method": selected_method,
+            "alternate_method": alternate_method,
+            "selected_runtime": selected_runtime,
+            "alternate_runtime": alternate_runtime,
+            "selected_quality_proxy": metadata["selected_quality_proxy"],
+            "alternate_quality_proxy": _edge_band_stats(alternate, mask),
+            "selected_vs_alternate": _compare_blurred_edge_outputs(result, alternate, mask=mask),
+        }
+    return result, metadata
 
 
 def apply_target_correction(
@@ -368,6 +542,8 @@ def apply_target_correction(
     aspect_policy: str = "stretch",
     final_size_correction_filter: str = "auto",
     padding_mode: str = "reflect",
+    blurred_edge_method: str = "box",
+    blurred_edge_compare_diagnostics: bool = False,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     if not torch.is_tensor(images) or images.ndim != 4:
         raise ValueError("Target correction requires a BCHW tensor.")
@@ -383,6 +559,7 @@ def apply_target_correction(
         padding_mode=padding_mode,
     )
     resolved_filter = plan.final_size_correction_filter_resolved
+    blurred_edge_runtime: dict[str, Any] | None = None
 
     if plan.aspect_policy == "stretch":
         corrected = images if resolved_filter == "none" else resize_exact(
@@ -436,13 +613,17 @@ def apply_target_correction(
                 value=0.0,
             )
         else:
-            corrected = _pad_blurred_edge(
+            corrected, blurred_edge_runtime = _pad_blurred_edge(
                 resized,
                 left=plan.pad_left,
                 right=plan.pad_right,
                 top=plan.pad_top,
                 bottom=plan.pad_bottom,
+                method=blurred_edge_method,
+                compare_diagnostics=bool(blurred_edge_compare_diagnostics),
             )
+        if plan.padding_mode != "blurred_edge":
+            blurred_edge_runtime = None
 
     if tuple(corrected.shape[-2:]) != (plan.target_height, plan.target_width):
         raise RuntimeError(
@@ -452,6 +633,10 @@ def apply_target_correction(
     metadata = plan.to_dict()
     metadata["output_width"] = int(corrected.shape[-1])
     metadata["output_height"] = int(corrected.shape[-2])
+    metadata["blurred_edge_method"] = str(blurred_edge_method or "box")
+    metadata["blurred_edge_compare_diagnostics"] = bool(blurred_edge_compare_diagnostics)
+    if blurred_edge_runtime is not None:
+        metadata["blurred_edge_runtime"] = blurred_edge_runtime
     return corrected.clamp(0.0, 1.0), metadata
 
 
@@ -459,6 +644,7 @@ resize_to_exact_dimensions = resize_exact
 
 __all__ = [
     "SUPPORTED_ASPECT_POLICIES",
+    "SUPPORTED_BLURRED_EDGE_METHODS",
     "SUPPORTED_EXACT_RESIZE_FILTERS",
     "SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS",
     "SUPPORTED_PADDING_MODES",

@@ -5,12 +5,12 @@
         <h2>Output Viewer</h2>
         <span id="outputDimensions">—</span>
       </div>
-      <div class="viewer-actions" aria-label="Output viewer controls">
-        <button class="icon-button" id="previousOutputButton" type="button" aria-label="Previous output" title="Previous output">‹</button>
-        <button class="icon-button" id="nextOutputButton" type="button" aria-label="Next output" title="Next output">›</button>
-        <button class="text-button viewer-mode-button" id="fitOutputButton" type="button" aria-pressed="true">Fit to Panel</button>
-        <button class="text-button viewer-mode-button" id="imageDetailsButton" type="button" disabled>Image Details</button>
-        <button class="text-button viewer-mode-button" id="openLargeOutputButton" type="button" disabled>Open Large</button>
+      <div class="viewer-actions ui-action-bar" id="outputViewerActionBar" data-action-bar data-action-bar-key="output-viewer" data-action-bar-hover="true" data-action-bar-overflow-label="More output viewer actions" aria-label="Output viewer controls">
+        <button class="ui-action-button ui-icon-control" id="previousOutputButton" type="button" data-action-priority="72" data-action-group="navigation" aria-label="Previous output" title="Previous output"><span class="ui-icon" data-icon="chevron-left" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="nextOutputButton" type="button" data-action-priority="72" data-action-group="navigation" aria-label="Next output" title="Next output"><span class="ui-icon" data-icon="chevron-right" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control viewer-mode-button" id="fitOutputButton" type="button" data-action-priority="82" aria-pressed="true" aria-label="Fit output to panel" title="Fit output to panel"><span class="ui-icon" data-icon="fit-view" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control viewer-mode-button" id="imageDetailsButton" type="button" data-action-priority="58" aria-label="Image details" title="Image details" disabled><span class="ui-icon" data-icon="info" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control viewer-mode-button" id="openLargeOutputButton" type="button" data-action-priority="76" aria-label="Open large output" title="Open large output" disabled><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button>
       </div>
     </div>
     <div class="output-stage is-fit" id="outputStage" tabindex="0" aria-label="Selected completed output">
@@ -44,25 +44,25 @@
         <h2>Recent Outputs</h2>
         <span class="gallery-selection-count" id="gallerySelectionCount" aria-live="polite">0 selected</span>
       </div>
-      <div class="gallery-selection-actions" role="toolbar" aria-label="Recent output selection actions">
-        <button class="text-button" id="selectAllVisibleButton" type="button">Select All Visible</button>
-        <button class="text-button" id="clearGallerySelectionButton" type="button" disabled>Clear Selection</button>
-        <button class="text-button" id="clearRecentOutputsButton" type="button" title="Clear the Recent Outputs list without deleting image files" aria-label="Clear Recent List" disabled>Clear Recent List</button>
-        <button class="primary-button compact-button" id="composeQueueButton" type="button" disabled>Compose Queue (0)</button>
-        <select class="compact-select" id="batchExportFormat" aria-label="Queue export format">
+      <div class="gallery-selection-actions ui-action-bar" id="recentOutputsActionBar" data-action-bar data-action-bar-key="recent-outputs" data-action-bar-hover="true" data-action-bar-overflow-label="More recent output actions" role="toolbar" aria-label="Recent output selection actions">
+        <button class="ui-action-button ui-icon-control" id="selectAllVisibleButton" type="button" data-action-priority="52" data-action-group="selection" aria-label="Select all visible outputs" title="Select all visible outputs"><span class="ui-icon" data-icon="select-all" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="clearGallerySelectionButton" type="button" data-action-priority="46" data-action-group="selection" aria-label="Clear output selection" title="Clear output selection" disabled><span class="ui-icon" data-icon="selection-clear" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="clearRecentOutputsButton" type="button" data-action-priority="18" title="Clear the Recent Outputs list without deleting image files" aria-label="Clear recent output list" disabled><span class="ui-icon" data-icon="clear-finished" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="composeQueueButton" type="button" data-action-priority="94" aria-label="Compose queue from selected outputs" title="Compose queue from selected outputs" disabled><span class="ui-icon" data-icon="queue-compose" aria-hidden="true"></span><span class="ui-action-badge" id="composeQueueBadge" aria-hidden="true" hidden>0</span></button>
+        <select class="compact-select" id="batchExportFormat" data-action-priority="30" data-action-group="transfer" aria-label="Queue export format">
           <option value="native">Native JSON</option>
           <option value="jsonl">JSON Lines</option>
           <option value="csv">CSV</option>
         </select>
-        <button class="text-button" id="importQueueButton" type="button">Import Queue</button>
-        <button class="primary-button compact-button" id="openVariationMatrixButton" type="button">Variation Matrix</button>
-        <button class="text-button" id="exportCurrentButton" type="button">Export Current (1)</button>
-        <button class="text-button" id="exportSelectedOutputsButton" type="button" disabled>Export Selected (0)</button>
-        <button class="text-button" id="recentOutputFilterToggleButton" type="button">Filter</button>
-        <button class="text-button" id="openOutputsButton" type="button">Open Outputs Folder</button>
-        <button class="text-button" id="refreshOutputsButton" type="button">Refresh</button>
-        <button class="text-button" id="recentOutputReloadButton" type="button">Reload Folder</button>
-        <button class="icon-button panel-toggle" id="recentOutputsToggle" data-target="recentOutputsPanel" type="button" aria-label="Collapse recent outputs" aria-expanded="true">⌃</button>
+        <button class="ui-action-button ui-icon-control" id="importQueueButton" type="button" data-action-priority="38" data-action-group="transfer" aria-label="Import queue" title="Import queue"><span class="ui-icon" data-icon="import" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="openVariationMatrixButton" type="button" data-action-priority="88" aria-label="Open Variation Matrix" title="Open Variation Matrix"><span class="ui-icon" data-icon="variation-matrix" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="exportCurrentButton" type="button" data-action-priority="42" data-action-group="transfer" aria-label="Export current output" title="Export current output"><span class="ui-icon" data-icon="export" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="exportSelectedOutputsButton" type="button" data-action-priority="48" data-action-group="transfer" aria-label="Export selected outputs" title="Export selected outputs" disabled><span class="ui-icon" data-icon="export-selection" aria-hidden="true"></span><span class="ui-action-badge" id="exportSelectedOutputsBadge" aria-hidden="true" hidden>0</span></button>
+        <button class="ui-action-button ui-icon-control" id="recentOutputFilterToggleButton" type="button" data-action-priority="68" aria-label="Filter recent outputs" title="Filter recent outputs" aria-controls="recentOutputFilterPanel" aria-expanded="false"><span class="ui-icon" data-icon="filter" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="openOutputsButton" type="button" data-action-priority="34" aria-label="Open outputs folder" title="Open outputs folder"><span class="ui-icon" data-icon="folder-open" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="refreshOutputsButton" type="button" data-action-priority="80" aria-label="Refresh outputs" title="Refresh outputs"><span class="ui-icon" data-icon="refresh" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control" id="recentOutputReloadButton" type="button" data-action-priority="24" aria-label="Reload output folder" title="Reload output folder"><span class="ui-icon" data-icon="folder-reload" aria-hidden="true"></span></button>
+        <button class="ui-action-button ui-icon-control panel-toggle" id="recentOutputsToggle" data-action-pinned="true" data-target="recentOutputsPanel" type="button" aria-label="Collapse recent outputs" title="Collapse recent outputs" aria-expanded="true"><span class="ui-icon" data-icon="chevron-up" aria-hidden="true"></span></button>
       </div>
     </div>
     <div class="recent-output-filter-panel" id="recentOutputFilterPanel" hidden>
@@ -126,15 +126,15 @@
       </div>
       <div class="recent-output-filter-footer">
         <small id="recentOutputFilterSummary">0 shown of 0 scanned</small>
-        <button class="text-button" id="resetRecentOutputFiltersButton" type="button">Reset Filters</button>
+        <button class="ui-action-button ui-icon-control" id="resetRecentOutputFiltersButton" type="button" aria-label="Reset recent output filters" title="Reset recent output filters"><span class="ui-icon" data-icon="filter-reset" aria-hidden="true"></span></button>
       </div>
     </div>
     <div class="thumbnail-carousel" id="recentOutputCarousel" aria-label="Recent output pages">
-      <button class="button small subtle carousel-nav-button" id="recentOutputCarouselPrevButton" type="button" aria-label="Show previous recent output page">‹</button>
+      <button class="ui-action-button ui-icon-control carousel-nav-button" id="recentOutputCarouselPrevButton" type="button" aria-label="Show previous recent output page" title="Previous recent output page"><span class="ui-icon" data-icon="chevron-left" aria-hidden="true"></span></button>
       <div class="thumbnail-viewport" id="recentOutputCarouselViewport">
         <div class="thumbnail-strip" id="recentOutputs" role="list" aria-label="Recent output images"></div>
       </div>
-      <button class="button small subtle carousel-nav-button" id="recentOutputCarouselNextButton" type="button" aria-label="Show next recent output page">›</button>
+      <button class="ui-action-button ui-icon-control carousel-nav-button" id="recentOutputCarouselNextButton" type="button" aria-label="Show next recent output page" title="Next recent output page"><span class="ui-icon" data-icon="chevron-right" aria-hidden="true"></span></button>
     </div>
     <div class="thumbnail-carousel-footer">
       <small id="recentOutputCarouselStatus">Showing 0–0 of 0 recent outputs</small>

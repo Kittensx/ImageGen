@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +30,7 @@ from image_gen.runtime_options import (
 )
 from image_gen.webui.batch_io import BatchIOService
 from image_gen.webui.batch_replay import BatchReplayService
+from image_gen.webui.bug_reports import BugReportError, BugReportService
 from image_gen.webui.diagnostics import write_webui_failure_bundle
 from image_gen.webui.default_assets import resolve_default_assets
 from image_gen.webui.catalog import ASSET_CATALOG_CONTRACT_VERSION, WebUICatalog
@@ -37,15 +39,20 @@ from image_gen.webui.upscaler_catalog import (
     WebUIUpscalerCatalog,
 )
 from image_gen.webui.civitai_asset_metadata import (
+    CivitaiAssetMetadataService,
     CivitaiCredentialError,
     CivitaiMetadataNotFound,
     CivitaiRequestError,
+    civitai_api_key_status,
+    delete_civitai_api_key,
+    write_civitai_api_key,
 )
 from image_gen.webui.image_refs import decode_external_image_ref, is_within_root
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import WebUIModelSelectionState
 from image_gen.webui.output_details import load_image_file_details, load_output_details
 from image_gen.webui.prompt_configuration import PromptConfigurationService
+from image_gen.webui.profile import ImageGenProfileService
 from image_gen.webui.replay import ReplayService
 from image_gen.webui.selection import WebUISelectionResolver
 from image_gen.webui.store import WebUIStore
@@ -85,6 +92,10 @@ class OutputFolderPayload(BaseModel):
     path: str = ""
 
 
+class CivitaiCredentialPayload(BaseModel):
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
 def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     output = dict(base)
     for key, value in dict(override or {}).items():
@@ -109,8 +120,14 @@ def create_app(
     server_started_at_unix = time.time()
     catalog = WebUICatalog(context)
     upscaler_catalog = WebUIUpscalerCatalog(context)
+    civitai_connection = CivitaiAssetMetadataService(context)
     store = WebUIStore(context.data_root / "webui")
     application_settings = store.load_application_settings()
+    profile = ImageGenProfileService(
+        context.project_root,
+        context.data_root,
+        context.txt2img_output_root,
+    )
     if isinstance(runtime_startup_options, RuntimeStartupOptions):
         resolved_runtime_startup = merge_runtime_startup_settings(
             runtime_startup_options,
@@ -129,6 +146,7 @@ def create_app(
         context,
         settings_provider=store.load_application_settings,
         recent_output_provider=lambda path: catalog.output_summary_from_path(Path(path)),
+        output_record_callback=profile.record_generated_image,
     )
     jobs.runtime_startup_options = resolved_runtime_startup.to_dict()
     model_selection = WebUIModelSelectionState(context)
@@ -139,6 +157,7 @@ def create_app(
     variations = VariationMatrixService(context, jobs, model_selection, batch_io)
     prompt_parsers = default_prompt_parser_registry()
     prompt_configuration = PromptConfigurationService(store, parser_registry=prompt_parsers)
+    bug_reports = BugReportService(context.project_root)
     static_root = Path(__file__).resolve().parent / "static"
 
     def _configured_startup_model_path() -> str:
@@ -188,10 +207,19 @@ def create_app(
         if _lora_auto_scan_enabled():
             lora_scan_task = asyncio.create_task(_scan_unknown_loras_in_background())
         try:
+            try:
+                bug_profile = (await asyncio.to_thread(bug_reports.refresh_local)).get("profile", {})
+                await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
+            except Exception:
+                pass
             yield
         finally:
             if lora_scan_task is not None and not lora_scan_task.done():
                 lora_scan_task.cancel()
+            try:
+                await asyncio.to_thread(profile.publish_presence, {}, active=False)
+            except Exception:
+                pass
             await jobs.stop()
 
     app = FastAPI(title="IMAGE_GEN WebUI", version=WEBUI_VERSION, lifespan=lifespan)
@@ -206,6 +234,8 @@ def create_app(
     app.state.variations = variations
     app.state.prompt_parsers = prompt_parsers
     app.state.prompt_configuration = prompt_configuration
+    app.state.profile = profile
+    app.state.bug_reports = bug_reports
     app.state.runtime_startup_options = resolved_runtime_startup.to_dict()
     app.state.server_instance_id = server_instance_id
     app.state.server_started_at_unix = server_started_at_unix
@@ -383,6 +413,100 @@ def create_app(
             "active_model": model_selection.current_payload(),
             "prompt_parsers": prompt_parsers.descriptors(),
         }
+
+    @app.get("/api/profile")
+    async def imagegen_profile() -> dict[str, Any]:
+        try:
+            bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
+            return profile.snapshot(bug_payload.get("profile", {}))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to load the local profile: {exc}") from exc
+
+    @app.patch("/api/profile/sharing")
+    async def update_profile_sharing(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            await asyncio.to_thread(profile.update_sharing, payload or {})
+            bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
+            bug_profile = bug_payload.get("profile", {})
+            presence = await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
+            result = profile.snapshot(bug_profile)
+            result["presence_publish"] = presence
+            return result
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to update profile sharing preferences: {exc}") from exc
+
+    @app.get("/api/profile/discord/community")
+    async def discord_community_status() -> dict[str, Any]:
+        return await asyncio.to_thread(profile.discord_community_status)
+
+    @app.post("/api/profile/discord/connect")
+    async def connect_discord_profile() -> dict[str, Any]:
+        result = await asyncio.to_thread(profile.connect_discord)
+        if not result.get("ok"):
+            state = str(result.get("state") or "discord_link_failed")
+            message = str(result.get("message") or "Unable to link Discord.")
+            status = 503 if state in {"discord_application_required", "helper_required", "native_helper_required", "sdk_unavailable"} else 400
+            raise HTTPException(status_code=status, detail=message)
+        bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
+        snapshot = profile.snapshot(bug_payload.get("profile", {}))
+        snapshot["discord_link"] = result
+        return snapshot
+
+    @app.post("/api/profile/discord/presence")
+    async def refresh_discord_presence() -> dict[str, Any]:
+        bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
+        bug_profile = bug_payload.get("profile", {})
+        result = await asyncio.to_thread(profile.publish_presence, bug_profile, active=True)
+        return {"presence": result, "profile": profile.snapshot(bug_profile)}
+
+    @app.post("/api/profile/discord/disconnect")
+    async def disconnect_discord_profile() -> dict[str, Any]:
+        await asyncio.to_thread(profile.publish_presence, {}, active=False)
+        await asyncio.to_thread(profile.disconnect_discord)
+        bug_payload = await asyncio.to_thread(bug_reports.refresh_local)
+        return profile.snapshot(bug_payload.get("profile", {}))
+
+    @app.get("/api/bug-reports")
+    async def bug_report_catalog() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(bug_reports.refresh_local)
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to prepare local bug reports: {exc}") from exc
+
+    @app.post("/api/bug-reports/sync")
+    async def sync_bug_reports() -> dict[str, Any]:
+        try:
+            await asyncio.to_thread(bug_reports.refresh_local)
+            return await asyncio.to_thread(bug_reports.sync_github)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to synchronize bug reports: {exc}") from exc
+
+    @app.post("/api/bug-reports/{fingerprint}/issue")
+    async def open_bug_report_issue(fingerprint: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(bug_reports.mark_issue_opened, fingerprint)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except BugReportError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/bug-reports/{fingerprint}/bundle")
+    async def download_bug_report_bundle(fingerprint: str) -> FileResponse:
+        try:
+            path = bug_reports.bundle_path(fingerprint)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path, media_type="application/zip", filename=path.name)
+
+    @app.post("/api/bug-reports/{fingerprint}/reveal")
+    async def reveal_bug_report_bundle(fingerprint: str) -> dict[str, Any]:
+        try:
+            path = bug_reports.reveal_bundle(fingerprint)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except BugReportError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"revealed": True, "filename": path.name}
 
     @app.post("/api/system/restart")
     async def restart_backend() -> dict[str, Any]:
@@ -737,6 +861,48 @@ def create_app(
             raise ValueError(f"Unsupported CivitAI asset type: {value}")
         return normalized
 
+    def _civitai_credential_required(exc: CivitaiCredentialError) -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "civitai_credentials_required",
+                "message": "Connect CivitAI in IMAGE_GEN Settings to use this action.",
+            },
+        )
+
+    @app.get("/api/integrations/civitai")
+    async def civitai_connection_status() -> dict[str, Any]:
+        return civitai_api_key_status(context)
+
+    @app.put("/api/integrations/civitai/credential")
+    async def save_civitai_credential(payload: CivitaiCredentialPayload) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(write_civitai_api_key, context, payload.api_key)
+        except CivitaiCredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/integrations/civitai/credential")
+    async def remove_civitai_credential() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(delete_civitai_api_key, context)
+        except CivitaiCredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/integrations/civitai/test")
+    async def test_civitai_connection() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(civitai_connection.test_connection)
+        except CivitaiCredentialError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "civitai_credentials_invalid",
+                    "message": "CivitAI rejected the configured API key. Replace it and try again.",
+                },
+            ) from exc
+        except CivitaiRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     @app.post("/api/civitai/assets/{asset_type}/metadata")
     async def enrich_assets_from_civitai(
         asset_type: str,
@@ -749,7 +915,7 @@ def create_app(
                 return await asyncio.to_thread(upscaler_catalog.enrich_all_from_civitai, mode=mode)
             return await asyncio.to_thread(catalog.enrich_assets_from_civitai, normalized, mode=mode)
         except CivitaiCredentialError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise _civitai_credential_required(exc) from exc
         except CivitaiRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (KeyError, TypeError, ValueError) as exc:
@@ -781,7 +947,7 @@ def create_app(
         except CivitaiMetadataNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except CivitaiCredentialError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise _civitai_credential_required(exc) from exc
         except CivitaiRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (OSError, TypeError, ValueError) as exc:
@@ -895,7 +1061,7 @@ def create_app(
         try:
             return await asyncio.to_thread(catalog.enrich_loras_from_civitai, mode=mode)
         except CivitaiCredentialError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise _civitai_credential_required(exc) from exc
         except CivitaiRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except ValueError as exc:
@@ -920,7 +1086,7 @@ def create_app(
         except CivitaiMetadataNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except CivitaiCredentialError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise _civitai_credential_required(exc) from exc
         except CivitaiRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (OSError, TypeError, ValueError) as exc:

@@ -1,4 +1,5 @@
 import { $ } from "../utils.js";
+import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 
 function formatBytes(value) {
   if (value === null || value === undefined || value === "") return "Unavailable";
@@ -61,6 +62,44 @@ export function renderMemoryStatus(job) {
     ?? (physical.total !== null && reserved !== null ? Math.max(0, reserved - physical.total) : null);
   const oversubscribed = cuda.allocator_oversubscribed === true
     || Boolean(overcommit && overcommit > 0);
+  const previewSuspended = Boolean(status.preview_image_decode_suspended);
+  const oomRecoveryCount = Number(status.oom_recovery_count || 0);
+  const errorText = String(job?.error || "").toLowerCase();
+  const criticalOom = Boolean(job?.status === "failed" && (errorText.includes("out of memory") || errorText.includes("cuda oom")));
+  const hasTelemetry = physical.total !== null || allocated !== null || reserved !== null;
+  const memoryIndicatorStatus = criticalOom
+    ? "critical"
+    : (oversubscribed || previewSuspended || oomRecoveryCount > 0)
+      ? "warning"
+      : hasTelemetry
+        ? "healthy"
+        : "inactive";
+  setSubsystemStatus({
+    id: "memorySubsystemStatusLight",
+    host: "#memoryStatusLightHost",
+    label: "Memory / VRAM",
+    status: memoryIndicatorStatus,
+    stateLabel: criticalOom ? "OOM failure" : oversubscribed ? "Oversubscribed" : previewSuspended ? "Preview suspended" : oomRecoveryCount > 0 ? "Recovered OOM" : hasTelemetry ? "Healthy" : "Unavailable",
+    summary: criticalOom
+      ? "Generation failed because of a memory exhaustion condition."
+      : oversubscribed
+        ? "PyTorch reservation exceeds reported physical VRAM."
+        : previewSuspended
+          ? "Preview decoding was suspended to protect generation headroom."
+          : oomRecoveryCount > 0
+            ? `Memory recovery has been used ${oomRecoveryCount} time${oomRecoveryCount === 1 ? "" : "s"}.`
+            : hasTelemetry ? "Memory telemetry is available and no caution condition is active." : "Memory telemetry is not currently available.",
+    detail: status.preview_image_decode_suspension_reason || job?.error || `Policy: ${policy}. Active stage: ${status.active_stage || job?.status || "idle"}.`,
+    facts: {
+      physical_used: formatBytes(physical.used),
+      physical_free: formatBytes(physical.free),
+      physical_total: formatBytes(physical.total),
+      torch_allocated: formatBytes(allocated),
+      torch_reserved: formatBytes(reserved),
+      oom_recoveries: oomRecoveryCount,
+    },
+    diagnosticTarget: "#memoryStatusPanel",
+  });
 
   if ($("#memoryPolicyBadge")) {
     $("#memoryPolicyBadge").textContent = String(policy).replaceAll("_", " ");
@@ -172,6 +211,30 @@ export function renderRuntimeStartupStatus(status) {
   const restartRequired = Boolean(runtime.restart_required || status?.restart_required);
   const pendingBlocked = Boolean(runtime.pending_change_blocked || status?.pending_change_blocked);
   const restartSettings = runtime.restart_required_settings || [];
+  const runtimeAvailable = Boolean(status && Object.keys(runtime).length);
+  setSubsystemStatus({
+    id: "runtimeSubsystemStatusLight",
+    host: "#runtimeStatusLightHost",
+    label: "Runtime configuration",
+    status: !runtimeAvailable ? "inactive" : (restartRequired || pendingBlocked) ? "warning" : "healthy",
+    stateLabel: !runtimeAvailable ? "Unavailable" : pendingBlocked ? "Override blocked" : restartRequired ? "Restart pending" : "Active",
+    summary: !runtimeAvailable
+      ? "Runtime startup status is unavailable."
+      : pendingBlocked
+        ? "A saved runtime override is blocked until configuration is corrected."
+        : restartRequired
+          ? "Runtime settings have changed and require a full IMAGE_GEN restart."
+          : "Process-start runtime settings are active.",
+    detail: status?.message || (restartSettings.length ? `Restart settings: ${restartSettings.join(", ")}.` : `Attention backend: ${requested} → ${effective}.`),
+    facts: {
+      profile: runtimeText(profile.profile_id, "default"),
+      attention: `${requested} → ${effective}`,
+      kernel_provider: provider,
+      memory_policy: runtimeText(memory.policy),
+      restart_required: restartRequired ? "yes" : "no",
+    },
+    diagnosticTarget: "#runtimeStatusPanel",
+  });
   setRuntimeText("#runtimeRestartBadge", pendingBlocked ? "Override blocked" : (restartRequired ? "Restart pending" : "Active"));
   setRuntimeText(
     "#runtimeRestartStatus",

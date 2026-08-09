@@ -3,6 +3,7 @@ import { $, shortText, formatTime, notify } from "../utils.js";
 import { state } from "../state.js";
 import { openCompletedLightbox } from "./lightbox.js";
 import { openOutputDetails } from "./output-details.js";
+import { setActionBadge, setActionIcon } from "../components/action-icons.js?v=0.1.0";
 
 let reconcileTimer = null;
 let settingsSaveTimer = null;
@@ -550,10 +551,9 @@ function applyAndRenderGallery({ selectNewest = false, focusOutputId = "" } = {}
     actions.className = "compact-row-actions";
     const seedButton = document.createElement("button");
     seedButton.type = "button";
-    seedButton.className = "ghost compact icon-button seed-copy-button";
-    seedButton.title = concreteSeed(item) === null ? "Seed unavailable" : `Copy seed ${concreteSeed(item)}`;
-    seedButton.setAttribute("aria-label", concreteSeed(item) === null ? "Seed unavailable" : `Copy seed ${concreteSeed(item)}`);
-    seedButton.textContent = "🌱";
+    seedButton.className = "ghost compact seed-copy-button";
+    const seedLabel = concreteSeed(item) === null ? "Seed unavailable" : `Copy seed ${concreteSeed(item)}`;
+    setActionIcon(seedButton, "seed", { label: seedLabel, title: seedLabel, replace: true });
     seedButton.disabled = concreteSeed(item) === null;
     seedButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -593,11 +593,19 @@ function publishSelection() {
   if (clearButton) clearButton.disabled = count === 0;
   if (exportButton) {
     exportButton.disabled = count === 0;
-    exportButton.textContent = `Export Selected (${count})`;
+    const exportLabel = count ? `Export ${count} selected output${count === 1 ? "" : "s"}` : "Export selected outputs";
+    exportButton.setAttribute("aria-label", exportLabel);
+    exportButton.title = exportLabel;
+    setActionBadge(exportButton, count);
   }
   if (composeButton) {
     composeButton.disabled = count === 0;
-    composeButton.textContent = `Compose Queue (${count})`;
+    const composeLabel = count
+      ? `Compose queue from ${count} selected output${count === 1 ? "" : "s"}`
+      : "Compose queue from selected outputs";
+    composeButton.setAttribute("aria-label", composeLabel);
+    composeButton.title = composeLabel;
+    setActionBadge(composeButton, count);
   }
   const selected = selectedSet();
   document.querySelectorAll("[data-gallery-output-id]").forEach((node) => {
@@ -716,8 +724,10 @@ function toggleFitMode() {
   const stage = $("#outputStage");
   stage.classList.toggle("is-fit", fit);
   stage.classList.toggle("is-actual", !fit);
-  $("#fitOutputButton").textContent = fit ? "Fit to Panel" : "Actual Size";
-  $("#fitOutputButton").setAttribute("aria-pressed", String(fit));
+  const fitButton = $("#fitOutputButton");
+  const fitLabel = fit ? "Fit output to panel" : "Show output at actual size";
+  setActionIcon(fitButton, fit ? "fit-view" : "actual-size", { label: fitLabel, title: fitLabel });
+  fitButton.setAttribute("aria-pressed", String(fit));
 }
 
 function openSelectedOutput(opener) {
@@ -754,7 +764,10 @@ async function onRefreshNeeded() {
 
 async function reloadRecentOutputFolder() {
   const button = $("#recentOutputReloadButton");
-  if (button) button.disabled = true;
+  if (button) {
+    button.disabled = true;
+    button.classList.add("is-working");
+  }
   try {
     const response = await api.reloadRecentOutputs();
     thumbnailWindowStart = 0;
@@ -771,7 +784,10 @@ async function reloadRecentOutputFolder() {
   } catch (error) {
     notify(error.message, "error");
   } finally {
-    if (button) button.disabled = false;
+    if (button) {
+      button.disabled = false;
+      button.classList.remove("is-working");
+    }
   }
 }
 

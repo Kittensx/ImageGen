@@ -416,6 +416,7 @@ SUPPORTED_EXACT_RESIZE_FILTERS = frozenset({"nearest", "bilinear", "bicubic", "a
 SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS = frozenset({"auto", *SUPPORTED_EXACT_RESIZE_FILTERS})
 SUPPORTED_ASPECT_POLICIES = frozenset({"stretch", "crop_to_fill", "pad_to_fit"})
 SUPPORTED_PADDING_MODES = frozenset({"reflect", "replicate", "blurred_edge", "black"})
+SUPPORTED_BLURRED_EDGE_METHODS = frozenset({"box", "gaussian_1d"})
 
 
 @dataclass(frozen=True)
@@ -434,6 +435,8 @@ class UpscaleRequest:
     final_size_correction_filter: str = ""
     aspect_policy: str = "stretch"
     padding_mode: str = "reflect"
+    blurred_edge_method: str = "box"
+    blurred_edge_compare_diagnostics: bool = False
     allow_tiling: bool = True
     allow_oom_retry: bool = True
     minimum_retry_tile_size: int = 64
@@ -460,6 +463,7 @@ class UpscaleRequest:
         final_size_correction_filter = str(self.final_size_correction_filter or "").strip().casefold()
         aspect_policy = str(self.aspect_policy or "stretch").strip().casefold()
         padding_mode = str(self.padding_mode or "reflect").strip().casefold()
+        blurred_edge_method = str(self.blurred_edge_method or "box").strip().casefold()
         if dtype_policy not in SUPPORTED_UPSCALE_DTYPE_POLICIES:
             raise ValueError(
                 f"Unsupported upscaler dtype_policy: {self.dtype_policy!r}."
@@ -480,6 +484,10 @@ class UpscaleRequest:
             raise ValueError(f"Unsupported aspect_policy: {self.aspect_policy!r}.")
         if padding_mode not in SUPPORTED_PADDING_MODES:
             raise ValueError(f"Unsupported padding_mode: {self.padding_mode!r}.")
+        if blurred_edge_method not in SUPPORTED_BLURRED_EDGE_METHODS:
+            raise ValueError(
+                f"Unsupported blurred_edge_method: {self.blurred_edge_method!r}."
+            )
         if tile_size < 0:
             raise ValueError("Upscaler tile_size must be zero or positive.")
         if tile_overlap < 0:
@@ -504,6 +512,8 @@ class UpscaleRequest:
             final_size_correction_filter=final_size_correction_filter,
             aspect_policy=aspect_policy,
             padding_mode=padding_mode,
+            blurred_edge_method=blurred_edge_method,
+            blurred_edge_compare_diagnostics=bool(self.blurred_edge_compare_diagnostics),
             allow_tiling=bool(self.allow_tiling),
             allow_oom_retry=bool(self.allow_oom_retry),
             minimum_retry_tile_size=minimum_retry_tile_size,
@@ -526,6 +536,8 @@ class UpscaleRequest:
             "final_size_correction_filter": normalized.final_size_correction_filter,
             "aspect_policy": normalized.aspect_policy,
             "padding_mode": normalized.padding_mode,
+            "blurred_edge_method": normalized.blurred_edge_method,
+            "blurred_edge_compare_diagnostics": bool(normalized.blurred_edge_compare_diagnostics),
             "allow_tiling": bool(normalized.allow_tiling),
             "allow_oom_retry": bool(normalized.allow_oom_retry),
             "minimum_retry_tile_size": int(normalized.minimum_retry_tile_size),

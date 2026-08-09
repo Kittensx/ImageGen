@@ -45,6 +45,110 @@
       </div>
     </section>
 
+    <section class="home-component home-profile" id="homeProfileComponent" data-workspace-component="home.profile" data-component-variant="feature" data-component-span="12">
+      <div class="home-component-heading home-profile-heading">
+        <div>
+          <span class="home-eyebrow">Your ImageGen profile</span>
+          <h3>Usage, contributions & community</h3>
+        </div>
+        <div class="home-profile-badges" aria-label="Profile badges">
+          <span class="home-status-pill" id="homeProfileInstallBadge">Local profile</span>
+          <span class="home-status-pill home-contributor-badge" id="homeBugReporterBadge">Bug Reporter · 0</span>
+        </div>
+      </div>
+      <p class="home-component-copy">A privacy-safe profile for this ImageGen installation. It tracks aggregate usage and contribution milestones only; prompts, generated images, filenames, and image contents are never part of the public/shareable profile.</p>
+
+      <div class="home-profile-layout">
+        <div class="home-profile-main">
+          <div class="home-profile-identity" aria-label="Installation profile">
+            <div>
+              <span class="home-profile-label">Installed</span>
+              <strong id="homeProfileInstalledAt">—</strong>
+              <small id="homeProfileInstalledFor">First profile load pending</small>
+            </div>
+            <div>
+              <span class="home-profile-label">ImageGen version</span>
+              <strong id="homeProfileVersion">—</strong>
+              <small id="homeProfileFirstVersion">First seen version —</small>
+            </div>
+            <div>
+              <span class="home-profile-label">Discord</span>
+              <strong id="homeProfileDiscordState">Not connected</strong>
+              <small id="homeProfileDiscordServerState">Server membership not linked</small>
+            </div>
+          </div>
+
+          <div class="home-profile-metrics" aria-label="ImageGen profile statistics">
+            <div class="home-profile-primary-stat">
+              <strong id="homeProfileImagesCreated">0</strong>
+              <span>Images created</span>
+            </div>
+            <div><strong id="homeBugReportedCount">0</strong><span>Bugs reported</span></div>
+            <div><strong id="homeBugResolvedCount">0</strong><span>Bugs resolved</span></div>
+            <div><strong id="homeBugOpenCount">0</strong><span>Bugs open</span></div>
+            <div><strong id="homeBugResolutionRate">0%</strong><span>Resolution rate</span></div>
+            <div><strong id="homeBugPendingCount">0</strong><span>Pending review</span></div>
+          </div>
+
+          <div class="home-component-actions home-profile-actions">
+            <button class="primary-button" id="homeReviewBugReports" type="button">Review Bug Reports</button>
+            <button class="secondary-button" id="homeSyncBugReports" type="button">Refresh GitHub Status</button>
+            <span class="home-bug-sync-status" id="homeBugSyncStatus">Local reports not scanned yet.</span>
+          </div>
+        </div>
+
+        <aside class="home-profile-discord" aria-label="Discord profile sharing">
+          <div class="home-profile-discord-heading">
+            <div>
+              <span class="home-eyebrow">Discord sharing</span>
+              <h4>Community presence</h4>
+            </div>
+            <span class="home-status-pill" id="homeDiscordCapabilityBadge">Setup pending</span>
+          </div>
+          <p id="homeDiscordCapabilityText">Connect this ImageGen installation to your Discord account. Account identity is stored locally; OAuth access and refresh tokens are never stored by the WebUI.</p>
+
+          <div class="home-discord-community-status" id="homeDiscordCommunityStatus" aria-live="polite">
+            <span class="home-discord-online-dot" id="homeDiscordOnlineDot" aria-hidden="true"></span>
+            <div>
+              <span class="home-profile-label">ImageGen community</span>
+              <strong id="homeDiscordOnlineCount">Checking members online...</strong>
+              <small id="homeDiscordOnlinePrivacy">Only the server total is displayed; member names are not shown.</small>
+            </div>
+          </div>
+
+          <label class="home-profile-toggle">
+            <input id="homeDiscordPresenceEnabled" type="checkbox">
+            <span><strong>Show “Currently using ImageGen”</strong><small>Opt in to Discord Rich Presence while ImageGen is running.</small></span>
+          </label>
+          <label class="home-profile-toggle">
+            <input id="homeDiscordIntroEnabled" type="checkbox">
+            <span><strong>Share my intro profile on the server</strong><small>Let the future ImageGen bot post one privacy-safe first-impression card after your linked account joins.</small></span>
+          </label>
+
+          <details class="home-profile-sharing-details">
+            <summary>Choose stats I can share</summary>
+            <div class="home-profile-sharing-options">
+              <label><input id="homeShareInstallDate" type="checkbox"> Installed since</label>
+              <label><input id="homeShareImageCount" type="checkbox"> Images created</label>
+              <label><input id="homeShareBugStats" type="checkbox"> Bug contribution stats</label>
+            </div>
+          </details>
+
+          <div class="home-profile-discord-preview" id="homeDiscordPreview">
+            <span>Discord activity preview</span>
+            <strong>Currently using ImageGen</strong>
+            <small id="homeDiscordActivityState">Aggregate stats only</small>
+          </div>
+
+          <div class="home-component-actions">
+            <button class="secondary-button" id="homeDiscordConnectButton" type="button">Connect Discord</button>
+            <button class="secondary-button" id="homeDiscordServerButton" type="button">Open ImageGen Server</button>
+            <button class="secondary-button" id="homeDiscordPresenceRefresh" type="button" disabled>Refresh Presence</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
     <section class="home-component" data-workspace-component="home.developer-updates" data-component-variant="horizontal" data-component-span="12">
       <div class="home-component-heading">
         <div>

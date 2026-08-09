@@ -330,6 +330,7 @@ function bindThemePalette(settings) {
 
   $("#accentThemeButton")?.addEventListener("click", () => openEditor("accent"));
   $("#surfaceThemeButton")?.addEventListener("click", () => openEditor("surface"));
+  $("#openThemeManagerButton")?.addEventListener("click", () => openEditor("accent"));
 
   ["accent", "surface"].forEach((kind) => {
     const prefix = kind === "accent" ? "accentTheme" : "surfaceTheme";

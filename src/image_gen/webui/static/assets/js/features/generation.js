@@ -6,10 +6,13 @@ import {
   renderLivePreviewJob,
   setLivePreviewTransport,
   stopLivePreview,
-} from "./live-preview.js?v=0.1.56";
-import { showOutput, upsertRecentOutput } from "./gallery.js";
+} from "./live-preview.js?v=status-action-icons1";
+import { showOutput, upsertRecentOutput } from "./gallery.js?v=0.1.46";
 import { openOutputDetailsData } from "./output-details.js";
-import { preflightCurrentPrompt } from "./prompt-tools.js?v=0.1.68";
+import { preflightCurrentPrompt } from "./prompt-tools.js?v=prompt-cards1";
+import { resetGenerateControl, setGenerateControlState } from "../components/generation-control.js?v=0.1.0";
+import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
+import { setActionIcon } from "../components/action-icons.js?v=0.1.0";
 
 let refreshOutputs = async () => {};
 let collectValues = () => ({});
@@ -25,21 +28,17 @@ let eventStreamFailures = 0;
 let eventStreamDisabledUntil = 0;
 let workerState = {};
 
-function setSubmissionBusy(active, stage = "") {
-  ["#generateButton", "#topGenerateButton"].forEach((selector) => {
-    const button = $(selector);
-    if (!button) return;
-    button.disabled = active;
-    if (active) {
-      button.dataset.originalText = button.dataset.originalText || button.textContent || "Generate";
-      button.textContent = stage || "Queueing…";
-    } else if (button.dataset.originalText) {
-      button.textContent = button.dataset.originalText;
-    }
-  });
-  ["#generateMenuButton", "#topInfinityButton", "#infinityButton"].forEach((selector) => {
-    const button = $(selector);
-    if (button) button.disabled = active;
+function setSubmissionBusy(active, phase = "submitting", stage = "") {
+  const button = $("#generateButton");
+  if (button) button.disabled = active;
+  if (active) {
+    setGenerateControlState({ phase, status: stage || "Queueing…", busy: true });
+  } else {
+    resetGenerateControl();
+  }
+  ["#generateMenuButton", "#infinityButton"].forEach((selector) => {
+    const control = $(selector);
+    if (control) control.disabled = active;
   });
 }
 
@@ -152,18 +151,7 @@ async function viewQueueJob(job) {
 function decorateQueueAction(control, { icon, label }) {
   if (!control) return control;
   control.classList.add("queue-action-button");
-  if (label) {
-    control.title = label;
-    if (!control.getAttribute("aria-label")) control.setAttribute("aria-label", label);
-  }
-  const iconNode = document.createElement("span");
-  iconNode.className = "queue-action-icon";
-  iconNode.setAttribute("aria-hidden", "true");
-  iconNode.textContent = icon || "•";
-  const labelNode = document.createElement("span");
-  labelNode.className = "queue-action-label";
-  labelNode.textContent = label || "";
-  control.replaceChildren(iconNode, labelNode);
+  setActionIcon(control, icon, { label, title: label, replace: true });
   return control;
 }
 
@@ -223,6 +211,45 @@ function monitoredJob() {
   return state.jobs.find((job) => job.job_id === state.activeJobId) || null;
 }
 
+function renderQueueSubsystemStatus() {
+  const online = Boolean(workerState?.online);
+  const queued = (state.jobs || []).filter((job) => job.status === "queued").length;
+  const active = (state.jobs || []).filter((job) => ACTIVE_JOB_STATUSES.has(String(job.status || ""))).length;
+  const failed = (state.jobs || []).filter((job) => job.status === "failed").length;
+  const paused = Boolean(workerState?.queue_pause_requested || workerState?.queue_paused);
+  let status = "healthy";
+  let stateLabel = "Ready";
+  let summary = "Queue is accepting generation work.";
+  if (!online) {
+    status = "inactive";
+    stateLabel = "Offline";
+    summary = "Queue worker is offline.";
+  } else if (paused) {
+    status = "warning";
+    stateLabel = workerState?.queue_paused ? "Paused" : "Pause pending";
+    summary = "Queue processing is intentionally paused or waiting to pause.";
+  } else if (active || queued) {
+    status = "transitioning";
+    stateLabel = active ? "Processing" : "Queued";
+    summary = active ? "Queue is actively processing generation work." : "Generation work is waiting in the queue.";
+  } else if (failed) {
+    status = "warning";
+    stateLabel = "Attention";
+    summary = `${failed} failed queue entr${failed === 1 ? "y" : "ies"} remain in this session.`;
+  }
+  setSubsystemStatus({
+    id: "queueSubsystemStatusLight",
+    host: "#queueStatusLightHost",
+    label: "Generation queue",
+    status,
+    stateLabel,
+    summary,
+    detail: `Worker online: ${online ? "yes" : "no"}. Active: ${active}. Queued: ${queued}. Failed: ${failed}.`,
+    facts: { active, queued, failed, pause_requested: paused ? "yes" : "no" },
+    diagnosticTarget: "#queuePanel",
+  });
+}
+
 function renderWarmWorkerStatus(warm = {}) {
   const persistentMode = state.settings.generation_worker_mode === "persistent_experimental" && state.settings.warm_worker_enabled === true;
   $("#modelWarmStatusPanel")?.classList.toggle("is-hidden", !persistentMode);
@@ -234,6 +261,46 @@ function renderWarmWorkerStatus(warm = {}) {
   const unloadButton = $("#unloadWarmModelButton");
   const recoverButton = $("#recoverWarmWorkerButton");
   const clearQueueButton = $("#clearQueuedJobsButton");
+  const warmTransitionStages = new Set(["starting", "preparing_model", "loading_tokenizer", "loading_checkpoint", "reusing_checkpoint", "applying_retention_policy"]);
+  let warmIndicatorStatus = "inactive";
+  let warmIndicatorLabel = "Inactive";
+  if (persistentMode) {
+    if (warm.last_error) {
+      warmIndicatorStatus = "critical";
+      warmIndicatorLabel = "Error";
+    } else if (!warm.online) {
+      warmIndicatorStatus = "inactive";
+      warmIndicatorLabel = "Offline";
+    } else if (warmTransitionStages.has(stage)) {
+      warmIndicatorStatus = "transitioning";
+      warmIndicatorLabel = humanizeStage(stage);
+    } else if (warm.cpu_fallback_reason) {
+      warmIndicatorStatus = "warning";
+      warmIndicatorLabel = "CPU fallback";
+    } else {
+      warmIndicatorStatus = "healthy";
+      warmIndicatorLabel = warmState === "warm" || ["ready", "model_ready"].includes(stage) ? "Ready" : "Online";
+    }
+  }
+  setSubsystemStatus({
+    id: "warmWorkerStatusLight",
+    host: "#workerStatusLights",
+    label: "Persistent worker",
+    status: warmIndicatorStatus,
+    stateLabel: warmIndicatorLabel,
+    summary: persistentMode
+      ? (warm.last_error ? "Persistent worker reported an error." : `Persistent worker is ${warmIndicatorLabel.toLowerCase()}.`)
+      : "Persistent worker mode is disabled.",
+    detail: warm.last_error || warm.cpu_fallback_reason || `Stage: ${stage}. Warm state: ${warmState}.`,
+    facts: {
+      mode: persistentMode ? "enabled" : "disabled",
+      stage,
+      warm_state: warmState,
+      model: String(warm.current_model_path || warm.selected_model_path || "").split(/[\/]/).pop() || "none",
+      cuda: warm.cuda_available === false ? "unavailable" : warm.cuda_available === true ? "available" : "unknown",
+    },
+    diagnosticTarget: "#runtimeStatusPanel",
+  });
   if (badge) {
     badge.textContent = stage === "ready" ? "Ready" : humanizeStage(stage);
     badge.className = `status-badge ${stage === "ready" ? "warm" : stage}`;
@@ -277,7 +344,27 @@ function renderWorker(worker) {
     : "Offline";
   $("#footerWorkerStatus").textContent = `Worker: ${online ? (pauseLabel || "online").toLowerCase() : "offline"}`;
   $("#workerPill").classList.toggle("is-offline", !online);
+  setSubsystemStatus({
+    id: "workerConnectionStatusLight",
+    host: "#workerStatusLights",
+    label: "Worker connection",
+    status: online ? "healthy" : "inactive",
+    stateLabel: online ? "Online" : "Offline",
+    summary: online ? "Generation worker is online." : "Generation worker is offline.",
+    detail: online
+      ? `${worker.active_job_id ? "An active job is running." : "No active job."} ${Number(worker.queued || 0)} queued.`
+      : "The WebUI is not currently connected to an active generation worker.",
+    facts: {
+      online: online ? "yes" : "no",
+      active_job: worker.active_job_id || "none",
+      queued: Number(worker.queued || 0),
+      queue_paused: worker.queue_paused ? "yes" : "no",
+    },
+    diagnosticTarget: "#runtimeStatusPanel",
+    placement: "prepend",
+  });
   renderWarmWorkerStatus(worker?.warm_worker || {});
+  renderQueueSubsystemStatus();
 }
 
 function jobCanBeCancelled(job) {
@@ -305,6 +392,7 @@ function renderQueue(jobs) {
   list.replaceChildren();
   const visibleJobs = visibleQueueJobs();
   refreshQueueToolbar();
+  renderQueueSubsystemStatus();
   if (!visibleJobs.length) {
     list.className = "stack-list empty-state";
     list.textContent = state.jobs.length ? "No queue items match the current filter." : "No queued generations.";
@@ -396,7 +484,8 @@ function renderQueue(jobs) {
       const cancelLabel = job.status === "queued"
         ? "Cancel queued item"
         : job.status === "cancelling" ? "Cancelling…" : "Cancel generation";
-      decorateQueueAction(cancelButton, { icon: job.status === "cancelling" ? "…" : "⏹", label: cancelLabel });
+      decorateQueueAction(cancelButton, { icon: "stop", label: cancelLabel });
+      cancelButton.classList.toggle("is-working", job.status === "cancelling");
       cancelButton.addEventListener("click", () => cancelQueueJob(job));
       actions.append(cancelButton);
       card.classList.add("is-cancellable");
@@ -411,7 +500,7 @@ function renderQueue(jobs) {
       const viewButton = document.createElement("button");
       viewButton.type = "button";
       viewButton.className = "small-button";
-      decorateQueueAction(viewButton, { icon: "🖼", label: "View output" });
+      decorateQueueAction(viewButton, { icon: "image-view", label: "View output" });
       viewButton.addEventListener("click", () => viewQueueJob(job));
       actions.append(viewButton);
     }
@@ -420,7 +509,7 @@ function renderQueue(jobs) {
     seedButton.className = "small-button";
     const copySeedValue = concreteQueueSeed(job);
     decorateQueueAction(seedButton, {
-      icon: "🌱",
+      icon: "seed",
       label: copySeedValue === null ? "Seed unavailable" : "Copy seed",
     });
     seedButton.disabled = copySeedValue === null;
@@ -434,7 +523,7 @@ function renderQueue(jobs) {
     diagnosticsLink.href = `/api/jobs/${encodeURIComponent(job.job_id)}/diagnostics`;
     diagnosticsLink.target = "_blank";
     diagnosticsLink.rel = "noopener";
-    decorateQueueAction(diagnosticsLink, { icon: "🩺", label: "Run diagnostics" });
+    decorateQueueAction(diagnosticsLink, { icon: "diagnostics", label: "Run diagnostics" });
     actions.append(diagnosticsLink);
     if (job.console_log_path) {
       const logLink = document.createElement("a");
@@ -442,14 +531,14 @@ function renderQueue(jobs) {
       logLink.href = `/api/jobs/${encodeURIComponent(job.job_id)}/log`;
       logLink.target = "_blank";
       logLink.rel = "noopener";
-      decorateQueueAction(logLink, { icon: "🧾", label: "Console log" });
+      decorateQueueAction(logLink, { icon: "console-log", label: "Console log" });
       actions.append(logLink);
     }
     if (canRemoveQueueJob(job)) {
       const removeButton = document.createElement("button");
       removeButton.type = "button";
       removeButton.className = "small-button";
-      decorateQueueAction(removeButton, { icon: "✕", label: "Remove" });
+      decorateQueueAction(removeButton, { icon: "remove", label: "Remove" });
       removeButton.addEventListener("click", () => {
         dismissQueueJob(job.job_id);
         renderQueue(state.jobs);
@@ -510,37 +599,67 @@ function updateActiveState() {
     && !["finalizing", "cancelling"].includes(String(running.status || "")),
   );
   const pauseControlAvailable = queuePauseRequested || canRequestPause || Number(workerState?.queued || 0) > 0;
-  const pauseLabel = queuePauseRequested
-    ? "▶ Resume Queue"
-    : running?.status === "paused"
-      ? "▶ Resume Queue"
-      : "⏸ Pause After Current Image";
+  const resumeQueue = queuePauseRequested || running?.status === "paused";
+  const pauseLabel = resumeQueue ? "Resume queue" : "Pause after current image";
   const canSkip = Boolean(
     running
     && running.status === "running"
     && !running.skip_current_requested
     && String(workerState?.model_runtime?.current_job_id || "") === String(running.job_id || ""),
   );
-  $("#cancelButton").classList.toggle("is-hidden", !jobCanBeCancelled(running));
-  $("#topCancelButton")?.classList.toggle("is-disabled", !jobCanBeCancelled(running));
-  if ($("#topCancelButton")) $("#topCancelButton").disabled = !jobCanBeCancelled(running);
-  ["#pauseGenerationButton", "#topPauseButton"].forEach((selector) => {
-    const button = $(selector);
-    if (!button) return;
-    button.textContent = pauseLabel;
-    button.disabled = !pauseControlAvailable;
-    button.classList.toggle("is-hidden", selector === "#pauseGenerationButton" && !pauseControlAvailable);
-    button.classList.toggle("is-active", queuePauseRequested);
+  const generationMotionActive = Boolean(running && running.status !== "paused");
+  document.querySelectorAll('.site-nav-icon[data-icon="generate"]').forEach((icon) => {
+    icon.classList.toggle("is-generating", generationMotionActive);
   });
-  ["#skipGenerationButton", "#topSkipButton"].forEach((selector) => {
-    const button = $(selector);
-    if (!button) return;
-    button.textContent = running?.skip_current_requested ? "Skipping…" : "⏭ Skip Current Image";
-    button.disabled = !canSkip;
-    button.classList.toggle("is-hidden", selector === "#skipGenerationButton" && !running);
-  });
-  $("#infinityButton").classList.toggle("is-active", forever);
-  $("#infinityButton").textContent = forever ? "[ ∞ Generating ]" : "∞ Generate Forever";
+  const cancelButton = $("#cancelButton");
+  cancelButton?.classList.toggle("is-hidden", !jobCanBeCancelled(running));
+  if (cancelButton) {
+    cancelButton.setAttribute("aria-label", "Cancel active generation");
+    cancelButton.title = "Cancel active generation";
+  }
+  const pauseButton = $("#pauseGenerationButton");
+  if (pauseButton) {
+    pauseButton.classList.toggle("is-active", queuePauseRequested);
+    pauseButton.disabled = !pauseControlAvailable;
+    pauseButton.classList.toggle("is-hidden", !pauseControlAvailable);
+    setActionIcon(pauseButton, resumeQueue ? "play" : "pause", { label: pauseLabel, title: pauseLabel });
+  }
+  const skipButton = $("#skipGenerationButton");
+  if (skipButton) {
+    const skipLabel = running?.skip_current_requested ? "Skipping current image" : "Skip current image";
+    skipButton.disabled = !canSkip;
+    skipButton.classList.toggle("is-hidden", !running);
+    skipButton.classList.toggle("is-working", Boolean(running?.skip_current_requested));
+    setActionIcon(skipButton, "skip-next", { label: skipLabel, title: skipLabel });
+  }
+  const infinityButton = $("#infinityButton");
+  infinityButton?.classList.toggle("is-active", forever);
+  const infinityLabel = $("#infinityButtonLabel");
+  if (infinityLabel) infinityLabel.textContent = forever ? "Generating Forever" : "Generate Forever";
+  if (infinityButton) {
+    const label = forever ? "Cancel generate forever" : "Generate forever";
+    infinityButton.setAttribute("aria-label", label);
+    infinityButton.title = label;
+    infinityButton.querySelector(":scope > .ui-icon")?.classList.toggle("is-generating", forever && generationMotionActive);
+  }
+  if (!submitInFlight) {
+    if (running) {
+      const stageLabel = running?.skip_current_requested
+        ? "Skipping current image…"
+        : queuePauseRequested && !canRequestPause
+          ? "Queue paused"
+          : humanizeStage(running.worker_stage || running.status);
+      setGenerateControlState({
+        phase: running.worker_stage || running.status || "running",
+        status: forever ? `${stageLabel} · ∞` : stageLabel,
+        busy: true,
+      });
+    } else if (queuePauseRequested) {
+      setGenerateControlState({ phase: "paused", status: "Queue paused", busy: true });
+    } else {
+      resetGenerateControl();
+    }
+  }
   renderLivePreviewJob(job);
 }
 
@@ -667,6 +786,7 @@ function connectEventStream(job) {
   bindEvent("step-preview", applyEventPayload);
   bindEvent("job-output-produced", async (payload) => {
     applyEventPayload(payload);
+    window.dispatchEvent(new CustomEvent("image-gen-profile-refresh"));
     const recentOutput = payload?.recent_output || null;
     if (recentOutput) {
       upsertRecentOutput(recentOutput, {
@@ -744,6 +864,27 @@ async function pollJobs() {
       }
     } catch (error) {
       renderWorker({ online: false, queued: 0 });
+      setSubsystemStatus({
+        id: "workerConnectionStatusLight",
+        host: "#workerStatusLights",
+        label: "Worker connection",
+        status: "critical",
+        stateLabel: "Connection error",
+        summary: "The WebUI could not read generation worker status.",
+        detail: error?.message || String(error || "Unknown worker status error"),
+        diagnosticTarget: "#runtimeStatusPanel",
+        placement: "prepend",
+      });
+      setSubsystemStatus({
+        id: "queueSubsystemStatusLight",
+        host: "#queueStatusLightHost",
+        label: "Generation queue",
+        status: "critical",
+        stateLabel: "Status unavailable",
+        summary: "Queue status could not be refreshed because the worker status request failed.",
+        detail: error?.message || String(error || "Unknown queue status error"),
+        diagnosticTarget: "#queuePanel",
+      });
       setLivePreviewTransport("fallback", eventStreamFailures);
       console.error(error);
     } finally {
@@ -767,10 +908,10 @@ export async function acceptQueuedJob(job, { message = "Generation added to the 
 async function submit(unlimited) {
   if (submitInFlight) return;
   submitInFlight = true;
-  setSubmissionBusy(true, "Validating…");
+  setSubmissionBusy(true, "validating", "Validating…");
   try {
     const values = { ...collectValues(), unlimited: Boolean(unlimited) };
-    setSubmissionBusy(true, "Validating prompt…");
+    setSubmissionBusy(true, "validating_prompt", "Validating prompt…");
     const promptPreflight = await preflightCurrentPrompt(values);
     const promptErrors = promptPreflight.blocking_errors || [];
     if (promptErrors.length) {
@@ -783,7 +924,7 @@ async function submit(unlimited) {
     }
     Object.assign(values, promptPreflight.normalized_fields || {});
     values.prompt_preflight = promptPreflight;
-    setSubmissionBusy(true, "Validating scheduler…");
+    setSubmissionBusy(true, "validating_scheduler", "Validating scheduler…");
     const schedulerPreflight = await api.validateScheduler(values);
     const warnings = schedulerPreflight.validation_warnings || [];
     if (warnings.length) {
@@ -793,13 +934,13 @@ async function submit(unlimited) {
       if (!accepted) return;
       values._webui_scheduler_warnings_acknowledged = true;
     }
-    setSubmissionBusy(true, "Activating model selection…");
+    setSubmissionBusy(true, "activating_model", "Activating model selection…");
     const activeModel = await ensureModelReady();
     if (!activeModel || activeModel.resolved_path !== values.model_path) {
       throw new Error("The selected checkpoint was not activated by the backend. Select the model again before generating.");
     }
     values._webui_model_selection_id = activeModel.selection_id || values._webui_model_selection_id || "";
-    setSubmissionBusy(true, "Queueing…");
+    setSubmissionBusy(true, "queueing", "Queueing…");
     const job = await api.submitJob(values);
     const modelWillActivateOnWorker = !state.activeModel || state.activeModel.resolved_path !== values.model_path;
     const message = unlimited
@@ -890,6 +1031,27 @@ export function bindGeneration(options) {
   refreshOutputs = options.refreshOutputs;
   ensureModelReady = options.ensureModelReady || ensureModelReady;
   bindLivePreview({ cancelActive });
+  setSubsystemStatus({
+    id: "workerConnectionStatusLight",
+    host: "#workerStatusLights",
+    label: "Worker connection",
+    status: "transitioning",
+    stateLabel: "Connecting",
+    summary: "Connecting to the generation worker.",
+    detail: "The WebUI is waiting for the first worker status response.",
+    diagnosticTarget: "#runtimeStatusPanel",
+    placement: "prepend",
+  });
+  setSubsystemStatus({
+    id: "warmWorkerStatusLight",
+    host: "#workerStatusLights",
+    label: "Persistent worker",
+    status: "inactive",
+    stateLabel: "Checking",
+    summary: "Persistent worker state has not been received yet.",
+    detail: "This indicator updates with the first worker status response.",
+    diagnosticTarget: "#runtimeStatusPanel",
+  });
 
   $("#generationForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -899,16 +1061,7 @@ export function bindGeneration(options) {
     event?.preventDefault?.();
     submit(false);
   };
-  $("#topGenerateButton")?.addEventListener("click", submitNow);
   $("#generateButton")?.addEventListener("click", submitNow);
-  $("#topInfinityButton")?.addEventListener("click", () => {
-    const job = activeJob();
-    if (job?.request?.unlimited) cancelActive();
-    else submit(true);
-  });
-  $("#topCancelButton")?.addEventListener("click", cancelActive);
-  $("#topPauseButton")?.addEventListener("click", togglePauseQueue);
-  $("#topSkipButton")?.addEventListener("click", skipCurrentImage);
   $("#infinityButton").addEventListener("click", () => {
     const job = activeJob();
     if (job?.request?.unlimited) cancelActive();

@@ -41,7 +41,7 @@ Near-future model-family work is expected to add support for:
 
 These are not simple model-browser toggles. Each family requires its own conditioning/model contract to be implemented and validated before generation is enabled.
 
-Until that work lands, SD 2.x and SDXL should remain clearly marked as planned.
+Until that work lands, SD 2.x and SDXL will remain clearly marked as planned.
 
 ## Asset Hub and Interoperability
 

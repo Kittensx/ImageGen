@@ -266,6 +266,10 @@ class StandaloneNeuralUpscaler:
                 aspect_policy=request.aspect_policy,
                 final_size_correction_filter=requested_correction_filter,
                 padding_mode=request.padding_mode,
+                blurred_edge_method=request.blurred_edge_method,
+                blurred_edge_compare_diagnostics=bool(
+                    request.blurred_edge_compare_diagnostics
+                ),
             )
         except Exception as exc:
             raise UpscaleRuntimeError(format_hires_failure(
@@ -317,6 +321,10 @@ class StandaloneNeuralUpscaler:
             "final_size_correction_filter": requested_correction_filter,
             "aspect_policy": request.aspect_policy,
             "padding_mode": request.padding_mode,
+            "blurred_edge_method": request.blurred_edge_method,
+            "blurred_edge_compare_diagnostics": bool(
+                request.blurred_edge_compare_diagnostics
+            ),
             "target_correction": correction_metadata,
             "predicted_native_width": predicted_native_width,
             "predicted_native_height": predicted_native_height,

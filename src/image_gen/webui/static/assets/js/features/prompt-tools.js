@@ -2,6 +2,7 @@ import { api } from "../api.js";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 import { clampHiresDimension, normalizeHiresSizeMode, planHiresDimensions } from "../components/hires-dimensions.js?v=0.1.79";
+import { setActionIcon } from "../components/action-icons.js?v=2";
 import { updateHiresUpscalerPlanUI } from "./hires-upscalers.js?v=0.1.79";
 
 let saveSessionSoon = () => {};
@@ -262,10 +263,36 @@ function renderMessageList(sectionSelector, listSelector, messages = []) {
   const section = $(sectionSelector);
   const list = $(listSelector);
   if (!section || !list) return;
-  section.hidden = !messages.length;
-  list.replaceChildren(...messages.map((item) => {
+  const grouped = new Map();
+  (messages || []).forEach((item) => {
+    const message = item?.message || String(item);
+    const key = `${item?.code || "message"}::${message}`;
+    if (!grouped.has(key)) grouped.set(key, { message, contexts: [], count: 0 });
+    const entry = grouped.get(key);
+    entry.count += 1;
+    const context = [item?.pass_name, item?.prompt_role].filter(Boolean).join(" · ");
+    if (context && !entry.contexts.includes(context)) entry.contexts.push(context);
+  });
+  const entries = [...grouped.values()];
+  section.hidden = !entries.length;
+  list.replaceChildren(...entries.map((entry) => {
     const node = document.createElement("li");
-    node.textContent = item.message || String(item);
+    node.className = "prompt-message-group";
+    const copy = document.createElement("span");
+    copy.textContent = entry.message;
+    node.append(copy);
+    if (entry.count > 1) {
+      const count = document.createElement("strong");
+      count.className = "prompt-message-count";
+      count.textContent = `×${entry.count}`;
+      count.title = `${entry.count} matching occurrences`;
+      node.append(count);
+    }
+    if (entry.contexts.length) {
+      const context = document.createElement("small");
+      context.textContent = `Affected: ${entry.contexts.join(", ")}`;
+      node.append(context);
+    }
     return node;
   }));
 }
@@ -818,6 +845,556 @@ function bindRegionBuilderBridge() {
   });
 }
 
+function promptStageText(role = {}, stage = "raw") {
+  if (stage === "raw") return String(role.raw_prompt || "");
+  if (stage === "parser") return String(role.parser_input || "");
+  return String(role.parser_canonical_prompt || role.canonical_prompt || "");
+}
+
+function normalizePromptSource(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .join("\n")
+    .trim();
+}
+
+function parseCanonicalValue(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value || ""));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function canonicalStructureForRole(role = {}) {
+  const direct = role.parser_canonical_structure || role.canonical_structure;
+  if (direct && typeof direct === "object" && !Array.isArray(direct)) return direct;
+  return parseCanonicalValue(promptStageText(role, "canonical"));
+}
+
+function canonicalSourceForRole(role = {}) {
+  const structure = canonicalStructureForRole(role);
+  if (typeof structure.lossless_source === "string") return structure.lossless_source;
+  return promptStageText(role, "parser");
+}
+
+function canonicalTypeLabel(value) {
+  const labels = {
+    text: "text node",
+    conjunction: "AND conjunction",
+    scheduled_text: "scheduled text",
+    alternate_text: "alternate text",
+    weighted_text: "weighted text",
+    attention_group: "attention group",
+    deep_sequence: "deep sequence",
+    sequence: "sequence",
+    extension: "extension operator",
+  };
+  const token = String(value || "node");
+  return labels[token] || token.replaceAll("_", " ");
+}
+
+function canonicalStructureSummary(structure = {}) {
+  const nodes = Array.isArray(structure.nodes) ? structure.nodes : [];
+  const counts = new Map();
+  nodes.forEach((node) => {
+    const label = canonicalTypeLabel(node?.type);
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+  return {
+    contract: String(structure.contract || "canonical prompt"),
+    parserNamespace: String(structure.parser_namespace || "unknown"),
+    nodeCount: nodes.length,
+    nodeLabels: [...counts.entries()].map(([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`),
+  };
+}
+
+function promptDiffTokens(value) {
+  return String(value || "").split(/(\s+|[,;:{}()[\]|])/g).filter((item) => item !== "");
+}
+
+function promptTokenDiff(before, after) {
+  const left = promptDiffTokens(before);
+  const right = promptDiffTokens(after);
+  if (left.join("") === right.join("")) return [{ type: "equal", text: left.join("") }];
+  if (left.length > 220 || right.length > 220) {
+    return [
+      ...(left.length ? [{ type: "remove", text: left.join("") }] : []),
+      ...(right.length ? [{ type: "add", text: right.join("") }] : []),
+    ];
+  }
+  const table = Array.from({ length: left.length + 1 }, () => new Uint16Array(right.length + 1));
+  for (let i = left.length - 1; i >= 0; i -= 1) {
+    for (let j = right.length - 1; j >= 0; j -= 1) {
+      table[i][j] = left[i] === right[j]
+        ? table[i + 1][j + 1] + 1
+        : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+  const ops = [];
+  const push = (type, text) => {
+    if (!text) return;
+    const last = ops[ops.length - 1];
+    if (last?.type === type) last.text += text;
+    else ops.push({ type, text });
+  };
+  let i = 0;
+  let j = 0;
+  while (i < left.length && j < right.length) {
+    if (left[i] === right[j]) {
+      push("equal", left[i]);
+      i += 1;
+      j += 1;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      push("remove", left[i]);
+      i += 1;
+    } else {
+      push("add", right[j]);
+      j += 1;
+    }
+  }
+  while (i < left.length) { push("remove", left[i]); i += 1; }
+  while (j < right.length) { push("add", right[j]); j += 1; }
+  return ops;
+}
+
+function appendPromptDiff(target, before, after) {
+  const diff = document.createElement("div");
+  diff.className = "prompt-inline-diff";
+  promptTokenDiff(before, after).forEach((part) => {
+    const node = document.createElement("span");
+    node.className = `prompt-diff-${part.type}`;
+    node.textContent = part.text;
+    diff.append(node);
+  });
+  target.append(diff);
+}
+
+function makeCopyableTransformationBlock(label, text, copyLabel = "Copy recognized text") {
+  const wrapper = document.createElement("div");
+  wrapper.className = "prompt-transformation-copy-block";
+  const header = document.createElement("div");
+  header.className = "prompt-transformation-copy-header";
+  const heading = document.createElement("span");
+  heading.textContent = label;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "ui-action-button ui-icon-control ui-action-button--compact";
+  setActionIcon(copy, "copy", { label: copyLabel, replace: true });
+  const pre = document.createElement("pre");
+  pre.textContent = String(text || "");
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(pre.textContent || "");
+      notify(`${label} copied.`);
+    } catch (error) {
+      notify(`Unable to copy ${label.toLowerCase()}: ${error.message}`, "error");
+    }
+  });
+  header.append(heading, copy);
+  wrapper.append(header, pre);
+  return wrapper;
+}
+
+function promptTransformationDetails(roleData = {}, before = "", after = "") {
+  const container = document.createElement("div");
+  container.className = "prompt-transformation-details";
+  const substitutions = Array.isArray(roleData.substitutions) ? roleData.substitutions : [];
+  if (substitutions.length) {
+    substitutions.forEach((item, index) => {
+      const card = document.createElement("section");
+      card.className = "prompt-transformation-item";
+      const title = document.createElement("strong");
+      title.textContent = `Transformation ${index + 1}: ${item.canonical_operator || "shortcut"}`;
+      const meta = document.createElement("small");
+      meta.textContent = `Shortcut ${JSON.stringify(item.source || "")} → parser output ${JSON.stringify(item.parser_emission || "")}`;
+      const start = Number(item.start);
+      const end = Number(item.end);
+      const exactSource = Number.isFinite(start) && Number.isFinite(end) && end >= start
+        ? String(before || "").slice(start, end)
+        : String(item.source || "");
+      card.append(
+        title,
+        meta,
+        makeCopyableTransformationBlock("Recognized source", exactSource, `Copy source for transformation ${index + 1}`),
+        makeCopyableTransformationBlock("Parser output", item.parser_emission || "", `Copy parser output for transformation ${index + 1}`),
+      );
+      container.append(card);
+    });
+    return container;
+  }
+
+  const parts = promptTokenDiff(before, after);
+  const removed = parts.filter((part) => part.type === "remove").map((part) => part.text).join("").trim();
+  const added = parts.filter((part) => part.type === "add").map((part) => part.text).join("").trim();
+  if (removed || added) {
+    const card = document.createElement("section");
+    card.className = "prompt-transformation-item";
+    const title = document.createElement("strong");
+    title.textContent = "Detected text transformation";
+    card.append(title);
+    if (removed) card.append(makeCopyableTransformationBlock("Recognized source", removed));
+    if (added) card.append(makeCopyableTransformationBlock("Result", added, "Copy transformed result"));
+    container.append(card);
+  }
+  return container;
+}
+
+function promptTransitionRow(label, before, after, { roleData = null, showTransformationBlocks = false } = {}) {
+  const row = document.createElement("div");
+  row.className = "prompt-change-row";
+  const heading = document.createElement("strong");
+  heading.textContent = label;
+  row.append(heading);
+  if (String(before || "") === String(after || "")) {
+    const same = document.createElement("span");
+    same.className = "prompt-change-none";
+    same.textContent = "No changes";
+    row.append(same);
+  } else {
+    appendPromptDiff(row, before, after);
+    if (showTransformationBlocks) row.append(promptTransformationDetails(roleData || {}, before, after));
+  }
+  return row;
+}
+
+function promptCanonicalStructureRow(roleData = {}, inspectorTarget = "") {
+  const row = document.createElement("div");
+  row.className = "prompt-change-row prompt-canonical-structure-row";
+  const heading = document.createElement("strong");
+  heading.textContent = "Parser input → Canonical structure";
+  row.append(heading);
+
+  const parserInput = promptStageText(roleData, "parser");
+  const structure = canonicalStructureForRole(roleData);
+  const canonicalSource = canonicalSourceForRole(roleData);
+  const normalizedParser = normalizePromptSource(parserInput);
+  const sourceChanged = normalizedParser !== String(canonicalSource || "");
+
+  const sourceStatus = document.createElement("p");
+  sourceStatus.className = sourceChanged ? "prompt-canonical-source-warning" : "prompt-change-none";
+  sourceStatus.textContent = sourceChanged
+    ? "Canonicalization changed the normalized source text. Review the source diff below."
+    : "No source-text changes. Canonicalization only describes the prompt in a machine-readable structure.";
+  row.append(sourceStatus);
+  if (sourceChanged) appendPromptDiff(row, normalizedParser, canonicalSource);
+
+  const summary = canonicalStructureSummary(structure);
+  const facts = document.createElement("ul");
+  facts.className = "prompt-canonical-facts";
+  [
+    `Contract: ${summary.contract}`,
+    `Parser namespace: ${summary.parserNamespace}`,
+    `${summary.nodeCount} canonical node${summary.nodeCount === 1 ? "" : "s"}`,
+    ...summary.nodeLabels,
+  ].forEach((value) => {
+    const item = document.createElement("li");
+    item.textContent = value;
+    facts.append(item);
+  });
+  row.append(facts);
+
+  const nodes = Array.isArray(structure.nodes) ? structure.nodes : [];
+  const compactSources = [];
+  nodes.forEach((node, index) => {
+    const source = typeof node?.source === "string" ? node.source : "";
+    const start = Number(node?.start);
+    const end = Number(node?.end);
+    const exact = Number.isFinite(start) && Number.isFinite(end) && end > start
+      ? canonicalSource.slice(start, end)
+      : source;
+    if (!exact || exact === canonicalSource) return;
+    const key = `${node?.type || "node"}:${exact}`;
+    if (compactSources.some((item) => item.key === key)) return;
+    compactSources.push({ key, label: `${canonicalTypeLabel(node?.type)} ${index + 1}`, text: exact });
+  });
+  if (compactSources.length) {
+    const details = document.createElement("details");
+    details.className = "prompt-canonical-recognized";
+    const detailsSummary = document.createElement("summary");
+    detailsSummary.textContent = `${compactSources.length} recognized canonical block${compactSources.length === 1 ? "" : "s"}`;
+    details.append(detailsSummary);
+    compactSources.forEach((item) => details.append(
+      makeCopyableTransformationBlock(item.label, item.text, `Copy ${item.label}`),
+    ));
+    row.append(details);
+  }
+
+  if (inspectorTarget) {
+    const inspect = document.createElement("button");
+    inspect.type = "button";
+    inspect.className = "ui-action-button ui-icon-control prompt-canonical-inspect-button";
+    inspect.dataset.promptInspectorTarget = inspectorTarget;
+    inspect.dataset.promptInspectorTitle = "Canonical representation";
+    setActionIcon(inspect, "maximize", { label: "Inspect canonical representation", replace: true });
+    inspect.addEventListener("click", () => openPromptInspector(inspect));
+    row.append(inspect);
+  }
+  return { row, sourceChanged };
+}
+
+function semanticTransformationCount(roleData = {}) {
+  const substitutions = Array.isArray(roleData.substitutions) ? roleData.substitutions : [];
+  if (substitutions.length) return substitutions.length;
+  return promptStageText(roleData, "raw") === promptStageText(roleData, "parser") ? 0 : 1;
+}
+
+function renderRoleChanges(roleData, listSelector, countSelector, inspectorTarget = "") {
+  const list = $(listSelector);
+  const count = $(countSelector);
+  if (!list || !count) return 0;
+  const raw = promptStageText(roleData, "raw");
+  const parser = promptStageText(roleData, "parser");
+  const rows = [
+    promptTransitionRow("Raw → Parser input", raw, parser, { roleData, showTransformationBlocks: true }),
+  ];
+  const canonical = promptCanonicalStructureRow(roleData, inspectorTarget);
+  rows.push(canonical.row);
+  list.replaceChildren(...rows);
+  const semanticCount = semanticTransformationCount(roleData) + (canonical.sourceChanged ? 1 : 0);
+  count.textContent = semanticCount
+    ? `${semanticCount} semantic change${semanticCount === 1 ? "" : "s"}`
+    : "No semantic changes";
+  count.classList.toggle("has-changes", Boolean(semanticCount));
+  return semanticCount;
+}
+
+function regionBranchCount(passData = {}) {
+  return (passData.regional_prompting?.slots || []).reduce((total, slot) => total + (slot.regions || []).length, 0);
+}
+
+function canonicalSourceFromSerialized(value) {
+  const structure = parseCanonicalValue(value);
+  return typeof structure.lossless_source === "string" ? structure.lossless_source : String(value || "");
+}
+
+function canonicalStructureSignature(value) {
+  const structure = parseCanonicalValue(value);
+  if (!Object.keys(structure).length) return String(value || "");
+  return JSON.stringify({
+    contract: structure.contract || "",
+    parser_namespace: structure.parser_namespace || "",
+    nodes: Array.isArray(structure.nodes) ? structure.nodes : [],
+  });
+}
+
+function compactCanonicalDifferenceRow(label, beforeValue, afterValue) {
+  const beforeSource = canonicalSourceFromSerialized(beforeValue);
+  const afterSource = canonicalSourceFromSerialized(afterValue);
+  if (beforeSource !== afterSource) {
+    return promptTransitionRow(`${label} source`, beforeSource, afterSource);
+  }
+  const row = document.createElement("div");
+  row.className = "prompt-change-row";
+  const heading = document.createElement("strong");
+  heading.textContent = `${label} structure`;
+  const message = document.createElement("span");
+  message.className = "prompt-change-none";
+  message.textContent = canonicalStructureSignature(beforeValue) === canonicalStructureSignature(afterValue)
+    ? "Canonical serialization differs, but source text and structural interpretation are equivalent."
+    : "Source text is unchanged; only the canonical structural interpretation differs between passes.";
+  row.append(heading, message);
+  return row;
+}
+
+function renderHiresChangeSummary(base, hires) {
+  const list = $("#promptHiresChanges");
+  const count = $("#promptHiresChangeCount");
+  const summary = $("#promptHiresInterpretationSummary");
+  if (!list || !count) return 0;
+  const rows = [];
+  if ((base.parser?.parser_id || "") !== (hires.parser?.parser_id || "")) {
+    rows.push(promptTransitionRow("Parser", base.parser?.parser_id || "base", hires.parser?.parser_id || "hires"));
+  }
+  if ((base.shortcut_profile?.profile_id || "") !== (hires.shortcut_profile?.profile_id || "")) {
+    rows.push(promptTransitionRow("Shortcut profile", base.shortcut_profile?.profile_id || "base", hires.shortcut_profile?.profile_id || "hires"));
+  }
+  ["positive", "negative"].forEach((role) => {
+    const diff = hires.interpretation_diff?.[role] || {};
+    if (!diff.different) return;
+    const label = `${role[0].toUpperCase()}${role.slice(1)}`;
+    if (String(diff.base_parser_input || "") !== String(diff.hires_parser_input || "")) {
+      rows.push(promptTransitionRow(`${label} parser input`, diff.base_parser_input || "", diff.hires_parser_input || ""));
+    }
+    if (String(diff.base_canonical_prompt || "") !== String(diff.hires_canonical_prompt || "")) {
+      rows.push(compactCanonicalDifferenceRow(`${label} canonical`, diff.base_canonical_prompt || "", diff.hires_canonical_prompt || ""));
+    }
+  });
+  if (!rows.length) {
+    const same = document.createElement("p");
+    same.className = "prompt-change-none";
+    same.textContent = "The hires pass uses the same prompt interpretation as the base pass.";
+    list.replaceChildren(same);
+    count.textContent = "Same as base";
+    if (summary) summary.textContent = "Same as base · parser, shortcut profile, parser input, and canonical prompt are unchanged.";
+    return 0;
+  }
+  list.replaceChildren(...rows);
+  count.textContent = `${rows.length} difference${rows.length === 1 ? "" : "s"}`;
+  count.classList.add("has-changes");
+  if (summary) summary.textContent = `${rows.length} hires interpretation difference${rows.length === 1 ? "" : "s"} detected. Review Changes before queueing.`;
+  return rows.length;
+}
+
+function renderRegionChangeSummary(base, hires) {
+  const baseCount = regionBranchCount(base);
+  const hiresCount = regionBranchCount(hires);
+  const list = $("#promptRegionChanges");
+  const count = $("#promptRegionChangeCount");
+  const overview = $("#promptPreflightRegionSummary");
+  if (list && count) {
+    if (!baseCount && !hiresCount) {
+      const inactive = document.createElement("p");
+      inactive.className = "prompt-change-none";
+      inactive.textContent = "No native REGION branches detected; no REGION runtime overhead is estimated.";
+      list.replaceChildren(inactive);
+      count.textContent = "Inactive";
+    } else {
+      const active = document.createElement("p");
+      active.textContent = `Base: ${baseCount} branch${baseCount === 1 ? "" : "es"} · Hires: ${hiresCount} branch${hiresCount === 1 ? "" : "es"}`;
+      list.replaceChildren(active);
+      count.textContent = `${baseCount + hiresCount} active`;
+      count.classList.add("has-changes");
+    }
+  }
+  if (overview) overview.textContent = baseCount || hiresCount ? `${baseCount + hiresCount} active` : "Inactive";
+  const baseCard = $("#promptRegionBaseCard");
+  const hiresCard = $("#promptRegionHiresCard");
+  if (baseCard) baseCard.hidden = !baseCount;
+  if (hiresCard) hiresCard.hidden = !hiresCount;
+  return { baseCount, hiresCount };
+}
+
+function renderPromptPreflightSummary(data, base, hires) {
+  const positiveChanges = renderRoleChanges(base.positive || {}, "#promptPositiveChanges", "#promptPositiveChangeCount", "promptTranslationPositiveCanonical");
+  const negativeChanges = renderRoleChanges(base.negative || {}, "#promptNegativeChanges", "#promptNegativeChangeCount", "promptTranslationNegativeCanonical");
+  const hiresChanges = renderHiresChangeSummary(base, hires);
+  renderRegionChangeSummary(base, hires);
+  const setText = (selector, text) => { const node = $(selector); if (node) node.textContent = text; };
+  setText("#promptPreflightValidity", data.valid ? "Valid" : "Blocked");
+  setText("#promptPreflightPositiveSummary", positiveChanges ? `${positiveChanges} change${positiveChanges === 1 ? "" : "s"}` : "Unchanged");
+  setText("#promptPreflightNegativeSummary", negativeChanges ? `${negativeChanges} change${negativeChanges === 1 ? "" : "s"}` : "Unchanged");
+  setText("#promptPreflightHiresSummary", hiresChanges ? `${hiresChanges} difference${hiresChanges === 1 ? "" : "s"}` : "Same as base");
+}
+
+function setPromptPreflightView(mode = "changes") {
+  const changes = mode !== "pipeline";
+  const changesView = $("#promptPreflightChangesView");
+  const pipelineView = $("#promptPreflightPipelineView");
+  const changesButton = $("#promptPreflightChangesTab");
+  const pipelineButton = $("#promptPreflightPipelineTab");
+  if (changesView) changesView.hidden = !changes;
+  if (pipelineView) pipelineView.hidden = changes;
+  if (changesButton) {
+    changesButton.classList.toggle("is-active", changes);
+    changesButton.setAttribute("aria-pressed", String(changes));
+  }
+  if (pipelineButton) {
+    pipelineButton.classList.toggle("is-active", !changes);
+    pipelineButton.setAttribute("aria-pressed", String(!changes));
+  }
+}
+
+let promptInspectorDialog = null;
+
+function ensurePromptInspectorDialog() {
+  if (promptInspectorDialog) return promptInspectorDialog;
+  const dialog = document.createElement("dialog");
+  dialog.className = "prompt-inspector-dialog";
+  dialog.innerHTML = `
+    <section class="prompt-inspector-dialog-shell">
+      <header class="prompt-inspector-dialog-header">
+        <div><small>Prompt pipeline inspector</small><h3 data-prompt-inspector-dialog-title>Prompt stage</h3></div>
+        <div class="prompt-inspector-dialog-actions">
+          <button type="button" data-prompt-inspector-dialog-compare></button>
+          <button type="button" data-prompt-inspector-dialog-copy></button>
+          <button type="button" data-prompt-inspector-dialog-close></button>
+        </div>
+      </header>
+      <div class="prompt-inspector-dialog-body">
+        <section><h4>Selected stage</h4><pre data-prompt-inspector-dialog-primary></pre></section>
+        <section data-prompt-inspector-dialog-comparison hidden><h4>Next stage</h4><pre data-prompt-inspector-dialog-secondary></pre></section>
+        <section data-prompt-inspector-dialog-diff hidden><h4>Highlighted changes</h4><div class="prompt-inspector-dialog-diff-content"></div></section>
+      </div>
+    </section>`;
+  document.body.append(dialog);
+  const compare = dialog.querySelector("[data-prompt-inspector-dialog-compare]");
+  const copy = dialog.querySelector("[data-prompt-inspector-dialog-copy]");
+  const close = dialog.querySelector("[data-prompt-inspector-dialog-close]");
+  setActionIcon(compare, "compare", { label: "Compare with next prompt stage", replace: true });
+  setActionIcon(copy, "copy", { label: "Copy prompt stage", replace: true });
+  setActionIcon(close, "remove", { label: "Close prompt inspector", replace: true });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  close.addEventListener("click", () => dialog.close());
+  copy.addEventListener("click", async () => {
+    const text = dialog.querySelector("[data-prompt-inspector-dialog-primary]")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("Prompt stage copied.");
+    } catch (error) {
+      notify(`Unable to copy prompt stage: ${error.message}`, "error");
+    }
+  });
+  compare.addEventListener("click", () => {
+    const comparison = dialog.querySelector("[data-prompt-inspector-dialog-comparison]");
+    const diff = dialog.querySelector("[data-prompt-inspector-dialog-diff]");
+    const visible = comparison?.hidden !== false;
+    if (comparison) comparison.hidden = !visible;
+    if (diff) diff.hidden = !visible;
+    compare.setAttribute("aria-pressed", String(visible));
+  });
+  promptInspectorDialog = dialog;
+  return dialog;
+}
+
+function openPromptInspector(button) {
+  const target = document.getElementById(button.dataset.promptInspectorTarget || "");
+  if (!target) return;
+  const compareTarget = document.getElementById(button.dataset.promptInspectorCompareTarget || "");
+  const dialog = ensurePromptInspectorDialog();
+  const title = button.dataset.promptInspectorTitle || "Prompt stage";
+  dialog.querySelector("[data-prompt-inspector-dialog-title]").textContent = title;
+  const primary = dialog.querySelector("[data-prompt-inspector-dialog-primary]");
+  const secondary = dialog.querySelector("[data-prompt-inspector-dialog-secondary]");
+  const comparison = dialog.querySelector("[data-prompt-inspector-dialog-comparison]");
+  const diffSection = dialog.querySelector("[data-prompt-inspector-dialog-diff]");
+  const diffContent = dialog.querySelector(".prompt-inspector-dialog-diff-content");
+  const compareButton = dialog.querySelector("[data-prompt-inspector-dialog-compare]");
+  primary.textContent = target.textContent || "";
+  secondary.textContent = compareTarget?.textContent || "";
+  if (comparison) comparison.hidden = true;
+  if (diffSection) diffSection.hidden = true;
+  if (compareButton) {
+    compareButton.hidden = !compareTarget;
+    compareButton.setAttribute("aria-pressed", "false");
+  }
+  diffContent.replaceChildren();
+  if (compareTarget) appendPromptDiff(diffContent, primary.textContent, secondary.textContent);
+  if (!dialog.open) dialog.showModal();
+}
+
+function bindPromptPreflightInspectors() {
+  $("#promptPreflightChangesTab")?.addEventListener("click", () => setPromptPreflightView("changes"));
+  $("#promptPreflightPipelineTab")?.addEventListener("click", () => setPromptPreflightView("pipeline"));
+  document.querySelectorAll("[data-prompt-inspector-target]").forEach((button) => {
+    const title = button.dataset.promptInspectorTitle || "prompt stage";
+    button.setAttribute("aria-label", `Open ${title} in a large inspector`);
+    button.title = `Open ${title} in a large inspector`;
+    button.addEventListener("click", () => openPromptInspector(button));
+  });
+  setPromptPreflightView("changes");
+}
+
+function formatCanonicalForDisplay(role = {}) {
+  const structure = canonicalStructureForRole(role);
+  if (Object.keys(structure).length) return JSON.stringify(structure, null, 2);
+  return promptStageText(role, "canonical");
+}
+
 function renderTranslation(data, { revealPreview = false } = {}) {
   state.promptConfiguration.translationPreview = data;
   const set = (selector, value) => { const node = $(selector); if (node) node.textContent = value ?? ""; };
@@ -825,16 +1402,16 @@ function renderTranslation(data, { revealPreview = false } = {}) {
   const hires = data.hires || {};
   set("#promptTranslationPositiveRaw", base.positive?.raw_prompt);
   set("#promptTranslationPositiveExpanded", base.positive?.parser_input);
-  set("#promptTranslationPositiveCanonical", base.positive?.parser_canonical_prompt || base.positive?.canonical_prompt);
+  set("#promptTranslationPositiveCanonical", formatCanonicalForDisplay(base.positive || {}));
   set("#promptTranslationNegativeRaw", base.negative?.raw_prompt);
   set("#promptTranslationNegativeExpanded", base.negative?.parser_input);
-  set("#promptTranslationNegativeCanonical", base.negative?.parser_canonical_prompt || base.negative?.canonical_prompt);
+  set("#promptTranslationNegativeCanonical", formatCanonicalForDisplay(base.negative || {}));
   set("#promptTranslationHiresPositiveRaw", hires.positive?.raw_prompt);
   set("#promptTranslationHiresPositiveExpanded", hires.positive?.parser_input);
-  set("#promptTranslationHiresPositiveCanonical", hires.positive?.parser_canonical_prompt || hires.positive?.canonical_prompt);
+  set("#promptTranslationHiresPositiveCanonical", formatCanonicalForDisplay(hires.positive || {}));
   set("#promptTranslationHiresNegativeRaw", hires.negative?.raw_prompt);
   set("#promptTranslationHiresNegativeExpanded", hires.negative?.parser_input);
-  set("#promptTranslationHiresNegativeCanonical", hires.negative?.parser_canonical_prompt || hires.negative?.canonical_prompt);
+  set("#promptTranslationHiresNegativeCanonical", formatCanonicalForDisplay(hires.negative || {}));
   const renderSlots = (passData) => JSON.stringify({
     scope: passData?.prompt_expansion_scope || passData?.expansion_scope || "per_batch",
     positive: passData?.expanded_prompts_by_slot?.positive || [],
@@ -857,6 +1434,8 @@ function renderTranslation(data, { revealPreview = false } = {}) {
   set("#promptShadowHiresNegative", conciseShadow(shadows[3]));
   const routeSection = $("#promptRouteSummarySection");
   if (routeSection) routeSection.hidden = !routes.some((item) => item && Object.keys(item).length) && !shadows.some((item) => item && Object.keys(item).length);
+  const hiresRouteSection = $("#hiresPromptRouteSummarySection");
+  if (hiresRouteSection) hiresRouteSection.hidden = !routes.slice(2).some((item) => item && Object.keys(item).length) && !shadows.slice(2).some((item) => item && Object.keys(item).length);
   renderMessageList("#promptPreflightBlockingSection", "#promptPreflightBlocking", data.blocking_errors || []);
   renderMessageList("#promptPreflightWarningSection", "#promptPreflightWarnings", data.behavior_warnings || []);
   renderMessageList("#promptPreflightNoticeSection", "#promptPreflightNotices", data.informational_notices || []);
@@ -864,16 +1443,22 @@ function renderTranslation(data, { revealPreview = false } = {}) {
     ? `Prompt preflight valid · base ${base.parser?.parser_id || currentParserId()} / ${base.shortcut_profile?.profile_id || "profile"} · hires ${hires.parser?.parser_id || "inherit"} / ${hires.shortcut_profile?.profile_id || "inherit"}`
     : "Prompt preflight contains blocking errors.";
   set("#promptTranslationWarnings", summary);
+  renderPromptPreflightSummary(data, base, hires);
   const differs = Object.values(hires.interpretation_diff || {}).some((item) => item?.different);
   const diffWarning = $("#promptHiresInterpretationWarning");
   if (diffWarning) {
     diffWarning.hidden = !differs;
     diffWarning.textContent = differs
-      ? "The base and hires passes do not resolve to the same parser input or canonical prompt. Review both columns before queueing."
+      ? "The hires pass resolves at least one prompt differently from the base pass. The differences are summarized above; expand the full hires pipeline only when you need the exact representations."
       : "";
   }
+  const hiresPipeline = $("#promptHiresFullPipeline");
+  if (hiresPipeline && !differs) hiresPipeline.open = false;
   const details = $("#promptTranslationPreview");
-  if (details && revealPreview) details.open = true;
+  if (details && revealPreview) {
+    details.open = true;
+    setPromptPreflightView("changes");
+  }
 }
 
 async function validateCurrentPrompt() {
@@ -947,7 +1532,266 @@ async function deleteParserPreset() {
   }
 }
 
+const SHORTCUT_OPERATOR_DEFINITIONS = [
+  ["AND", "AND", "Composable conditioning branch"],
+  ["GROUP_OPEN", "Group open", "Opening group delimiter"],
+  ["GROUP_CLOSE", "Group close", "Closing group delimiter"],
+  ["SEQUENCE", "Sequence", "Sequence separator"],
+  ["DEEP_SEQUENCE", "Deep sequence", "Top-level sequence separator"],
+  ["CLOSE", "Close", "Close the current sequence"],
+  ["TOP_CLOSE", "Top close", "Close the top-level sequence"],
+  ["CHUNK", "Chunk", "Parser 21 chunk operator"],
+  ["BLEND", "Blend", "Weighted branch blend"],
+  ["BIND", "Bind", "Bind details to a prompt branch"],
+  ["POOL", "Pool", "Prompt option pool"],
+  ["MORPH", "Morph", "Prompt transition operator"],
+  ["ASSEMBLE", "Assemble", "Structured prompt assembly"],
+  ["COMPOUND", "Compound", "Compound Parser 21 operation"],
+];
+
+let profileEditorBody = {};
+let profileEditorReadonly = false;
+
+function editableProfileBody(profile = {}) {
+  const keys = ["aliases", "parser_emitters", "escape_character", "description", "credit", "palette"];
+  return Object.fromEntries(keys.filter((key) => key in profile).map((key) => [key, structuredClone(profile[key])]));
+}
+
+function normalizeProfileEditorBody(profile = {}) {
+  const body = editableProfileBody(profile);
+  body.aliases = body.aliases && typeof body.aliases === "object" ? body.aliases : {};
+  body.parser_emitters = body.parser_emitters && typeof body.parser_emitters === "object" ? body.parser_emitters : {};
+  body.escape_character = String(body.escape_character || "\\");
+  body.description = String(body.description || "");
+  body.credit = String(body.credit || "");
+  body.palette = Array.isArray(body.palette) ? body.palette : [];
+  return body;
+}
+
+function syncProfileEditorBody() {
+  const hidden = $("#promptShortcutProfileEditorJson");
+  if (hidden) hidden.value = JSON.stringify(profileEditorBody);
+}
+
+function operatorDefinitions() {
+  const known = new Map(SHORTCUT_OPERATOR_DEFINITIONS.map((item) => [item[0], item]));
+  const extras = new Set([
+    ...Object.keys(profileEditorBody.aliases || {}),
+    ...Object.values(profileEditorBody.parser_emitters || {}).flatMap((values) => Object.keys(values || {})),
+  ]);
+  for (const key of extras) {
+    const operator = String(key || "").trim().toUpperCase();
+    if (operator && !known.has(operator)) known.set(operator, [operator, operator, "Custom operator"]);
+  }
+  return [...known.values()];
+}
+
+function aliasValuesFromRow(row) {
+  return [...row.querySelectorAll("input[data-shortcut-alias]")]
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+}
+
+function syncAliasRow(row, operator) {
+  const values = aliasValuesFromRow(row);
+  if (values.length) profileEditorBody.aliases[operator] = values;
+  else delete profileEditorBody.aliases[operator];
+  syncProfileEditorBody();
+}
+
+function createAliasInput(row, operator, label, value = "", readonly = false) {
+  const item = document.createElement("span");
+  item.className = "prompt-shortcut-alias-input";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = String(value || "");
+  input.placeholder = "Shortcut";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.dataset.shortcutAlias = operator;
+  input.setAttribute("aria-label", `${label} shortcut`);
+  input.disabled = readonly;
+  input.addEventListener("input", () => syncAliasRow(row, operator));
+  item.append(input);
+  if (!readonly) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ui-action-button ui-icon-control ui-action-button--compact";
+    setActionIcon(remove, "remove", { label: `Remove ${label} shortcut`, title: `Remove ${label} shortcut`, replace: true });
+    remove.addEventListener("click", () => {
+      item.remove();
+      if (!row.querySelector("input[data-shortcut-alias]")) createAliasInput(row, operator, label, "", false);
+      syncAliasRow(row, operator);
+    });
+    item.append(remove);
+  }
+  row.querySelector(".prompt-shortcut-alias-inputs")?.append(item);
+  return input;
+}
+
+function renderShortcutAliasEditor(readonly = false) {
+  const host = $("#promptShortcutAliasEditor");
+  if (!host) return;
+  host.replaceChildren();
+  for (const [operator, label, description] of operatorDefinitions()) {
+    const row = document.createElement("div");
+    row.className = "prompt-shortcut-operator-row";
+    row.dataset.operator = operator;
+    const heading = document.createElement("div");
+    heading.className = "prompt-shortcut-operator-label";
+    const strong = document.createElement("strong");
+    strong.textContent = label;
+    const code = document.createElement("code");
+    code.textContent = operator;
+    const hint = document.createElement("small");
+    hint.textContent = description;
+    heading.append(strong, code, hint);
+    const inputs = document.createElement("div");
+    inputs.className = "prompt-shortcut-alias-inputs";
+    row.append(heading, inputs);
+    host.append(row);
+    const values = Array.isArray(profileEditorBody.aliases?.[operator]) ? profileEditorBody.aliases[operator] : [];
+    (values.length ? values : [""]).forEach((value) => createAliasInput(row, operator, label, value, readonly));
+    if (!readonly) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "ui-action-button ui-icon-control ui-action-button--compact prompt-shortcut-add-alias";
+      setActionIcon(add, "new", { label: `Add ${label} shortcut`, title: `Add another ${label} shortcut`, replace: true });
+      add.addEventListener("click", () => {
+        const input = createAliasInput(row, operator, label, "", false);
+        input.focus();
+      });
+      row.append(add);
+    }
+  }
+}
+
+function paletteShortcutFields(item = {}) {
+  const kind = String(item.kind || "insert").toLowerCase();
+  if (kind === "wrap") return [["prefix", "Opening text"], ["suffix", "Closing text"]];
+  if (kind === "template") return [["template", "Template"]];
+  return [["insert", "Inserted text"]];
+}
+
+function renderShortcutPaletteEditor(readonly = false) {
+  const host = $("#promptShortcutPaletteEditor");
+  if (!host) return;
+  host.replaceChildren();
+  const palette = Array.isArray(profileEditorBody.palette) ? profileEditorBody.palette : [];
+  if (!palette.length) {
+    const empty = document.createElement("p");
+    empty.className = "field-status subtle";
+    empty.textContent = "This profile does not define symbol palette helpers.";
+    host.append(empty);
+    return;
+  }
+  palette.forEach((item, index) => {
+    const row = document.createElement("section");
+    row.className = "prompt-shortcut-palette-row";
+    const heading = document.createElement("div");
+    heading.className = "prompt-shortcut-palette-label";
+    const strong = document.createElement("strong");
+    strong.textContent = String(item.label || item.id || item.operator || `Helper ${index + 1}`);
+    const code = document.createElement("code");
+    code.textContent = String(item.operator || item.id || "palette");
+    heading.append(strong, code);
+    row.append(heading);
+
+    const fields = document.createElement("div");
+    fields.className = "prompt-shortcut-palette-fields";
+    for (const [key, label] of paletteShortcutFields(item)) {
+      const field = document.createElement("label");
+      field.className = "field-block";
+      const caption = document.createElement("span");
+      caption.textContent = label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = String(item[key] || "");
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.disabled = readonly;
+      input.setAttribute("aria-label", `${strong.textContent} ${label.toLowerCase()}`);
+      input.addEventListener("input", () => {
+        profileEditorBody.palette[index][key] = String(input.value || "");
+        syncProfileEditorBody();
+      });
+      field.append(caption, input);
+      fields.append(field);
+    }
+
+    const labelField = document.createElement("label");
+    labelField.className = "field-block";
+    const labelCaption = document.createElement("span");
+    labelCaption.textContent = "Palette label";
+    const labelInput = document.createElement("input");
+    labelInput.type = "text";
+    labelInput.value = String(item.label || "");
+    labelInput.disabled = readonly;
+    labelInput.addEventListener("input", () => {
+      profileEditorBody.palette[index].label = String(labelInput.value || "");
+      strong.textContent = String(labelInput.value || item.id || item.operator || `Helper ${index + 1}`);
+      syncProfileEditorBody();
+    });
+    labelField.append(labelCaption, labelInput);
+    fields.append(labelField);
+
+    row.append(fields);
+    host.append(row);
+  });
+}
+
+function compatibleEditorParsers() {
+  const requested = String($("#promptShortcutProfileEditorParsers")?.value || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set([...requested, ...Object.keys(profileEditorBody.parser_emitters || {})])];
+}
+
+function renderShortcutEmitterEditor(readonly = false) {
+  const host = $("#promptShortcutEmitterEditor");
+  if (!host) return;
+  host.replaceChildren();
+  const parsers = compatibleEditorParsers();
+  for (const parser of parsers) {
+    if (!profileEditorBody.parser_emitters[parser]) profileEditorBody.parser_emitters[parser] = {};
+    const group = document.createElement("section");
+    group.className = "prompt-shortcut-emitter-group";
+    const title = document.createElement("h4");
+    title.textContent = parser;
+    group.append(title);
+    const grid = document.createElement("div");
+    grid.className = "prompt-shortcut-emitter-grid";
+    for (const [operator, label] of operatorDefinitions()) {
+      const field = document.createElement("label");
+      field.className = "field-block prompt-shortcut-emitter-field";
+      const caption = document.createElement("span");
+      caption.textContent = label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = String(profileEditorBody.parser_emitters?.[parser]?.[operator] || "");
+      input.placeholder = operator;
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.disabled = readonly;
+      input.setAttribute("aria-label", `${parser} output mapping for ${label}`);
+      input.addEventListener("input", () => {
+        const value = String(input.value || "").trim();
+        if (value) profileEditorBody.parser_emitters[parser][operator] = value;
+        else delete profileEditorBody.parser_emitters[parser][operator];
+        syncProfileEditorBody();
+      });
+      field.append(caption, input);
+      grid.append(field);
+    }
+    group.append(grid);
+    host.append(group);
+  }
+  syncProfileEditorBody();
+}
+
 function editorPayload() {
+  syncProfileEditorBody();
   const body = safeParseJson($("#promptShortcutProfileEditorJson")?.value, {});
   return {
     ...body,
@@ -961,11 +1805,6 @@ function editorPayload() {
   };
 }
 
-function editableProfileBody(profile) {
-  const keys = ["aliases", "parser_emitters", "escape_character", "description", "credit", "palette"];
-  return Object.fromEntries(keys.filter((key) => key in profile).map((key) => [key, profile[key]]));
-}
-
 function loadProfileEditor(profile) {
   const selected = profile || {
     profile_id: "custom_profile",
@@ -976,20 +1815,39 @@ function loadProfileEditor(profile) {
     aliases: {},
     parser_emitters: { legacy: {}, parser21: {}, superhybrid: {} },
     escape_character: "\\",
+    description: "",
+    credit: "",
     palette: [],
   };
+  profileEditorBody = normalizeProfileEditorBody(selected);
+  profileEditorReadonly = Boolean(selected.builtin);
   $("#promptShortcutProfileEditorId").value = selected.profile_id || "";
   $("#promptShortcutProfileEditorLabel").value = selected.label || "";
   $("#promptShortcutProfileEditorVersion").value = selected.version || "1";
   $("#promptShortcutProfileEditorParsers").value = (selected.compatible_parsers || []).join(", ");
-  $("#promptShortcutProfileEditorJson").value = JSON.stringify(editableProfileBody(selected), null, 2);
-  const readonly = Boolean(selected.builtin);
-  ["#promptShortcutProfileEditorId", "#promptShortcutProfileEditorLabel", "#promptShortcutProfileEditorVersion", "#promptShortcutProfileEditorParsers", "#promptShortcutProfileEditorJson"].forEach((selector) => {
-    const node = $(selector); if (node) node.disabled = readonly;
+  $("#promptShortcutProfileEditorEscape").value = profileEditorBody.escape_character;
+  $("#promptShortcutProfileEditorDescription").value = profileEditorBody.description;
+  $("#promptShortcutProfileEditorCredit").value = profileEditorBody.credit;
+  syncProfileEditorBody();
+  [
+    "#promptShortcutProfileEditorId",
+    "#promptShortcutProfileEditorLabel",
+    "#promptShortcutProfileEditorVersion",
+    "#promptShortcutProfileEditorParsers",
+    "#promptShortcutProfileEditorEscape",
+    "#promptShortcutProfileEditorDescription",
+    "#promptShortcutProfileEditorCredit",
+  ].forEach((selector) => {
+    const node = $(selector); if (node) node.disabled = profileEditorReadonly;
   });
-  $("#savePromptShortcutProfileButton").disabled = readonly;
-  $("#deletePromptShortcutProfileButton").disabled = readonly;
-  $("#promptShortcutProfileValidation").textContent = readonly ? "Built-in profile: duplicate it to edit." : "Validate before saving.";
+  renderShortcutAliasEditor(profileEditorReadonly);
+  renderShortcutPaletteEditor(profileEditorReadonly);
+  renderShortcutEmitterEditor(profileEditorReadonly);
+  $("#savePromptShortcutProfileButton").disabled = profileEditorReadonly;
+  $("#deletePromptShortcutProfileButton").disabled = profileEditorReadonly;
+  $("#promptShortcutProfileValidation").textContent = profileEditorReadonly
+    ? "Built-in profile: duplicate it to edit."
+    : "Edit shortcuts inline, then validate before saving.";
 }
 
 function populateProfileEditorSelect(selectedId = "") {
@@ -1009,6 +1867,9 @@ function populateProfileEditorSelect(selectedId = "") {
 function openProfileEditor() {
   populateProfileEditorSelect($("#promptShortcutProfileName")?.value || "");
   $("#promptShortcutProfileDialog")?.showModal();
+  ["#promptShortcutProfileTopActionBar", "#promptShortcutProfileBottomActionBar"].forEach((selector) => {
+    $(selector)?.dispatchEvent(new CustomEvent("ui-action-bar-refresh"));
+  });
 }
 
 async function validateProfileEditor({ quiet = false } = {}) {
@@ -1255,7 +2116,8 @@ function updateHiresSizeControls({ source = "" } = {}) {
     "#hiresSizeMode", "#hiresSteps", "#hiresDenoisingStrength", "#hiresStepPolicy",
     "#hiresSamplerName", "#hiresSchedulerName", "#hiresCfgScale", "#hiresCfgRescale",
     "#hiresUpscaler", "#hiresSaveLowres", "#hiresAspectPolicy", "#hiresPaddingMode",
-    "#hiresFinalSizeCorrectionFilter", "#hiresCorrectionFingerprintDiagnostics",
+    "#hiresBlurredEdgeMethod", "#hiresFinalSizeCorrectionFilter", "#hiresCorrectionFingerprintDiagnostics",
+    "#hiresBlurredEdgeCompareDiagnostics",
   ].forEach((selector) => {
     const node = $(selector);
     if (node) node.disabled = !enabled;
@@ -1328,6 +2190,14 @@ function updateHiresSizeControls({ source = "" } = {}) {
       : "Correction fingerprint is off. Enabling it hashes only the deterministic correction contract; it does not add an image-processing pass.";
     correctionFingerprintStatus.className = fingerprintEnabled ? "field-status ready" : "field-status subtle";
   }
+  const blurredEdgeCompareStatus = $("#hiresBlurredEdgeCompareStatus");
+  if (blurredEdgeCompareStatus) {
+    const compareEnabled = Boolean($("#hiresBlurredEdgeCompareDiagnostics")?.checked);
+    blurredEdgeCompareStatus.textContent = compareEnabled
+      ? "Blurred-edge comparison diagnostic enabled: the selected method and the alternate method will both run so diagnostics can record timing and quality-proxy deltas."
+      : "Blurred-edge comparison diagnostic is off. Enable it only when you want side-by-side timing and quality-proxy metadata.";
+    blurredEdgeCompareStatus.className = compareEnabled ? "field-status ready" : "field-status subtle";
+  }
   updateHiresScheduleSummary();
   updateHiresPairStatus();
 }
@@ -1373,9 +2243,11 @@ export function initializePromptTools(current = {}) {
   if ($("#hiresUpscaler")) $("#hiresUpscaler").value = current.hires_upscaler_id || current.hires_upscaler || "";
   if ($("#hiresAspectPolicy")) $("#hiresAspectPolicy").value = current.hires_aspect_policy || "stretch";
   if ($("#hiresPaddingMode")) $("#hiresPaddingMode").value = current.hires_padding_mode || "reflect";
+  if ($("#hiresBlurredEdgeMethod")) $("#hiresBlurredEdgeMethod").value = current.hires_blurred_edge_method || "box";
   if ($("#hiresFinalSizeCorrectionFilter")) $("#hiresFinalSizeCorrectionFilter").value = current.hires_final_size_correction_filter || current.hires_exact_resize_filter || "auto";
   if ($("#hiresPlannerParityDiagnostics")) $("#hiresPlannerParityDiagnostics").checked = false;
   if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(current.hires_correction_fingerprint_enabled);
+  if ($("#hiresBlurredEdgeCompareDiagnostics")) $("#hiresBlurredEdgeCompareDiagnostics").checked = Boolean(current.hires_blurred_edge_compare_diagnostics);
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = current.hires_save_lowres !== false;
   updateHiresSizeControls();
   renderBaseParserSettings();
@@ -1392,6 +2264,7 @@ export async function preflightCurrentPrompt(values = {}) {
 }
 
 export function bindPromptTools(options = {}) {
+  bindPromptPreflightInspectors();
   saveSessionSoon = options.saveSessionSoon || saveSessionSoon;
   bindPromptFocus();
   bindRegionBuilderBridge();
@@ -1445,18 +2318,34 @@ export function bindPromptTools(options = {}) {
   bindHiresDimensionEvent("#hiresEnabled", "enabled");
   bindHiresDimensionEvent("#width", "base");
   bindHiresDimensionEvent("#height", "base");
-  ["#hiresSteps", "#hiresDenoisingStrength", "#hiresStepPolicy", "#hiresSamplerName", "#hiresSchedulerName", "#hiresCfgScale", "#hiresCfgRescale", "#hiresUpscaler", "#hiresAspectPolicy", "#hiresPaddingMode", "#hiresFinalSizeCorrectionFilter", "#hiresSaveLowres", "#samplerName", "#schedulerName", "#cfgScale"].forEach((selector) => {
+  ["#hiresSteps", "#hiresDenoisingStrength", "#hiresStepPolicy", "#hiresSamplerName", "#hiresSchedulerName", "#hiresCfgScale", "#hiresCfgRescale", "#hiresUpscaler", "#hiresAspectPolicy", "#hiresPaddingMode", "#hiresBlurredEdgeMethod", "#hiresFinalSizeCorrectionFilter", "#hiresSaveLowres", "#samplerName", "#schedulerName", "#cfgScale"].forEach((selector) => {
     $(selector)?.addEventListener("input", () => { updateHiresSizeControls(); saveSessionSoon(); });
     $(selector)?.addEventListener("change", () => { updateHiresSizeControls(); saveSessionSoon(); });
   });
   $("#hiresPlannerParityDiagnostics")?.addEventListener("change", () => updateHiresSizeControls());
   $("#hiresCorrectionFingerprintDiagnostics")?.addEventListener("change", () => { updateHiresSizeControls(); saveSessionSoon(); });
+  $("#hiresBlurredEdgeCompareDiagnostics")?.addEventListener("change", () => { updateHiresSizeControls(); saveSessionSoon(); });
   window.addEventListener("image-gen-hires-upscaler-change", () => updateHiresSizeControls());
   $("#savePromptParserPresetButton")?.addEventListener("click", saveParserPreset);
   $("#deletePromptParserPresetButton")?.addEventListener("click", deleteParserPreset);
   $("#validateCurrentPromptButton")?.addEventListener("click", validateCurrentPrompt);
   $("#editPromptShortcutProfilesButton")?.addEventListener("click", openProfileEditor);
   $("#promptShortcutProfileEditorSelect")?.addEventListener("change", (event) => loadProfileEditor(profileById(event.target.value)));
+  $("#promptShortcutProfileEditorParsers")?.addEventListener("change", () => {
+    if (!profileEditorReadonly) renderShortcutEmitterEditor(false);
+  });
+  $("#promptShortcutProfileEditorEscape")?.addEventListener("input", (event) => {
+    profileEditorBody.escape_character = String(event.target.value || "\\");
+    syncProfileEditorBody();
+  });
+  $("#promptShortcutProfileEditorDescription")?.addEventListener("input", (event) => {
+    profileEditorBody.description = String(event.target.value || "");
+    syncProfileEditorBody();
+  });
+  $("#promptShortcutProfileEditorCredit")?.addEventListener("input", (event) => {
+    profileEditorBody.credit = String(event.target.value || "");
+    syncProfileEditorBody();
+  });
   $("#duplicatePromptShortcutProfileButton")?.addEventListener("click", duplicateProfileEditor);
   $("#newPromptShortcutProfileButton")?.addEventListener("click", newProfileEditor);
   $("#validatePromptShortcutProfileButton")?.addEventListener("click", () => validateProfileEditor());

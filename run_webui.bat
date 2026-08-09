@@ -11,8 +11,9 @@ rem Examples:
 rem   set "COMMANDLINE_ARGS=--xformers --medvram"
 rem   set "COMMANDLINE_ARGS=--attention-backend xformers --memory-policy low_vram"
 rem Explicit arguments passed to this BAT still override COMMANDLINE_ARGS.
+rem -attention-backend auto
 rem -----------------------------------------------------------------------------
-if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--attention-backend auto"
+if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--xformers"
 
 rem Resolve the project virtual environment. Prefer .venv, then legacy venv.
 set "VENV_DIR=%CD%\.venv"

@@ -2,7 +2,9 @@ import { state } from "../state.js";
 import { $, shortText } from "../utils.js";
 import { openLiveLightbox, syncLiveLightbox } from "./lightbox.js";
 import { renderCfgGraph } from "./cfg-lab.js?v=0.1.45";
-import { renderMemoryStatus } from "./memory-status.js?v=0.1.45";
+import { renderMemoryStatus } from "./memory-status.js?v=status-lights1";
+import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
+import { setActionIcon } from "../components/action-icons.js?v=0.1.0";
 
 let currentJob = null;
 let cancelGeneration = async () => {};
@@ -150,6 +152,33 @@ function renderTransport() {
   if (!element) return;
   element.textContent = transportLabel();
   element.className = `live-stream-status ${state.livePreview.streamStatus || "idle"}`;
+  const streamStatus = String(state.livePreview.streamStatus || "idle");
+  const mapping = {
+    live: ["healthy", "Live"],
+    connecting: ["transitioning", "Connecting"],
+    reconnecting: ["transitioning", "Reconnecting"],
+    fallback: ["warning", "Polling fallback"],
+    closed: ["inactive", "Closed"],
+    idle: ["inactive", "Idle"],
+  };
+  const [indicatorStatus, stateLabel] = mapping[streamStatus] || ["warning", transportLabel()];
+  setSubsystemStatus({
+    id: "livePreviewTransportStatusLight",
+    host: "#livePreviewStatusLightHost",
+    label: "Live Preview transport",
+    status: indicatorStatus,
+    stateLabel,
+    summary: `Live Preview transport: ${transportLabel()}.`,
+    detail: state.livePreview.reconnectCount > 0
+      ? `${state.livePreview.reconnectCount} reconnect attempt${state.livePreview.reconnectCount === 1 ? "" : "s"} recorded.`
+      : "No reconnect attempts are currently recorded.",
+    facts: {
+      transport: streamStatus,
+      reconnects: state.livePreview.reconnectCount || 0,
+      job_status: state.livePreview.status || "idle",
+    },
+    diagnosticTarget: "#livePreviewPanel",
+  });
 }
 
 function renderLiveCfgVisual() {
@@ -407,9 +436,11 @@ function renderCurrent() {
   const jump = $("#livePreviewJumpLatestButton");
   const viewFinal = $("#livePreviewViewFinalButton");
   follow.setAttribute("aria-pressed", String(state.livePreview.followLatest));
-  follow.textContent = state.livePreview.followLatest ? "Following Latest" : "Follow Latest";
+  const followLabel = state.livePreview.followLatest ? "Following latest preview" : "Follow latest preview";
+  setActionIcon(follow, "follow-latest", { label: followLabel, title: followLabel });
   pause.setAttribute("aria-pressed", String(state.livePreview.updatesPaused));
-  pause.textContent = state.livePreview.updatesPaused ? "Resume Preview" : "Pause Preview";
+  const pauseLabel = state.livePreview.updatesPaused ? "Resume live preview" : "Pause live preview";
+  setActionIcon(pause, state.livePreview.updatesPaused ? "play" : "pause", { label: pauseLabel, title: pauseLabel });
   pause.disabled = !state.livePreview.latestFrameUrl || isTerminal(state.livePreview.status);
   const behindLatest = Boolean(
     state.livePreview.latestFrameUrl

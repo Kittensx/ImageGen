@@ -186,12 +186,113 @@ def read_civitai_api_key(context: ProjectContext) -> tuple[Path, str]:
         key = path.read_text(encoding="utf-8-sig").strip()
     except OSError as exc:
         raise CivitaiCredentialError(f"Could not read the Civitai API key file {path}: {exc}") from exc
-    if key.casefold() in _PLACEHOLDER_KEYS or len(key) < 10:
-        raise CivitaiCredentialError(f"The Civitai API key file {path} is empty or contains a placeholder.")
-    if any(character.isspace() for character in key):
-        raise CivitaiCredentialError("The Civitai API key must be a single line without spaces.")
+    try:
+        key = _validate_civitai_api_key_value(key)
+    except CivitaiCredentialError as exc:
+        raise CivitaiCredentialError(f"The CivitAI API key file {path} is invalid: {exc}") from exc
     return path, key
 
+
+
+def _validate_civitai_api_key_value(value: Any) -> str:
+    key = str(value or "").strip()
+    if key.casefold() in _PLACEHOLDER_KEYS or len(key) < 10:
+        raise CivitaiCredentialError("The CivitAI API key is empty or contains a placeholder.")
+    if any(character.isspace() for character in key):
+        raise CivitaiCredentialError("The CivitAI API key must be a single line without spaces.")
+    return key
+
+
+def _ui_managed_key_path(context: ProjectContext) -> tuple[Path, bool]:
+    path = resolve_civitai_key_path(context)
+    try:
+        path.relative_to(context.project_root.resolve())
+        return path, True
+    except ValueError:
+        return path, False
+
+
+def civitai_api_key_status(context: ProjectContext) -> dict[str, Any]:
+    path, managed = _ui_managed_key_path(context)
+    configured = path.is_file()
+    usable = False
+    message = "CivitAI is not connected."
+    if configured:
+        try:
+            read_civitai_api_key(context)
+            usable = True
+            message = "CivitAI API key is configured locally."
+        except CivitaiCredentialError:
+            message = "The configured CivitAI API key file is empty, unreadable, or invalid."
+    if managed:
+        try:
+            display_path = path.relative_to(context.project_root.resolve()).as_posix()
+        except ValueError:
+            display_path = str(path)
+    else:
+        display_path = "Externally managed credential file"
+    return {
+        "configured": configured,
+        "usable": usable,
+        "managed_by_ui": managed,
+        "key_file": display_path,
+        "message": message,
+    }
+
+
+def write_civitai_api_key(context: ProjectContext, value: Any) -> dict[str, Any]:
+    key = _validate_civitai_api_key_value(value)
+    path, managed = _ui_managed_key_path(context)
+    if not managed:
+        raise CivitaiCredentialError(
+            "The configured CivitAI API key file is outside the IMAGE_GEN project. "
+            "For safety, update that externally managed credential file manually."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    default_secrets_root = (context.project_root / _DEFAULT_KEY_FILE.parent).resolve()
+    if path.parent == default_secrets_root:
+        ignore_file = path.parent / ".gitignore"
+        if not ignore_file.exists():
+            try:
+                ignore_file.write_text("*\n!.gitignore\n", encoding="utf-8")
+            except OSError:
+                pass
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text(key + "\n", encoding="utf-8")
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
+        os.replace(temporary, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    finally:
+        try:
+            if temporary.exists():
+                temporary.unlink()
+        except OSError:
+            pass
+    return civitai_api_key_status(context)
+
+
+def delete_civitai_api_key(context: ProjectContext) -> dict[str, Any]:
+    path, managed = _ui_managed_key_path(context)
+    if not managed:
+        raise CivitaiCredentialError(
+            "The configured CivitAI API key file is outside the IMAGE_GEN project and cannot be removed from the WebUI."
+        )
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise CivitaiCredentialError(f"Could not remove the CivitAI API key file {path}: {exc}") from exc
+    return civitai_api_key_status(context)
 
 def _base_model_family(value: Any) -> str:
     token = str(value or "").strip().casefold().replace("_", " ").replace("-", " ")
@@ -245,8 +346,15 @@ class CivitaiAssetMetadataService:
         self._opener = build_opener(_RejectRedirects())
 
     def key_status(self) -> dict[str, Any]:
-        path = resolve_civitai_key_path(self.context)
-        return {"configured": path.is_file(), "key_file": str(path)}
+        return civitai_api_key_status(self.context)
+
+    def test_connection(self) -> dict[str, Any]:
+        _, api_key = read_civitai_api_key(self.context)
+        payload = self._request_json(f"{_API_ROOT}/models?limit=1", api_key)
+        return {
+            "connected": isinstance(payload, Mapping),
+            "message": "CivitAI connection verified.",
+        }
 
     def _request_json(self, url: str, api_key: str) -> dict[str, Any]:
         if self._request_json_override is not None:
@@ -618,7 +726,10 @@ __all__ = [
     "CivitaiMetadataError",
     "CivitaiMetadataNotFound",
     "CivitaiRequestError",
+    "civitai_api_key_status",
+    "delete_civitai_api_key",
     "read_civitai_api_key",
     "resolve_civitai_key_path",
     "sha256_file",
+    "write_civitai_api_key",
 ]

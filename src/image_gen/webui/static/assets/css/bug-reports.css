@@ -1,0 +1,220 @@
+.home-bug-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.home-bug-metrics > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 76%, transparent);
+}
+
+.home-bug-metrics strong {
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.home-bug-metrics span,
+.home-bug-sync-status {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.home-bug-sync-status {
+  align-self: center;
+}
+
+.home-contributor-badge.is-active {
+  border-color: color-mix(in srgb, var(--sky-400) 58%, transparent);
+  color: var(--sky-200);
+}
+
+.bug-report-dialog {
+  width: min(1040px, calc(100vw - 28px));
+  max-height: min(880px, calc(100vh - 28px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-large);
+  background: var(--charcoal-900);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
+}
+
+.bug-report-dialog::backdrop {
+  background: rgba(5, 9, 14, 0.76);
+}
+
+.bug-report-dialog-shell {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  overflow: auto;
+  max-height: calc(100vh - 42px);
+}
+
+.bug-report-dialog-header,
+.bug-report-toolbar,
+.bug-report-card-header,
+.bug-report-card-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bug-report-dialog-header h2 {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+}
+
+.bug-report-notice {
+  display: grid;
+  gap: 4px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, #f0b35b 55%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #f0b35b 8%, var(--charcoal-850));
+}
+
+.bug-report-notice span,
+.bug-report-toolbar span,
+.bug-report-card-meta,
+.bug-report-card-copy,
+.bug-report-privacy-note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.bug-report-toolbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+.bug-report-list {
+  display: grid;
+  gap: 10px;
+}
+
+.bug-report-empty {
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: center;
+}
+
+.bug-report-card {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-850) 92%, var(--sky-900) 8%);
+}
+
+.bug-report-card h3 {
+  margin: 0;
+  font-size: 0.94rem;
+}
+
+.bug-report-status {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.bug-report-status.is-open,
+.bug-report-status.is-pending {
+  border-color: color-mix(in srgb, #f0b35b 54%, transparent);
+  color: #ffd08b;
+}
+
+.bug-report-status.is-resolved,
+.bug-report-status.is-known {
+  border-color: color-mix(in srgb, #66d28a 52%, transparent);
+  color: #9aefb5;
+}
+
+.bug-report-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.bug-report-card-copy {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bug-report-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.bug-report-preview summary {
+  color: var(--sky-300);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.bug-report-preview textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--charcoal-950, #10151c);
+  color: var(--text);
+  font: 0.72rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.bug-report-card-actions {
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.bug-report-card-actions a {
+  text-decoration: none;
+}
+
+.bug-report-privacy-note {
+  margin-left: auto;
+}
+
+@media (max-width: 850px) {
+  .home-bug-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bug-report-toolbar,
+  .bug-report-dialog-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bug-report-privacy-note {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .home-bug-metrics {
+    grid-template-columns: 1fr;
+  }
+}

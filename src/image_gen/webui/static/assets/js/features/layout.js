@@ -1,6 +1,7 @@
 import { api } from "../api.js";
 import { state } from "../state.js";
 import { $, debounce } from "../utils.js";
+import { setActionIcon } from "../components/action-icons.js?v=0.1.0";
 
 const MIN_LEFT_COLUMN = 170;
 const MIN_CENTER_COLUMN = 240;
@@ -287,9 +288,11 @@ function createPanelScaleControls(panel, label, onChange) {
   const decrease = document.createElement("button");
   decrease.type = "button";
   decrease.className = "panel-scale-button";
-  decrease.textContent = "A−";
-  decrease.title = `Make ${label.toLowerCase()} text and controls smaller`;
-  decrease.setAttribute("aria-label", decrease.title);
+  setActionIcon(decrease, "text-decrease", {
+    label: `Make ${label.toLowerCase()} text and controls smaller`,
+    title: `Make ${label.toLowerCase()} text and controls smaller`,
+    replace: true,
+  });
 
   const reset = document.createElement("button");
   reset.type = "button";
@@ -300,13 +303,17 @@ function createPanelScaleControls(panel, label, onChange) {
   const increase = document.createElement("button");
   increase.type = "button";
   increase.className = "panel-scale-button";
-  increase.textContent = "A+";
-  increase.title = `Make ${label.toLowerCase()} text and controls larger`;
-  increase.setAttribute("aria-label", increase.title);
+  setActionIcon(increase, "text-increase", {
+    label: `Make ${label.toLowerCase()} text and controls larger`,
+    title: `Make ${label.toLowerCase()} text and controls larger`,
+    replace: true,
+  });
 
   decrease.addEventListener("click", () => onChange(-PANEL_SCALE_STEP));
   increase.addEventListener("click", () => onChange(PANEL_SCALE_STEP));
   reset.addEventListener("click", () => onChange(0, true));
+  group.dataset.actionGroup = "panel-scale";
+  group.dataset.actionPriority = "28";
   group.append(decrease, reset, increase);
   panel._panelScaleOutput = reset;
   return group;
@@ -335,6 +342,7 @@ function installPanelScaleControls(onScaleChange) {
     const key = panel.dataset.panelScaleKey;
     const heading = panel.querySelector(":scope > .panel-heading");
     if (!key || !heading) return;
+    heading.classList.add("panel-scale-exempt");
     const label = heading.querySelector("h2")?.textContent?.trim() || "Panel";
     const controls = createPanelScaleControls(panel, label, (delta, reset = false) => {
       onScaleChange(key, reset ? 100 : delta, reset);
@@ -404,9 +412,10 @@ export function bindWorkspaceLayout(settings = {}) {
     const collapsed = layout.collapsed_panels.includes(panelId);
     panel.classList.toggle("is-collapsed", collapsed);
     panel.querySelectorAll(":scope > .panel-heading [data-workspace-collapse]").forEach((button) => {
-      button.textContent = collapsed ? "⌄" : "⌃";
       button.setAttribute("aria-expanded", String(!collapsed));
-      button.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${panel.querySelector("h2")?.textContent || "panel"}`);
+      const label = `${collapsed ? "Expand" : "Collapse"} ${panel.querySelector("h2")?.textContent || "panel"}`;
+      button.setAttribute("aria-label", label);
+      button.title = label;
     });
   };
 
@@ -527,9 +536,10 @@ export function bindWorkspaceLayout(settings = {}) {
     trigger?.setAttribute("aria-expanded", String(open));
     trigger?.classList.toggle("is-active", open);
     if (pin) {
-      pin.textContent = pinned ? "◆" : "◇";
       pin.setAttribute("aria-pressed", String(pinned));
-      pin.title = pinned ? "Unpin startup defaults" : "Pin startup defaults as a workspace column";
+      const label = pinned ? "Unpin startup defaults" : "Pin startup defaults as a workspace column";
+      pin.setAttribute("aria-label", label);
+      pin.title = label;
     }
   };
 
@@ -551,9 +561,10 @@ export function bindWorkspaceLayout(settings = {}) {
     layout.live_preview_collapsed = liveCollapsed;
     livePanel?.classList.toggle("is-collapsed", liveCollapsed);
     if (liveToggle) {
-      liveToggle.textContent = liveCollapsed ? "⌄" : "⌃";
       liveToggle.setAttribute("aria-expanded", String(!liveCollapsed));
-      liveToggle.setAttribute("aria-label", liveCollapsed ? "Expand live preview" : "Collapse live preview");
+      const label = liveCollapsed ? "Expand live preview" : "Collapse live preview";
+      liveToggle.setAttribute("aria-label", label);
+      liveToggle.title = label;
     }
 
     const followNewest = $("#followNewestOutput");
@@ -634,9 +645,12 @@ export function bindWorkspaceLayout(settings = {}) {
         const dragHandle = document.createElement("button");
         dragHandle.type = "button";
         dragHandle.className = "panel-drag-handle";
-        dragHandle.textContent = "⠿";
-        dragHandle.title = "Drag panel to another workspace column";
-        dragHandle.setAttribute("aria-label", dragHandle.title);
+        dragHandle.dataset.actionPinned = "true";
+        setActionIcon(dragHandle, "drag", {
+          label: "Drag panel to another workspace column",
+          title: "Drag panel to another workspace column",
+          replace: true,
+        });
         dragHandle.draggable = true;
         dragHandle.addEventListener("dragstart", (event) => {
           draggedPanelId = panelId;
@@ -657,11 +671,13 @@ export function bindWorkspaceLayout(settings = {}) {
         if (!collapse) {
           collapse = document.createElement("button");
           collapse.type = "button";
-          collapse.className = "icon-button workspace-panel-collapse";
+          collapse.className = "workspace-panel-collapse";
+          setActionIcon(collapse, "chevron-up", { label: "Collapse panel", title: "Collapse panel", replace: true });
           actions.append(collapse);
         }
         collapse.dataset.workspaceCollapse = panelId;
         collapse.dataset.layoutBound = "true";
+        collapse.dataset.actionPinned = "true";
         collapse.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -671,11 +687,11 @@ export function bindWorkspaceLayout(settings = {}) {
 
       const menu = document.createElement("details");
       menu.className = "panel-dock-menu";
+      menu.dataset.actionPinned = "true";
       const summary = document.createElement("summary");
-      summary.className = "icon-button panel-dock-menu-trigger";
-      summary.textContent = protectedPanel ? "▣" : "⋮";
-      summary.title = protectedPanel ? "Primary panel is locked to the center column" : "Panel layout options";
-      summary.setAttribute("aria-label", summary.title);
+      summary.className = "panel-dock-menu-trigger";
+      const menuLabel = protectedPanel ? "Primary panel is locked to the center column" : "Panel layout options";
+      setActionIcon(summary, protectedPanel ? "lock" : "more", { label: menuLabel, title: menuLabel, replace: true });
       menu.append(summary);
 
       const popup = document.createElement("div");

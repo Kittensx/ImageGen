@@ -1,0 +1,472 @@
+/* Shared IMAGE_GEN icon primitive.
+   Feature/workspace styles provide --ui-icon-mask; this file owns rendering,
+   interaction feedback, and reusable motion states. */
+.ui-icon {
+  --ui-icon-size: 1em;
+  --ui-icon-mask: none;
+  width: var(--ui-icon-size);
+  height: var(--ui-icon-size);
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: currentColor;
+  line-height: 1;
+}
+
+.ui-icon::before {
+  content: "";
+  width: var(--ui-icon-size);
+  height: var(--ui-icon-size);
+  display: block;
+  background: currentColor;
+  -webkit-mask: var(--ui-icon-mask) center / contain no-repeat;
+  mask: var(--ui-icon-mask) center / contain no-repeat;
+  transform-origin: center;
+  transition:
+    transform 140ms ease,
+    opacity 140ms ease,
+    filter 180ms ease;
+}
+
+.ui-icon[hidden] {
+  display: none;
+}
+
+/* Shared interaction contract.
+   .ui-icon-control is the generic opt-in wrapper for future workspace controls.
+   The sidebar participates immediately because it already owns SVG icons. */
+.ui-icon-control,
+.site-nav-item,
+.site-sidebar-toggle {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ui-icon-control:hover:not(:disabled):not([aria-disabled="true"]) .ui-icon::before,
+.site-nav-item:hover:not([aria-disabled="true"]) .ui-icon::before,
+.site-sidebar-toggle:hover:not(:disabled) .ui-icon::before {
+  transform: scale(1.07);
+  opacity: 1;
+}
+
+.ui-icon-control:active:not(:disabled):not([aria-disabled="true"]) .ui-icon::before,
+.site-nav-item:active:not([aria-disabled="true"]) .ui-icon::before,
+.site-sidebar-toggle:active:not(:disabled) .ui-icon::before {
+  transform: scale(0.92);
+}
+
+.ui-icon-control[aria-pressed="true"] .ui-icon::before,
+.ui-icon-control.is-selected .ui-icon::before,
+.ui-icon-control.is-active .ui-icon::before {
+  transform: scale(1.04);
+  filter: brightness(1.08);
+}
+
+.ui-icon-control:disabled .ui-icon::before,
+.ui-icon-control[aria-disabled="true"] .ui-icon::before,
+.site-nav-item[aria-disabled="true"] .ui-icon::before {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+/* Generation motion contract.
+   The two downbeats intentionally contract slightly at peak color:
+   grayscale -> prism beat 1 -> grayscale -> prism beat 2 -> grayscale/rest.
+   Apply .is-generating to any .ui-icon to reuse the motion. */
+.ui-icon.is-generating::before {
+  background-color: transparent;
+  background-image: linear-gradient(
+    135deg,
+    #ff5f6d 0%,
+    #ff9f43 16%,
+    #ffe66d 32%,
+    #63e6be 48%,
+    #74c0fc 64%,
+    #b197fc 80%,
+    #f783ff 100%
+  );
+  background-size: 240% 240%;
+  animation:
+    ui-icon-generation-two-beat 1900ms ease-in-out infinite,
+    ui-icon-generation-prism-shift 2600ms linear infinite;
+}
+
+@keyframes ui-icon-generation-two-beat {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.88;
+    filter: grayscale(1) saturate(0.2) brightness(0.96);
+  }
+
+  7% {
+    transform: scale(0.97);
+    opacity: 0.96;
+    filter: grayscale(0.35) saturate(1.15) brightness(1.05);
+  }
+
+  13% {
+    transform: scale(0.90);
+    opacity: 1;
+    filter: grayscale(0) saturate(1.65) brightness(1.18);
+  }
+
+  24% {
+    transform: scale(0.97);
+    opacity: 0.95;
+    filter: grayscale(0.55) saturate(0.8) brightness(1.02);
+  }
+
+  31% {
+    transform: scale(1);
+    opacity: 0.89;
+    filter: grayscale(1) saturate(0.2) brightness(0.96);
+  }
+
+  37% {
+    transform: scale(0.97);
+    opacity: 0.96;
+    filter: grayscale(0.35) saturate(1.15) brightness(1.05);
+  }
+
+  43% {
+    transform: scale(0.90);
+    opacity: 1;
+    filter: grayscale(0) saturate(1.7) brightness(1.2);
+  }
+
+  54% {
+    transform: scale(0.97);
+    opacity: 0.95;
+    filter: grayscale(0.55) saturate(0.8) brightness(1.02);
+  }
+
+  63% {
+    transform: scale(1);
+    opacity: 0.89;
+    filter: grayscale(1) saturate(0.2) brightness(0.96);
+  }
+
+  82% {
+    transform: scale(1);
+    opacity: 0.88;
+    filter: grayscale(1) saturate(0.2) brightness(0.96);
+  }
+}
+
+@keyframes ui-icon-generation-prism-shift {
+  0% {
+    background-position: 15% 50%;
+  }
+
+  50% {
+    background-position: 85% 50%;
+  }
+
+  100% {
+    background-position: 15% 50%;
+  }
+}
+
+@keyframes ui-generation-button-halo-two-beat {
+  0%, 31%, 63%, 100% {
+    box-shadow: 0 0 0 0 rgba(116, 192, 252, 0);
+  }
+
+  13% {
+    box-shadow:
+      0 0 0 2px rgba(116, 192, 252, 0.24),
+      0 0 16px rgba(247, 131, 255, 0.18);
+  }
+
+  43% {
+    box-shadow:
+      0 0 0 2px rgba(177, 151, 252, 0.24),
+      0 0 18px rgba(255, 230, 109, 0.16);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-icon::before {
+    transition: none !important;
+  }
+
+  .ui-icon.is-generating::before {
+    animation: none !important;
+    filter: grayscale(0.2) saturate(1.15) brightness(1.05);
+    background-position: 50% 50%;
+  }
+}
+
+/* IMAGE_GEN reusable action icon registry.
+   Action controls use standalone SVG masks so the same asset can be resized,
+   recolored, animated, and reused without raster variants. */
+.ui-icon[data-icon="clear-finished"] { --ui-icon-mask: url("../icons/actions/clear-finished.svg"); }
+.ui-icon[data-icon="cloud-refresh"] { --ui-icon-mask: url("../icons/actions/cloud-refresh.svg"); }
+.ui-icon[data-icon="duplicate"] { --ui-icon-mask: url("../icons/actions/duplicate.svg"); }
+.ui-icon[data-icon="new"] { --ui-icon-mask: url("../icons/actions/new.svg"); }
+.ui-icon[data-icon="queue-compose"] { --ui-icon-mask: url("../icons/actions/queue-compose.svg"); }
+.ui-icon[data-icon="text-decrease"] { --ui-icon-mask: url("../icons/actions/text-decrease.svg"); }
+.ui-icon[data-icon="text-increase"] { --ui-icon-mask: url("../icons/actions/text-increase.svg"); }
+.ui-icon[data-icon="validate"] { --ui-icon-mask: url("../icons/actions/validate.svg"); }
+.ui-icon[data-icon="variation-matrix"] { --ui-icon-mask: url("../icons/actions/variation-matrix.svg"); }
+.ui-icon[data-icon="diagnostics"] { --ui-icon-mask: url("../icons/actions/diagnostics.svg"); }
+.ui-icon[data-icon="compare"] { --ui-icon-mask: url("../icons/actions/compare.svg"); }
+.ui-icon[data-icon="copy"] { --ui-icon-mask: url("../icons/actions/copy.svg"); }
+.ui-icon[data-icon="delete"] { --ui-icon-mask: url("../icons/actions/delete.svg"); }
+.ui-icon[data-icon="export"] { --ui-icon-mask: url("../icons/actions/export.svg"); }
+.ui-icon[data-icon="export-selection"] { --ui-icon-mask: url("../icons/actions/export-selection.svg"); }
+.ui-icon[data-icon="filter"] { --ui-icon-mask: url("../icons/actions/filter.svg"); }
+.ui-icon[data-icon="filter-reset"] { --ui-icon-mask: url("../icons/actions/filter-reset.svg"); }
+.ui-icon[data-icon="folder-open"] { --ui-icon-mask: url("../icons/actions/folder-open.svg"); }
+.ui-icon[data-icon="folder-reload"] { --ui-icon-mask: url("../icons/actions/folder-reload.svg"); }
+.ui-icon[data-icon="import"] { --ui-icon-mask: url("../icons/actions/import.svg"); }
+.ui-icon[data-icon="load"] { --ui-icon-mask: url("../icons/actions/load.svg"); }
+.ui-icon[data-icon="info"] { --ui-icon-mask: url("../icons/actions/info.svg"); }
+.ui-icon[data-icon="key"] { --ui-icon-mask: url("../icons/actions/key.svg"); }
+.ui-icon[data-icon="external-link"] { --ui-icon-mask: url("../icons/actions/external-link.svg"); }
+.ui-icon[data-icon="maximize"] { --ui-icon-mask: url("../icons/actions/maximize.svg"); }
+.ui-icon[data-icon="randomize"] { --ui-icon-mask: url("../icons/actions/randomize.svg"); }
+.ui-icon[data-icon="refresh"] { --ui-icon-mask: url("../icons/actions/refresh.svg"); }
+.ui-icon[data-icon="remove"] { --ui-icon-mask: url("../icons/actions/remove.svg"); }
+.ui-icon[data-icon="reset"] { --ui-icon-mask: url("../icons/actions/reset.svg"); }
+.ui-icon[data-icon="save"] { --ui-icon-mask: url("../icons/actions/save.svg"); }
+.ui-icon[data-icon="save-as"] { --ui-icon-mask: url("../icons/actions/save-as.svg"); }
+.ui-icon[data-icon="seed"] { --ui-icon-mask: url("../icons/actions/seed.svg"); }
+.ui-icon[data-icon="select-all"] { --ui-icon-mask: url("../icons/actions/select-all.svg"); }
+.ui-icon[data-icon="selection-clear"] { --ui-icon-mask: url("../icons/actions/selection-clear.svg"); }
+.ui-icon[data-icon="stop"] { --ui-icon-mask: url("../icons/actions/stop.svg"); }
+.ui-icon[data-icon="theme"] { --ui-icon-mask: url("../icons/actions/theme.svg"); }
+.ui-icon[data-icon="chevron-down"] { --ui-icon-mask: url("../icons/navigation/chevron-down.svg"); }
+.ui-icon[data-icon="chevron-left"] { --ui-icon-mask: url("../icons/navigation/chevron-left.svg"); }
+.ui-icon[data-icon="chevron-right"] { --ui-icon-mask: url("../icons/navigation/chevron-right.svg"); }
+.ui-icon[data-icon="chevron-up"] { --ui-icon-mask: url("../icons/navigation/chevron-up.svg"); }
+.ui-icon[data-icon="jump-latest"] { --ui-icon-mask: url("../icons/navigation/jump-latest.svg"); }
+.ui-icon[data-icon="actual-size"] { --ui-icon-mask: url("../icons/media/actual-size.svg"); }
+.ui-icon[data-icon="final-image"] { --ui-icon-mask: url("../icons/media/final-image.svg"); }
+.ui-icon[data-icon="fit-view"] { --ui-icon-mask: url("../icons/media/fit-view.svg"); }
+.ui-icon[data-icon="follow-latest"] { --ui-icon-mask: url("../icons/media/follow-latest.svg"); }
+.ui-icon[data-icon="image-view"] { --ui-icon-mask: url("../icons/media/image-view.svg"); }
+.ui-icon[data-icon="pause"] { --ui-icon-mask: url("../icons/media/pause.svg"); }
+.ui-icon[data-icon="play"] { --ui-icon-mask: url("../icons/media/play.svg"); }
+.ui-icon[data-icon="console-log"] { --ui-icon-mask: url("../icons/system/console-log.svg"); }
+.ui-icon[data-icon="settings"] { --ui-icon-mask: url("../icons/system/settings.svg"); }
+
+.ui-action-button {
+  --ui-action-size: 34px;
+  --ui-icon-size: 18px;
+  position: relative;
+  width: var(--ui-action-size);
+  min-width: var(--ui-action-size);
+  height: var(--ui-action-size);
+  min-height: var(--ui-action-size);
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--line, #2b4358) 88%, transparent);
+  border-radius: 8px;
+  color: var(--sky-200, #d5f1ff);
+  background: color-mix(in srgb, var(--charcoal-800, #142331) 92%, transparent);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms ease;
+}
+
+.ui-action-button:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: color-mix(in srgb, var(--sky-400, #36b5f3) 58%, transparent);
+  color: var(--text, #f4f9fd);
+  background: color-mix(in srgb, var(--sky-500, #179ee7) 14%, var(--charcoal-800, #142331));
+}
+
+.ui-action-button:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: translateY(1px);
+}
+
+.ui-action-button:focus-visible {
+  outline: 2px solid var(--sky-300, #70d2ff);
+  outline-offset: 2px;
+}
+
+.ui-action-button[aria-pressed="true"],
+.ui-action-button[aria-expanded="true"],
+.ui-action-button.is-active,
+.ui-action-button.is-selected {
+  border-color: color-mix(in srgb, var(--sky-300, #70d2ff) 72%, transparent);
+  color: var(--sky-100, #d5f1ff);
+  background: color-mix(in srgb, var(--sky-500, #179ee7) 24%, var(--charcoal-800, #142331));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sky-300, #70d2ff) 16%, transparent);
+}
+
+.ui-action-button:disabled,
+.ui-action-button[aria-disabled="true"] {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.ui-action-button.is-working .ui-icon::before,
+.ui-icon.is-working::before {
+  animation: ui-action-spin 720ms linear infinite;
+}
+
+.ui-action-button.is-caution {
+  color: #f0b34c;
+  border-color: color-mix(in srgb, #f0b34c 58%, transparent);
+}
+
+.ui-action-button.is-critical {
+  color: #ff7777;
+  border-color: color-mix(in srgb, #ff7777 62%, transparent);
+}
+
+.ui-action-badge {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  min-width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--charcoal-900, #0d1620);
+  border-radius: 999px;
+  color: #fff;
+  background: var(--sky-600, #087fc7);
+  font-size: 0.62rem;
+  font-weight: 750;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.ui-action-button--compact {
+  --ui-action-size: 30px;
+  --ui-icon-size: 16px;
+}
+
+.ui-action-button--large {
+  --ui-action-size: 40px;
+  --ui-icon-size: 21px;
+}
+
+.viewer-actions .ui-action-button,
+.gallery-selection-actions .ui-action-button,
+.live-preview-heading-actions .ui-action-button,
+.live-preview-controls .ui-action-button,
+.live-preview-footer-actions .ui-action-button,
+.queue-toolbar .ui-action-button,
+.queue-actions .ui-action-button {
+  padding: 0;
+}
+
+.carousel-nav-button.ui-action-button {
+  --ui-action-size: 28px;
+  width: 28px;
+  min-width: 28px;
+  height: auto;
+  min-height: 72px;
+  border-radius: 7px;
+}
+
+.panel-toggle.ui-action-button[aria-expanded="false"] .ui-icon[data-icon="chevron-up"]::before,
+.ui-action-button.is-collapsed .ui-icon[data-icon="chevron-up"]::before {
+  transform: rotate(180deg);
+}
+
+.settings-icon-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.settings-icon-action-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.settings-icon-action-copy small {
+  color: var(--muted);
+}
+
+@keyframes ui-action-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .ui-action-button {
+    --ui-action-size: 32px;
+    --ui-icon-size: 17px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-action-button,
+  .ui-action-button .ui-icon::before {
+    transition: none !important;
+  }
+
+  .ui-action-button.is-working .ui-icon::before,
+  .ui-icon.is-working::before {
+    animation: none !important;
+  }
+}
+.ui-icon[data-icon="drag"] { --ui-icon-mask: url("../icons/actions/drag.svg"); }
+.ui-icon[data-icon="lock"] { --ui-icon-mask: url("../icons/actions/lock.svg"); }
+.ui-icon[data-icon="more"] { --ui-icon-mask: url("../icons/actions/more.svg"); }
+.ui-icon[data-icon="pin"] { --ui-icon-mask: url("../icons/actions/pin.svg"); }
+.ui-icon[data-icon="infinity"] { --ui-icon-mask: url("../icons/generation/infinity.svg"); }
+.ui-icon[data-icon="skip-next"] { --ui-icon-mask: url("../icons/media/skip-next.svg"); }
+
+.infinity-button.ui-icon-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.infinity-button.ui-icon-control .ui-icon {
+  --ui-icon-size: 18px;
+}
+
+.generation-interrupt-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.generation-interrupt-row .ui-action-button,
+#cancelButton.ui-action-button {
+  --ui-action-size: 38px;
+  --ui-icon-size: 19px;
+}
+
+summary.ui-action-button {
+  list-style: none;
+}
+
+summary.ui-action-button::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-panel-collapse.ui-action-button[aria-expanded="false"] .ui-icon[data-icon="chevron-up"]::before {
+  transform: rotate(180deg);
+}
+
+.panel-drag-handle.ui-action-button,
+.workspace-panel-collapse.ui-action-button,
+.panel-dock-menu-trigger.ui-action-button {
+  --ui-action-size: 28px;
+  --ui-icon-size: 15px;
+}
+
+.panel-scale-controls .panel-scale-button.ui-action-button {
+  --ui-action-size: 26px;
+  --ui-icon-size: 14px;
+  border: 0;
+  background: transparent;
+}

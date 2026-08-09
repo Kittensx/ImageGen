@@ -11,6 +11,7 @@ from image_gen.runtime.hires_sizing import HiresDimensionPlan, resolve_hires_dim
 from image_gen.systems.image_conditioning import VAEEncodeResult, VAERoundTripResult
 from image_gen.systems.upscaling import (
     SUPPORTED_ASPECT_POLICIES,
+    SUPPORTED_BLURRED_EDGE_METHODS,
     SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS,
     SUPPORTED_PADDING_MODES,
     UpscalerDescriptor,
@@ -57,6 +58,8 @@ class HiresUpscalePlan:
     final_size_correction_filter: str
     aspect_policy: str
     padding_mode: str
+    blurred_edge_method: str
+    blurred_edge_compare_diagnostics: bool
     allow_tiling: bool
     native_scale: int
     predicted_native_width: int
@@ -80,6 +83,8 @@ class HiresUpscalePlan:
             "final_size_correction_filter": self.final_size_correction_filter,
             "aspect_policy": self.aspect_policy,
             "padding_mode": self.padding_mode,
+            "blurred_edge_method": self.blurred_edge_method,
+            "blurred_edge_compare_diagnostics": bool(self.blurred_edge_compare_diagnostics),
             "allow_tiling": bool(self.allow_tiling),
             "native_scale": int(self.native_scale),
             "predicted_native_width": int(self.predicted_native_width),
@@ -198,6 +203,12 @@ def resolve_hires_upscale_plan(
     padding_mode = str(
         getattr(request, "hires_padding_mode", "reflect") or "reflect"
     ).strip().casefold()
+    blurred_edge_method = str(
+        getattr(request, "hires_blurred_edge_method", "box") or "box"
+    ).strip().casefold()
+    blurred_edge_compare_diagnostics = bool(
+        getattr(request, "hires_blurred_edge_compare_diagnostics", False)
+    )
     if not bool(getattr(dimensions, "aspect_ratio_changed", False)):
         aspect_policy = "stretch"
     if final_filter not in SUPPORTED_FINAL_SIZE_CORRECTION_FILTERS:
@@ -206,6 +217,8 @@ def resolve_hires_upscale_plan(
         raise ValueError("hires_aspect_policy must be stretch, crop_to_fill, or pad_to_fit.")
     if padding_mode not in SUPPORTED_PADDING_MODES:
         raise ValueError("hires_padding_mode must be reflect, replicate, blurred_edge, or black.")
+    if blurred_edge_method not in SUPPORTED_BLURRED_EDGE_METHODS:
+        raise ValueError("hires_blurred_edge_method must be box or gaussian_1d.")
 
     common = {
         "strategy": "pixel_neural",
@@ -218,6 +231,8 @@ def resolve_hires_upscale_plan(
         "final_size_correction_filter": final_filter,
         "aspect_policy": aspect_policy,
         "padding_mode": padding_mode,
+        "blurred_edge_method": blurred_edge_method,
+        "blurred_edge_compare_diagnostics": blurred_edge_compare_diagnostics,
         "allow_tiling": False,
         "native_scale": 0,
         "predicted_native_width": 0,

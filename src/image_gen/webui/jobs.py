@@ -304,6 +304,14 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     ).strip().casefold()
     if normalized["hires_padding_mode"] not in {"reflect", "replicate", "blurred_edge", "black"}:
         raise ValueError("hires_padding_mode must be reflect, replicate, blurred_edge, or black.")
+    normalized["hires_blurred_edge_method"] = str(
+        normalized.get("hires_blurred_edge_method") or "box"
+    ).strip().casefold()
+    if normalized["hires_blurred_edge_method"] not in {"box", "gaussian_1d"}:
+        raise ValueError("hires_blurred_edge_method must be box or gaussian_1d.")
+    normalized["hires_blurred_edge_compare_diagnostics"] = _coerce_boolean(
+        normalized.get("hires_blurred_edge_compare_diagnostics", False), default=False
+    )
     normalized["hires_recorded_target_correction"] = dict(
         normalized.get("hires_recorded_target_correction") or {}
     )
@@ -776,10 +784,12 @@ class GenerationJobManager:
         *,
         settings_provider: Callable[[], Mapping[str, Any]] | None = None,
         recent_output_provider: Callable[[Path], Mapping[str, Any] | None] | None = None,
+        output_record_callback: Callable[[Path], Any] | None = None,
     ) -> None:
         self.context = context
         self.settings_provider = settings_provider
         self.recent_output_provider = recent_output_provider
+        self.output_record_callback = output_record_callback
         self.registry = RuntimeRegistrySystem(project_context=context)
         self.selections = WebUISelectionResolver(self.registry)
         self.jobs: dict[str, GenerationJob] = {}
@@ -1275,8 +1285,15 @@ class GenerationJobManager:
     ) -> dict[str, Any] | None:
         image_value = str(image_path)
         self._transition_job(job, status="finalizing", worker_stage="saving_output")
-        if image_value not in job.output_paths:
+        is_new_output = image_value not in job.output_paths
+        if is_new_output:
             job.output_paths.append(image_value)
+            if callable(self.output_record_callback):
+                try:
+                    self.output_record_callback(Path(image_value))
+                except Exception:
+                    # Profile/statistics accounting must never fail a generation job.
+                    pass
         job.final_output_url = self._output_url_for_path(image_value)
         if job.resolved_seed is None and seed_text not in (None, ""):
             try:

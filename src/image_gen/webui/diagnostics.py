@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from image_gen.program_metadata import build_program_metadata
+
 _SECRET_MARKERS = {
     "password",
     "passwd",
@@ -118,6 +120,7 @@ def write_webui_failure_bundle(
     report = {
         "schema": "image-gen-webui-failure-v1",
         "created_at": created_at,
+        "application": build_program_metadata(root),
         "stage": str(stage),
         "request_path": request_path,
         "exception": {

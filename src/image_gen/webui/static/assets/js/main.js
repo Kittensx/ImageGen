@@ -1,32 +1,38 @@
 import { loadFragments } from "./fragments.js";
 
-import { api } from "./api.js?v=0.1.82";
+import { api } from "./api.js?v=civitai-connect1";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
-import { renderAdvancedEditor } from "./components/advanced-editor.js";
+import { renderAdvancedEditor } from "./components/advanced-editor.js?v=svg-profile2";
+import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
+import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=0.1.83";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=0.1.82";
-import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=0.1.45";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=status-action-icons1";
+import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=responsive-action-bar1";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
-import { bindSettings } from "./features/settings.js?v=0.1.62";
+import { bindSettings } from "./features/settings.js?v=0.1.63";
+import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civitai-connect1";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
-import { bindWorkspaceLayout } from "./features/layout.js?v=gallery-resize1";
+import { bindWorkspaceLayout } from "./features/layout.js?v=responsive-action-bar1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
-import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-label1";
-import { bindLoraWorkspace } from "./features/loras.js?v=asset-label1";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=civitai-connect1";
+import { bindLoraWorkspace } from "./features/loras.js?v=civitai-connect1";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
+import { bindHomeWorkspace } from "./features/home.js?v=bug-reporter1";
+import { bindBugReporter } from "./features/bug-reports.js?v=bug-reporter1";
+import { bindImageGenProfile } from "./features/profile.js?v=profile2";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
 import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
-import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js";
+import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js?v=responsive-action-bar1";
 import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.45";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
-import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=0.1.80";
+import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=prompt-cards1";
 import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
-import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=0.1.79";
+import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=civitai-connect1";
 import { bindOutpaintPrototype } from "./features/outpaint-prototype.js?v=0.1.84";
 
 const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
@@ -56,7 +62,6 @@ let modelRuntimeReadyPath = "";
 let schedulerPresetPluginId = "";
 let schedulerPresetName = "";
 let schedulerPresetSource = "";
-let schedulerPresetOptions = [];
 let refreshOutputsPromise = null;
 
 function pluginValue(descriptors, requested, fallback = "") {
@@ -92,24 +97,6 @@ function schedulerPresetSupportEnabled() {
   return currentSchedulerPluginId() === "simple_kes";
 }
 
-function sortKeys(value) {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === "object") {
-    return Object.keys(value).sort().reduce((acc, key) => {
-      acc[key] = sortKeys(value[key]);
-      return acc;
-    }, {});
-  }
-  return value;
-}
-
-function stableJson(value) {
-  return JSON.stringify(sortKeys(value || {}));
-}
-
-function valuesEqual(left, right) {
-  return stableJson(left || {}) === stableJson(right || {});
-}
 
 function replayPromptAssets(values = {}) {
   if (Array.isArray(values._webui_active_prompt_assets) && values._webui_active_prompt_assets.length) {
@@ -242,7 +229,27 @@ function setModelReadyState(ready, message, kind = "") {
   const status = $("#modelLoadStatus");
   status.textContent = message;
   status.className = `field-status ${kind}`.trim();
-  ["#topGenerateButton", "#topInfinityButton", "#generateButton", "#generateMenuButton", "#infinityButton"].forEach((selector) => {
+  const messageText = String(message || "");
+  const lowerMessage = messageText.toLowerCase();
+  const isTransitioning = kind === "loading" || lowerMessage.includes("activating") || lowerMessage.includes("loading");
+  const isFailure = kind === "error" && (lowerMessage.includes("failed") || lowerMessage.includes("did not return") || lowerMessage.includes("could not"));
+  const isUnselected = lowerMessage.includes("choose") || lowerMessage.includes("no checkpoint") || lowerMessage.includes("start with no model");
+  setSubsystemStatus({
+    id: "modelActivationStatusLight",
+    host: "#modelStatusLightHost",
+    label: "Checkpoint model",
+    status: ready ? "healthy" : isTransitioning ? "transitioning" : isFailure ? "critical" : isUnselected ? "inactive" : "warning",
+    stateLabel: ready ? "Ready" : isTransitioning ? "Activating" : isFailure ? "Activation failed" : isUnselected ? "Not loaded" : "Attention",
+    summary: messageText || "Checkpoint model status is unavailable.",
+    detail: state.activeModel?.resolved_path ? `Resolved model: ${state.activeModel.resolved_path}` : "No resident checkpoint path is currently reported.",
+    facts: {
+      selected_model: $("#modelPath")?.value || "none",
+      runtime_ready: ready ? "yes" : "no",
+      active_model: state.activeModel?.model_name || "none",
+    },
+    diagnosticTarget: "#modelLoadStatus",
+  });
+  ["#generateButton", "#generateMenuButton", "#infinityButton"].forEach((selector) => {
     const button = $(selector);
     if (button) button.disabled = !ready;
   });
@@ -414,10 +421,11 @@ async function enrichSelectedVaeFromCivitai() {
     notify("The selected VAE is not registered in the IMAGE_GEN asset catalog. Refresh models and try again.", "warning");
     return;
   }
-  const previousLabel = button?.textContent || "Refresh selected VAE from CivitAI";
+  const previousTitle = button?.title || "Refresh selected VAE metadata from CivitAI";
   if (button) {
     button.disabled = true;
-    button.textContent = "Fetching…";
+    button.classList.add("is-working");
+    button.title = "Fetching VAE metadata from CivitAI…";
   }
   try {
     const updated = await api.enrichAssetFromCivitai("vae", record.asset_id, false);
@@ -435,7 +443,8 @@ async function enrichSelectedVaeFromCivitai() {
   } finally {
     if (button) {
       button.disabled = !select.value;
-      button.textContent = previousLabel;
+      button.classList.remove("is-working");
+      button.title = previousTitle;
     }
   }
 }
@@ -506,151 +515,6 @@ function populatePlugins(current = {}) {
   );
 }
 
-function mergedSchedulerPresets(pluginId) {
-  const builtin = (BUILTIN_SCHEDULER_PRESETS[pluginId] || []).map((item) => ({ ...item }));
-  const user = (schedulerPresetOptions || []).filter((item) => item.source === "user" && item.plugin_id === pluginId);
-  return [...builtin, ...user];
-}
-
-function schedulerPresetSelection() {
-  const pluginId = currentSchedulerPluginId();
-  return mergedSchedulerPresets(pluginId).find((item) => item.name === schedulerPresetName) || null;
-}
-
-function updateSchedulerPresetStatus() {
-  const toolbar = $("#schedulerPresetToolbar");
-  const input = $("#schedulerPresetSelect");
-  const status = $("#schedulerPresetStatus");
-  const loadButton = $("#schedulerPresetLoadButton");
-  const saveAsButton = $("#schedulerPresetSaveButton");
-  const saveButton = $("#schedulerPresetUpdateButton");
-  const deleteButton = $("#schedulerPresetDeleteButton");
-  if (!toolbar || !input || !status) return;
-
-  if (toolbar.hidden) {
-    status.textContent = "Preset management is available for supported schedulers.";
-    return;
-  }
-
-  const preset = schedulerPresetSelection();
-  const currentValues = collectCurrentValues().scheduler_kwargs || {};
-  const dirty = preset ? !valuesEqual(currentValues, preset.values) : Object.keys(currentValues || {}).length > 0;
-
-  if (preset) {
-    status.textContent = dirty
-      ? `Preset “${preset.name}” is selected, but the current scheduler settings have unsaved manual changes.`
-      : `${preset.source === "builtin" ? "Built-in" : "Saved"} preset “${preset.name}” is active.`;
-  } else if (Object.keys(currentValues || {}).length) {
-    status.textContent = "Manual scheduler configuration is active and has not been saved as a preset.";
-  } else {
-    status.textContent = "Default scheduler settings are active.";
-  }
-
-  loadButton.disabled = !preset;
-  saveAsButton.disabled = false;
-  saveButton.disabled = !(preset && preset.source === "user");
-  deleteButton.disabled = !(preset && preset.source === "user");
-}
-
-async function refreshSchedulerPresetToolbar({ restoreSelection = true } = {}) {
-  const toolbar = $("#schedulerPresetToolbar");
-  const input = $("#schedulerPresetSelect");
-  const list = $("#schedulerPresetList");
-  const status = $("#schedulerPresetStatus");
-  if (!toolbar || !input || !list || !status) return;
-
-  const pluginId = currentSchedulerPluginId();
-  if (!schedulerPresetSupportEnabled()) {
-    toolbar.hidden = true;
-    schedulerPresetPluginId = "";
-    schedulerPresetName = "";
-    schedulerPresetSource = "";
-    schedulerPresetOptions = [];
-    return;
-  }
-
-  toolbar.hidden = false;
-  schedulerPresetPluginId = pluginId;
-  try {
-    const profiles = await api.profiles(SCHEDULER_PRESET_KIND, pluginId);
-    schedulerPresetOptions = (profiles || []).map((item) => ({
-      name: item.name,
-      values: item.values || {},
-      plugin_id: item.plugin_id || pluginId,
-      source: "user",
-    }));
-  } catch (error) {
-    schedulerPresetOptions = [];
-    status.textContent = `Unable to load scheduler presets: ${error.message}`;
-  }
-
-  const presets = mergedSchedulerPresets(pluginId);
-  list.replaceChildren(...presets.map((item) => option(item.name, item.source === "builtin" ? `${item.name} (built-in)` : item.name)));
-  if (!restoreSelection) schedulerPresetName = "";
-  input.value = restoreSelection ? schedulerPresetName : "";
-
-  const selected = presets.find((item) => item.name === input.value) || null;
-  schedulerPresetName = selected?.name || "";
-  schedulerPresetSource = selected?.source || "";
-  updateSchedulerPresetStatus();
-}
-
-async function loadSchedulerPreset(name) {
-  const pluginId = currentSchedulerPluginId();
-  const preset = mergedSchedulerPresets(pluginId).find((item) => item.name === name);
-  if (!preset) {
-    throw new Error(`Scheduler preset not found: ${name}`);
-  }
-  schedulerValues = { ...(preset.values || {}) };
-  schedulerPresetName = preset.name;
-  schedulerPresetPluginId = pluginId;
-  schedulerPresetSource = preset.source || "user";
-  await refreshAdvancedEditors({ preservePresetSelection: true });
-  updateSchedulerPresetStatus();
-  saveSessionSoon();
-  notify(`Loaded scheduler preset: ${preset.name}`);
-}
-
-async function saveSchedulerPreset({ overwrite = false } = {}) {
-  const pluginId = currentSchedulerPluginId();
-  if (!pluginId) return;
-  const selected = schedulerPresetSelection();
-  let name = "";
-  if (overwrite && selected?.source === "user") {
-    name = selected.name;
-  } else {
-    name = $("#schedulerPresetSelect")?.value?.trim() || "";
-  }
-  if (!name) return;
-  const values = collectCurrentValues().scheduler_kwargs || {};
-  await api.saveProfile(SCHEDULER_PRESET_KIND, {
-    name,
-    plugin_id: pluginId,
-    values,
-    overwrite,
-  });
-  schedulerPresetName = name;
-  schedulerPresetPluginId = pluginId;
-  schedulerPresetSource = "user";
-  await refreshSchedulerPresetToolbar({ restoreSelection: true });
-  updateSchedulerPresetStatus();
-  saveSessionSoon();
-  notify(`Saved scheduler preset: ${name}`);
-}
-
-async function deleteSchedulerPreset() {
-  const selected = schedulerPresetSelection();
-  if (!selected || selected.source !== "user") return;
-  if (!window.confirm(`Delete scheduler preset “${selected.name}”?`)) return;
-  await api.deleteProfile(SCHEDULER_PRESET_KIND, selected.name, currentSchedulerPluginId());
-  schedulerPresetName = "";
-  schedulerPresetSource = "";
-  await refreshSchedulerPresetToolbar({ restoreSelection: false });
-  updateSchedulerPresetStatus();
-  saveSessionSoon();
-  notify(`Deleted scheduler preset: ${selected.name}`);
-}
-
 async function refreshAdvancedEditors({ preservePresetSelection = false } = {}) {
   await renderAdvancedEditor({
     container: $("#samplerAdvancedContent"),
@@ -661,18 +525,27 @@ async function refreshAdvancedEditors({ preservePresetSelection = false } = {}) 
       saveSessionSoon();
     },
   });
+
+  const schedulerPluginId = currentSchedulerPluginId();
+  const builtinProfiles = schedulerPresetSupportEnabled()
+    ? (BUILTIN_SCHEDULER_PRESETS[schedulerPluginId] || [])
+    : [];
   await renderAdvancedEditor({
     container: $("#schedulerAdvancedContent"),
     descriptor: schedulerDescriptor($("#schedulerName").value),
     kind: "scheduler",
     currentValues: schedulerValues,
+    builtinProfiles,
+    selectedProfileName: preservePresetSelection ? schedulerPresetName : "",
+    onProfileStateChange: ({ name = "", source = "" } = {}) => {
+      schedulerPresetName = name;
+      schedulerPresetPluginId = schedulerPluginId;
+      schedulerPresetSource = source;
+    },
     onChange: () => {
-      updateSchedulerPresetStatus();
       saveSessionSoon();
     },
   });
-  await refreshSchedulerPresetToolbar({ restoreSelection: preservePresetSelection });
-  updateSchedulerPresetStatus();
 }
 
 function ensureSelectValue(select, value, label) {
@@ -819,109 +692,19 @@ function bindAdvancedButtons() {
     saveSessionSoon();
   });
 
-  $("#schedulerPresetPickerButton")?.addEventListener("click", () => {
-    try {
-      $("#schedulerPresetSelect")?.focus();
-      $("#schedulerPresetSelect")?.showPicker?.();
-    } catch {
-      $("#schedulerPresetSelect")?.focus();
-    }
-  });
-  $("#schedulerPresetLoadButton")?.addEventListener("click", async () => {
-    const name = $("#schedulerPresetSelect").value.trim();
-    if (!name) return;
-    try {
-      await loadSchedulerPreset(name);
-    } catch (error) {
-      notify(error.message, "error");
-    }
-  });
-  $("#schedulerPresetSaveButton")?.addEventListener("click", async () => {
-    try {
-      await saveSchedulerPreset({ overwrite: false });
-    } catch (error) {
-      notify(error.message, "error");
-    }
-  });
-  $("#schedulerPresetUpdateButton")?.addEventListener("click", async () => {
-    try {
-      await saveSchedulerPreset({ overwrite: true });
-    } catch (error) {
-      notify(error.message, "error");
-    }
-  });
-  $("#schedulerPresetDeleteButton")?.addEventListener("click", async () => {
-    try {
-      await deleteSchedulerPreset();
-    } catch (error) {
-      notify(error.message, "error");
-    }
-  });
-  $("#schedulerPresetSelect")?.addEventListener("input", () => {
-    updateSchedulerPresetStatus();
-  });
-  $("#schedulerPresetSelect")?.addEventListener("change", async (event) => {
-    const pluginId = currentSchedulerPluginId();
-    const preset = mergedSchedulerPresets(pluginId).find((item) => item.name === event.target.value) || null;
-    schedulerPresetName = preset?.name || event.target.value.trim() || "";
-    schedulerPresetSource = preset?.source || "";
-    if (preset) {
-      try {
-        await loadSchedulerPreset(preset.name);
-      } catch (error) {
-        notify(error.message, "error");
-      }
-    }
-    updateSchedulerPresetStatus();
-    saveSessionSoon();
-  });
-  $("#schedulerPresetExportButton")?.addEventListener("click", () => {
-    const payload = {
-      export_version: 1,
-      kind: SCHEDULER_PRESET_KIND,
-      plugin_id: currentSchedulerPluginId(),
-      name: $("#schedulerPresetSelect")?.value?.trim() || "scheduler_preset",
-      values: collectCurrentValues().scheduler_kwargs || {},
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${payload.name.replace(/[^a-z0-9._-]+/gi, "_") || "scheduler_preset"}.image_gen_scheduler_preset.json`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 500);
-  });
-  $("#schedulerPresetImportButton")?.addEventListener("click", () => $("#schedulerPresetImportInput")?.click());
-  $("#schedulerPresetImportInput")?.addEventListener("change", async () => {
-    const [file] = $("#schedulerPresetImportInput").files || [];
-    $("#schedulerPresetImportInput").value = "";
-    if (!file) return;
-    try {
-      const payload = JSON.parse(await file.text());
-      schedulerValues = payload.values || {};
-      schedulerPresetName = String(payload.name || file.name.replace(/\.json$/i, "")).trim();
-      schedulerPresetSource = "";
-      $("#schedulerPresetSelect").value = schedulerPresetName;
-      await refreshAdvancedEditors({ preservePresetSelection: true });
-      updateSchedulerPresetStatus();
-      notify("Scheduler preset loaded from local file.");
-    } catch (error) {
-      notify(`Unable to load the local scheduler preset: ${error.message}`, "error");
-    }
-  });
+
 }
 
 function bindPanels() {
   const syncPanelToggle = (button, target) => {
     if (!button || !target) return;
     const collapsed = target.classList.contains("is-collapsed");
-    button.textContent = collapsed ? "⌄" : "⌃";
     button.setAttribute("aria-expanded", String(!collapsed));
     const label = button.getAttribute("aria-label") || "Toggle panel";
     const normalized = label.replace(/^(Collapse|Expand)\s+/i, "");
-    button.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${normalized}`);
+    const nextLabel = `${collapsed ? "Expand" : "Collapse"} ${normalized}`;
+    button.setAttribute("aria-label", nextLabel);
+    button.title = nextLabel;
     if (target.id === "recentOutputsPanel") {
       $("#centerSplitter")?.classList.toggle("is-hidden", collapsed);
     }
@@ -1102,6 +885,7 @@ async function start() {
     await refreshAdvancedEditors({ preservePresetSelection: true });
     renderModelArchitectureStatus(state.activeModel);
     const workspaceLayout = bindWorkspaceLayout(bootstrap.settings || {});
+    initResponsiveActionBars(document);
     const defaultAssetsController = bindDefaultAssets(bootstrap.default_assets || {});
     const promptLoraSync = bindPromptLoraSync({ defaultAssetsController });
     promptLoraSync.syncFromPrompts();
@@ -1135,6 +919,13 @@ async function start() {
       showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
     });
     workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace });
+    bindHomeWorkspace({
+      models: state.models,
+      vaes: state.vaes,
+      loras: state.loras,
+    });
+    bindBugReporter();
+    bindImageGenProfile();
     window.addEventListener("image-gen-active-prompt-assets-updated", saveSessionSoon);
     bindLightbox();
     bindOutputDetails({ collect: collectCurrentValues, apply: applyReplayValues, onJobQueued: acceptQueuedJob });
@@ -1160,6 +951,7 @@ async function start() {
       saveLayoutDefault: workspaceLayout.saveCurrentScaleDefault,
       runtimeStartupStatus: bootstrap.runtime_startup_status || null,
     });
+    bindCivitaiConnection();
     bindPromptPresets(saveSessionSoon);
     bindGenerationProfiles({ collect: collectCurrentValues, apply: applyProfile });
     bindGeneration({
@@ -1184,7 +976,17 @@ async function start() {
 
     $("#refreshModelsButton").addEventListener("click", refreshModels);
     $("#clearJobCacheButton")?.addEventListener("click", clearJobCache);
-    $("#refreshOutputsButton").addEventListener("click", () => refreshOutputs());
+    $("#refreshOutputsButton").addEventListener("click", async () => {
+      const button = $("#refreshOutputsButton");
+      button?.classList.add("is-working");
+      if (button) button.disabled = true;
+      try {
+        await refreshOutputs();
+      } finally {
+        button?.classList.remove("is-working");
+        if (button) button.disabled = false;
+      }
+    });
     $("#reloadWorkspaceButton").addEventListener("click", reloadWorkspace);
     $("#restoreLastSession").addEventListener("change", async (event) => {
       const saved = await api.saveSettings({ restore_last_session: event.target.checked });

@@ -1,6 +1,7 @@
-import { api } from "../api.js?v=0.1.79";
+import { api } from "../api.js?v=civitai-connect1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
+import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 
 function catalog() {
   return state.upscalers || {};
@@ -50,6 +51,16 @@ function renderStatus() {
   if (!item) {
     status.textContent = "No supported neural .pth upscaler is selected. Refresh or install a recognized model.";
     status.className = "field-status error";
+    setSubsystemStatus({
+      id: "hiresUpscalerSubsystemStatusLight",
+      host: "#hiresUpscalerStatusLightHost",
+      label: "Neural hires upscaler",
+      status: "inactive",
+      stateLabel: "Not selected",
+      summary: "No supported neural upscaler is currently selected.",
+      detail: "Refresh discovery or select a recognized .pth upscaler to resolve runtime qualification.",
+      diagnosticTarget: "#hiresUpscalerDiagnostics",
+    });
     const civitaiButton = $("#upscalerFetchCivitaiButton");
     if (civitaiButton) civitaiButton.disabled = true;
     return;
@@ -60,6 +71,27 @@ function renderStatus() {
     : "";
   status.textContent = `${item.display_name} · ${item.architecture} · native x${item.native_scale} · ${friendlyAvailability(item)}${civitai}`;
   status.className = item.selectable ? "field-status ready" : "field-status error";
+  const loadStatus = String(item.load_status || "").toLowerCase();
+  const runtimeStatus = String(item.runtime_qualification?.status || "unqualified").toLowerCase();
+  const caution = item.selectable && ["unqualified", "backend_unqualified"].includes(runtimeStatus);
+  const deferred = loadStatus.startsWith("deferred_");
+  setSubsystemStatus({
+    id: "hiresUpscalerSubsystemStatusLight",
+    host: "#hiresUpscalerStatusLightHost",
+    label: "Neural hires upscaler",
+    status: item.selectable ? (caution ? "warning" : "healthy") : (deferred ? "warning" : "critical"),
+    stateLabel: item.selectable ? (caution ? "Usable, unqualified" : "Available") : (deferred ? "Deferred" : "Unavailable"),
+    summary: friendlyAvailability(item),
+    detail: item.bounded_error || `Architecture: ${item.architecture}. Native scale: x${item.native_scale}. Runtime qualification: ${runtimeStatus}.`,
+    facts: {
+      upscaler: item.display_name || item.upscaler_id,
+      architecture: item.architecture || "unknown",
+      native_scale: item.native_scale || "unknown",
+      load_status: loadStatus || "unknown",
+      runtime_qualification: runtimeStatus,
+    },
+    diagnosticTarget: "#hiresUpscalerDiagnostics",
+  });
   const civitaiButton = $("#upscalerFetchCivitaiButton");
   if (civitaiButton) civitaiButton.disabled = !item?.upscaler_id;
 }
@@ -226,9 +258,10 @@ export function bindHiresUpscalers(saveSessionSoon = null) {
       notify("Select a supported neural upscaler before fetching CivitAI metadata.", "warning");
       return;
     }
-    const previousLabel = button.textContent || "Refresh selected from CivitAI";
+    const previousTitle = button.title || "Refresh selected upscaler metadata from CivitAI";
     button.disabled = true;
-    button.textContent = "Fetching…";
+    button.classList.add("is-working");
+    button.title = "Fetching upscaler metadata from CivitAI…";
     try {
       const result = await api.enrichAssetFromCivitai("upscaler", item.upscaler_id, false);
       state.upscalers = result.catalog || await api.upscalers();
@@ -241,13 +274,15 @@ export function bindHiresUpscalers(saveSessionSoon = null) {
     } catch (error) {
       notify(`Unable to fetch upscaler metadata from CivitAI: ${error.message}`, "error");
     } finally {
-      button.textContent = previousLabel;
+      button.classList.remove("is-working");
+      button.title = previousTitle;
       button.disabled = !selectedDescriptor();
     }
   });
   $("#refreshUpscalersButton")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
+    button.classList.add("is-working");
     try {
       state.upscalers = await api.refreshUpscalers("all");
       renderOptions($("#hiresUpscaler")?.value || "");
@@ -256,6 +291,7 @@ export function bindHiresUpscalers(saveSessionSoon = null) {
     } catch (error) {
       notify(`Unable to refresh upscalers: ${error.message}`, "error");
     } finally {
+      button.classList.remove("is-working");
       button.disabled = false;
     }
   });

@@ -17,15 +17,23 @@ function storedSidebarState() {
   }
 }
 
+function syncSidebarControlState() {
+  const state = document.documentElement.dataset.siteSidebar || "expanded";
+  const toggle = document.getElementById("siteSidebarToggle");
+  if (!toggle) return;
+
+  const expanded = state !== "collapsed";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.removeAttribute("aria-disabled");
+  toggle.disabled = false;
+  toggle.setAttribute("aria-label", expanded ? "Collapse navigation" : "Expand navigation");
+  toggle.title = expanded ? "Collapse navigation" : "Expand navigation";
+}
+
 function applySidebarState(state) {
   const value = state === "collapsed" ? "collapsed" : "expanded";
   document.documentElement.dataset.siteSidebar = value;
-  const toggle = document.getElementById("siteSidebarToggle");
-  if (toggle) {
-    const collapsed = value === "collapsed";
-    toggle.setAttribute("aria-label", collapsed ? "Expand navigation" : "Collapse navigation");
-    toggle.title = collapsed ? "Expand navigation" : "Collapse navigation";
-  }
+  syncSidebarControlState();
   try {
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, value);
   } catch (_error) {
@@ -48,9 +56,21 @@ function routeFromLocation() {
   return activeWorkspace();
 }
 
+function navigationItemDisabled(item) {
+  return item?.getAttribute("aria-disabled") === "true";
+}
+
+function prepareDisabledNavigationItems() {
+  document.querySelectorAll("[data-site-route][aria-disabled=\"true\"]").forEach((item) => {
+    item.classList.add("is-disabled");
+    item.removeAttribute("aria-current");
+    if (item.matches("a")) item.tabIndex = -1;
+  });
+}
+
 function renderActiveRoute(route = routeFromLocation()) {
   document.querySelectorAll("[data-site-route]").forEach((item) => {
-    const active = item.dataset.siteRoute === route;
+    const active = !navigationItemDisabled(item) && item.dataset.siteRoute === route;
     item.classList.toggle("is-active", active);
     if (active) item.setAttribute("aria-current", "page");
     else item.removeAttribute("aria-current");
@@ -117,12 +137,17 @@ function bindNavigation() {
 
   document.querySelectorAll("a[data-site-route]").forEach((link) => {
     link.addEventListener("click", (event) => {
+      if (navigationItemDisabled(link)) {
+        event.preventDefault();
+        return;
+      }
       const route = link.dataset.siteRoute || "";
       if (!MAIN_PATHS.has(normalizePath()) || !MAIN_ROUTES.has(route)) return;
       event.preventDefault();
       activateMainRoute(route, { updateHistory: true });
     });
   });
+
 
   window.addEventListener("hashchange", () => {
     if (!MAIN_PATHS.has(normalizePath())) return;
@@ -177,7 +202,9 @@ async function startSiteSidebar() {
   const sidebar = await loadSidebarFragment();
   if (!sidebar && !document.getElementById("siteSidebar")) return;
 
+  prepareDisabledNavigationItems();
   bindNavigation();
+  syncSidebarControlState();
   document.documentElement.dataset.siteSidebarReady = "true";
   renderActiveRoute();
 

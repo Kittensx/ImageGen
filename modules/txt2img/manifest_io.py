@@ -74,6 +74,8 @@ _HIRES_REPLAY_FIELDS = (
     "hires_final_size_correction_filter",
     "hires_aspect_policy",
     "hires_padding_mode",
+    "hires_blurred_edge_method",
+    "hires_blurred_edge_compare_diagnostics",
     "hires_recorded_target_correction",
     "hires_correction_fingerprint_enabled",
     "hires_recorded_correction_fingerprint",
@@ -323,6 +325,10 @@ def _recorded_hires_replay_fields(manifest: GenerationManifest) -> dict[str, Any
         output["hires_recorded_target_correction"] = json_safe(dict(correction))
         output["hires_aspect_policy"] = str(correction.get("aspect_policy") or "stretch")
         output["hires_padding_mode"] = str(correction.get("padding_mode") or "reflect")
+        output["hires_blurred_edge_method"] = str(correction.get("blurred_edge_method") or "box")
+        output["hires_blurred_edge_compare_diagnostics"] = bool(
+            correction.get("blurred_edge_compare_diagnostics", False)
+        )
         output["hires_final_size_correction_filter"] = str(
             correction.get("final_size_correction_filter_requested") or "auto"
         )

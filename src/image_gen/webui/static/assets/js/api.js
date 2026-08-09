@@ -7,13 +7,30 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let code = "";
+    let detail = null;
     try {
       const payload = await response.json();
-      message = payload.detail || message;
+      detail = payload.detail ?? null;
+      if (detail && typeof detail === "object") {
+        code = String(detail.code || "");
+        message = String(detail.message || message);
+      } else if (detail) {
+        message = String(detail);
+      }
     } catch {
       // Keep the HTTP status text.
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.code = code;
+    error.detail = detail;
+    error.status = response.status;
+    if (code === "civitai_credentials_required") {
+      window.dispatchEvent(new CustomEvent("image-gen-civitai-credential-required", {
+        detail: { message },
+      }));
+    }
+    throw error;
   }
 
   if (response.status === 204) {
@@ -59,6 +76,20 @@ function encodeOutputPath(outputId) {
 export const api = {
   bootstrap: () => request("/api/bootstrap"),
   health: () => request("/api/health"),
+  profile: () => request("/api/profile"),
+  updateProfileSharing: (values = {}) => request("/api/profile/sharing", {
+    method: "PATCH",
+    body: JSON.stringify(values || {}),
+  }),
+  discordCommunityStatus: () => request("/api/profile/discord/community"),
+  connectDiscordProfile: () => request("/api/profile/discord/connect", { method: "POST" }),
+  refreshDiscordPresence: () => request("/api/profile/discord/presence", { method: "POST" }),
+  disconnectDiscordProfile: () => request("/api/profile/discord/disconnect", { method: "POST" }),
+  bugReports: () => request("/api/bug-reports"),
+  syncBugReports: () => request("/api/bug-reports/sync", { method: "POST" }),
+  prepareBugIssue: (fingerprint) => request(`/api/bug-reports/${encodeURIComponent(fingerprint)}/issue`, { method: "POST" }),
+  revealBugBundle: (fingerprint) => request(`/api/bug-reports/${encodeURIComponent(fingerprint)}/reveal`, { method: "POST" }),
+  bugBundleUrl: (fingerprint) => `/api/bug-reports/${encodeURIComponent(fingerprint)}/bundle`,
   refreshModels: () => request("/api/models/refresh", { method: "POST" }),
   upscalers: () => request("/api/upscalers"),
   hiresDimensionPlan: (values = {}) => request("/api/hires/dimension-plan", {
@@ -86,6 +117,13 @@ export const api = {
   activeModel: () => request("/api/models/active"),
   unloadModel: () => request("/api/models/unload", { method: "POST" }),
   assetCatalog: () => request("/api/assets/catalog"),
+  civitaiConnectionStatus: () => request("/api/integrations/civitai"),
+  saveCivitaiCredential: (apiKey) => request("/api/integrations/civitai/credential", {
+    method: "PUT",
+    body: JSON.stringify({ api_key: String(apiKey || "") }),
+  }),
+  removeCivitaiCredential: () => request("/api/integrations/civitai/credential", { method: "DELETE" }),
+  testCivitaiConnection: () => request("/api/integrations/civitai/test", { method: "POST" }),
   enrichAssetsFromCivitai: (assetType, mode = "missing") => request(`/api/civitai/assets/${encodeURIComponent(assetType)}/metadata`, {
     method: "POST",
     body: JSON.stringify({ mode }),

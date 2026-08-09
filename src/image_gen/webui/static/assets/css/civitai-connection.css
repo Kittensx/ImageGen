@@ -1,0 +1,173 @@
+.civitai-settings-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.civitai-status-button {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--charcoal-800) 88%, transparent);
+  cursor: pointer;
+}
+
+.civitai-status-light {
+  width: 14px;
+  height: 14px;
+  display: block;
+  transform-origin: center;
+}
+
+.civitai-status-light[data-status="transitioning"] {
+  animation: civitai-status-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes civitai-status-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.88); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+.civitai-connection-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.civitai-connection-surface {
+  display: grid;
+  gap: 16px;
+}
+
+.civitai-connection-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--charcoal-800) 84%, transparent);
+}
+
+.civitai-connection-status > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.civitai-connection-status small {
+  color: var(--sky-200);
+}
+
+.civitai-connection-step {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--charcoal-850) 90%, transparent);
+}
+
+.civitai-connection-step p {
+  margin: 6px 0 10px;
+}
+
+.civitai-step-number {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--sky-600);
+  color: #fff;
+  font-weight: 700;
+}
+
+.civitai-external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  color: var(--sky-200);
+  text-decoration: none;
+  font-weight: 650;
+}
+
+.civitai-external-link:hover,
+.civitai-external-link:focus-visible {
+  color: var(--sky-100);
+  text-decoration: underline;
+}
+
+.civitai-external-link .ui-icon {
+  --ui-icon-size: 16px;
+}
+
+.civitai-credential-entry {
+  min-width: 0;
+}
+
+.civitai-credential-entry .field-block {
+  margin-top: 10px;
+}
+
+.civitai-credential-entry code {
+  overflow-wrap: anywhere;
+}
+
+.civitai-connection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.civitai-connection-actions .ui-icon {
+  --ui-icon-size: 16px;
+}
+
+.civitai-connection-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.dialog-action-spacer {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 560px) {
+  .civitai-connection-step {
+    grid-template-columns: 1fr;
+  }
+
+  .civitai-step-number {
+    width: 24px;
+    height: 24px;
+  }
+
+  .civitai-connection-actions {
+    align-items: stretch;
+  }
+
+  .civitai-connection-actions button {
+    flex: 1 1 auto;
+  }
+
+  .dialog-action-spacer {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .civitai-status-light[data-status="transitioning"] {
+    animation: none;
+    opacity: 1;
+  }
+}

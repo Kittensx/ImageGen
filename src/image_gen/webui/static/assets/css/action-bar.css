@@ -1,0 +1,171 @@
+/* Shared IMAGE_GEN responsive action bar.
+   Components provide actions and priority metadata; this layer owns wrapping,
+   container-width overflow, hover/click expansion, and compact accessibility. */
+.ui-action-bar {
+  --ui-action-bar-gap: 6px;
+  position: relative;
+  min-width: 0;
+  display: flex !important;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ui-action-bar-gap);
+  flex: 1 1 auto;
+  container-type: inline-size;
+}
+
+.ui-action-bar__primary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ui-action-bar-gap);
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ui-action-bar[data-action-bar-align="start"] .ui-action-bar__primary {
+  justify-content: flex-start;
+}
+
+.ui-action-bar__overflow {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 120;
+}
+
+.ui-action-bar__overflow[hidden] {
+  display: none !important;
+}
+
+.ui-action-bar__overflow > summary {
+  list-style: none;
+}
+
+.ui-action-bar__overflow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ui-action-bar__overflow-trigger.ui-action-button {
+  --ui-action-size: 30px;
+  --ui-icon-size: 16px;
+}
+
+.ui-action-bar__overflow-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1000;
+  min-width: 210px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 32px));
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--charcoal-900) 97%, transparent);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+}
+
+.ui-action-bar__overflow:not([open]) .ui-action-bar__overflow-menu {
+  display: none;
+}
+
+.ui-action-bar__overflow-menu .ui-action-button {
+  --ui-action-size: 32px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  height: auto;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  justify-items: start;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.ui-action-bar__overflow-menu .ui-action-button::after {
+  content: attr(aria-label);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: currentColor;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.ui-action-bar__overflow-menu .ui-action-badge {
+  right: 5px;
+  top: 3px;
+}
+
+.ui-action-bar__overflow-menu select,
+.ui-action-bar__overflow-menu .compact-select,
+.ui-action-bar__overflow-menu .panel-scale-controls {
+  width: 100%;
+  max-width: none;
+}
+
+.ui-action-bar__overflow-menu .panel-scale-controls {
+  justify-content: center;
+}
+
+.ui-action-bar__overflow-menu .panel-dock-menu {
+  width: 100%;
+}
+
+.ui-action-bar__overflow-menu .panel-dock-menu-trigger {
+  width: 100%;
+}
+
+.ui-action-bar__overflow-menu .panel-dock-menu-trigger::after {
+  content: attr(aria-label);
+}
+
+.ui-action-bar[data-action-bar-overflowing="true"] .ui-action-bar__overflow-trigger {
+  border-color: color-mix(in srgb, var(--sky-400) 52%, var(--line));
+}
+
+/* Collapsed panels must keep their heading and overflow menu interactive even
+   when panel content is hidden. The fixed menu escapes the compact panel box. */
+.panel.is-collapsed,
+.gallery-panel.is-collapsed,
+.controls-panel.is-collapsed {
+  overflow: visible;
+}
+
+.panel.is-collapsed > .panel-heading,
+.gallery-panel.is-collapsed > .panel-heading,
+.controls-panel.is-collapsed > .panel-heading {
+  width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.gallery-panel.is-collapsed .gallery-heading > div:first-child {
+  flex: 0 1 auto;
+  min-width: 88px;
+}
+
+.gallery-panel.is-collapsed .gallery-selection-actions {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+@container (max-width: 360px) {
+  .ui-action-bar__primary {
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-action-bar__overflow-menu {
+    scroll-behavior: auto;
+  }
+}

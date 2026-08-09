@@ -1,4 +1,4 @@
-import { api } from "../api.js";
+import { api } from "../api.js?v=civitai-connect1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 

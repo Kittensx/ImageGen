@@ -1,0 +1,265 @@
+.home-profile {
+  background:
+    radial-gradient(circle at 8% 12%, color-mix(in srgb, var(--sky-500) 10%, transparent), transparent 32%),
+    linear-gradient(150deg, color-mix(in srgb, var(--charcoal-800) 93%, var(--sky-900) 7%), var(--charcoal-900));
+}
+
+.home-profile-heading {
+  align-items: center;
+}
+
+.home-profile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.home-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.home-profile-main,
+.home-profile-discord {
+  min-width: 0;
+}
+
+.home-profile-identity {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.home-profile-identity > div,
+.home-profile-metrics > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 76%, transparent);
+}
+
+.home-profile-label,
+.home-profile-identity small,
+.home-profile-metrics span,
+.home-profile-discord p,
+.home-profile-toggle small,
+.home-profile-discord-preview span,
+.home-profile-discord-preview small {
+  color: var(--muted);
+  font-size: 0.69rem;
+  line-height: 1.4;
+}
+
+.home-profile-identity strong {
+  color: var(--text);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.home-profile-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.home-profile-metrics strong {
+  color: var(--text);
+  font-size: 1.08rem;
+}
+
+.home-profile-metrics .home-profile-primary-stat {
+  border-color: color-mix(in srgb, var(--sky-500) 42%, var(--line));
+  background: color-mix(in srgb, var(--sky-900) 16%, var(--charcoal-900));
+}
+
+.home-profile-primary-stat strong {
+  color: var(--sky-200);
+  font-size: 1.25rem;
+}
+
+.home-profile-actions {
+  align-items: center;
+}
+
+.home-profile-discord {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, #5865f2 38%, var(--line));
+  border-radius: var(--radius-large);
+  background: color-mix(in srgb, #5865f2 7%, var(--charcoal-900));
+}
+
+.home-profile-discord-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.home-profile-discord h4 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 0.94rem;
+}
+
+.home-profile-discord p {
+  margin: 0;
+}
+
+.home-discord-community-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, #5865f2 36%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #5865f2 11%, var(--charcoal-950, #10151c));
+}
+
+.home-discord-community-status > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.home-discord-community-status strong {
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.home-discord-community-status small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.home-discord-online-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.home-discord-community-status.is-online .home-discord-online-dot {
+  background: #66d28a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #66d28a 15%, transparent);
+}
+
+.home-discord-community-status.is-stale .home-discord-online-dot {
+  background: #f0b35b;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #f0b35b 15%, transparent);
+}
+
+.home-profile-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 72%, transparent);
+  cursor: pointer;
+}
+
+.home-profile-toggle input,
+.home-profile-sharing-options input {
+  accent-color: var(--sky-500);
+}
+
+.home-profile-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.home-profile-toggle strong {
+  color: var(--text);
+  font-size: 0.75rem;
+}
+
+.home-profile-sharing-details {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+}
+
+.home-profile-sharing-details summary {
+  color: var(--sky-300);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.home-profile-sharing-options {
+  display: grid;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.home-profile-sharing-options label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.71rem;
+}
+
+.home-profile-discord-preview {
+  display: grid;
+  gap: 2px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, #5865f2 34%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #5865f2 10%, var(--charcoal-950, #10151c));
+}
+
+.home-profile-discord-preview strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.home-contributor-badge.is-active,
+#homeProfileInstallBadge.is-active,
+#homeDiscordCapabilityBadge.is-ready {
+  border-color: color-mix(in srgb, var(--sky-400) 58%, transparent);
+  color: var(--sky-200);
+}
+
+#homeDiscordCapabilityBadge.is-pending {
+  border-color: color-mix(in srgb, #f0b35b 55%, transparent);
+  color: #ffd08b;
+}
+
+@media (max-width: 1050px) {
+  .home-profile-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .home-profile-identity,
+  .home-profile-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .home-profile-heading,
+  .home-profile-discord-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .home-profile-badges {
+    justify-content: flex-start;
+  }
+}

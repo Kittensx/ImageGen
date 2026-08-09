@@ -1,0 +1,26 @@
+<dialog class="bug-report-dialog" id="bugReportDialog" aria-labelledby="bugReportDialogTitle">
+  <div class="bug-report-dialog-shell">
+    <header class="bug-report-dialog-header">
+      <div>
+        <span class="home-eyebrow">Public GitHub reporting</span>
+        <h2 id="bugReportDialogTitle">Review bug reports</h2>
+      </div>
+      <button class="secondary-button" id="closeBugReportDialog" type="button">Close</button>
+    </header>
+
+    <div class="bug-report-notice" role="note">
+      <strong>Nothing is uploaded automatically.</strong>
+      <span>IMAGE_GEN prepares a sanitized ZIP and a GitHub issue body locally. Review both before opening GitHub. GitHub still requires you to attach the ZIP and click its final submit button.</span>
+    </div>
+
+    <div class="bug-report-toolbar">
+      <div>
+        <strong id="bugReportDialogSummary">Scanning local diagnostics…</strong>
+        <span id="bugReportGithubStatus">GitHub status has not been checked yet.</span>
+      </div>
+      <button class="secondary-button" id="syncBugReportsButton" type="button">Check Known Issues</button>
+    </div>
+
+    <div class="bug-report-list" id="bugReportList" aria-live="polite"></div>
+  </div>
+</dialog>

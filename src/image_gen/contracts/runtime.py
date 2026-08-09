@@ -345,6 +345,8 @@ class GenerationRequest:
     hires_final_size_correction_filter: str = "auto"
     hires_aspect_policy: str = "stretch"
     hires_padding_mode: str = "reflect"
+    hires_blurred_edge_method: str = "box"
+    hires_blurred_edge_compare_diagnostics: bool = False
     hires_recorded_target_correction: dict[str, Any] = field(default_factory=dict)
     hires_correction_fingerprint_enabled: bool = False
     hires_recorded_correction_fingerprint: dict[str, Any] = field(default_factory=dict)
@@ -536,6 +538,8 @@ class GenerationRequest:
             "hires_final_size_correction_filter": str(self.hires_final_size_correction_filter or "auto"),
             "hires_aspect_policy": str(self.hires_aspect_policy or "stretch"),
             "hires_padding_mode": str(self.hires_padding_mode or "reflect"),
+            "hires_blurred_edge_method": str(self.hires_blurred_edge_method or "box"),
+            "hires_blurred_edge_compare_diagnostics": bool(self.hires_blurred_edge_compare_diagnostics),
             "hires_recorded_target_correction": _json_safe(self.hires_recorded_target_correction),
             "hires_correction_fingerprint_enabled": bool(self.hires_correction_fingerprint_enabled),
             "hires_recorded_correction_fingerprint": _json_safe(self.hires_recorded_correction_fingerprint),

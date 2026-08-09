@@ -6,6 +6,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from image_gen.program_metadata import build_program_metadata
+
 from image_gen.systems.diagnostics.models import DiagnosticSession
 from image_gen.systems.diagnostics.serialization import json_safe
 
@@ -191,8 +193,10 @@ def write_failure_bundle(
         request_extras=session.request_extras,
     )
 
+    project_root = session.effective_config.get("project_root") or "."
     failure = {
         "format": "image-gen-failure-bundle-v1",
+        "application": build_program_metadata(project_root),
         "run_id": session.run_id,
         "started_utc": session.started_utc,
         "system": system,
@@ -246,7 +250,6 @@ def write_failure_bundle(
         encoding="utf-8",
     )
 
-    project_root = session.effective_config.get("project_root") or "."
     config_path = session.effective_config.get("config_path")
     context_args = f'--project-root "{project_root}" '
     if config_path:

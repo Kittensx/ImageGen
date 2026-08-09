@@ -1,6 +1,7 @@
 import { api } from "../api.js";
 import { state } from "../state.js";
 import { $, notify, shortText } from "../utils.js";
+import { setActionIcon } from "../components/action-icons.js?v=0.1.1";
 
 let collectValues = () => ({});
 let onJobQueued = () => {};
@@ -207,8 +208,8 @@ function renderDimensionRow(initial = {}) {
 
   const remove = document.createElement("button");
   remove.type = "button";
-  remove.className = "text-button";
-  remove.textContent = "Remove";
+  remove.className = "ui-action-button ui-icon-control";
+  setActionIcon(remove, "remove", { label: "Remove variation dimension", title: "Remove variation dimension", replace: true });
   remove.addEventListener("click", () => { row.remove(); estimateCount(); });
 
   const toggle = () => {
@@ -340,6 +341,11 @@ async function exportVariations() {
 }
 
 export function openVariationMatrix(options = {}) {
+  const dialog = $("#variationMatrixDialog");
+  if (!dialog) {
+    notify("Variation Matrix is unavailable because its dialog was not loaded.", "error");
+    return false;
+  }
   resetVariationState(options);
   setError("");
   $("#variationMatrixTitle").textContent = state.variationMatrix.title || "Advanced Variation Matrix";
@@ -364,7 +370,8 @@ export function openVariationMatrix(options = {}) {
   $("#variationSubmitButton").disabled = true;
   $("#variationExportButton").disabled = true;
   estimateCount();
-  $("#variationMatrixDialog").showModal();
+  if (!dialog.open) dialog.showModal();
+  return true;
 }
 
 function openFromOutputDetails() {
@@ -397,7 +404,11 @@ function openFromImport() {
 export function bindVariationMatrix({ collect = () => ({}), onQueued = () => {} } = {}) {
   collectValues = collect;
   onJobQueued = onQueued;
-  $("#openVariationMatrixButton")?.addEventListener("click", () => openVariationMatrix());
+  const toolbarButton = $("#openVariationMatrixButton");
+  if (toolbarButton && toolbarButton.dataset.variationMatrixBound !== "true") {
+    toolbarButton.dataset.variationMatrixBound = "true";
+    toolbarButton.addEventListener("click", () => openVariationMatrix());
+  }
   $("#outputDetailsVariationButton")?.addEventListener("click", openFromOutputDetails);
   $("#queueComposerVariationButton")?.addEventListener("click", openFromQueueComposer);
   $("#batchImportVariationButton")?.addEventListener("click", openFromImport);

@@ -672,6 +672,10 @@ class GenerationPipeline:
             request.hires_final_size_correction_filter = str(hires_execution_plan.upscale_plan.final_size_correction_filter)
             request.hires_aspect_policy = str(hires_execution_plan.upscale_plan.aspect_policy)
             request.hires_padding_mode = str(hires_execution_plan.upscale_plan.padding_mode)
+            request.hires_blurred_edge_method = str(hires_execution_plan.upscale_plan.blurred_edge_method)
+            request.hires_blurred_edge_compare_diagnostics = bool(
+                hires_execution_plan.upscale_plan.blurred_edge_compare_diagnostics
+            )
             hires_metadata: dict[str, Any] = hires_execution_plan.to_dict()
             pixel_hires_job = bool(
                 hires_execution_plan.enabled
@@ -1581,6 +1585,10 @@ class GenerationPipeline:
                         final_size_correction_filter=str(hires_execution_plan.upscale_plan.final_size_correction_filter),
                         aspect_policy=str(hires_execution_plan.upscale_plan.aspect_policy),
                         padding_mode=str(hires_execution_plan.upscale_plan.padding_mode),
+                        blurred_edge_method=str(hires_execution_plan.upscale_plan.blurred_edge_method),
+                        blurred_edge_compare_diagnostics=bool(
+                            hires_execution_plan.upscale_plan.blurred_edge_compare_diagnostics
+                        ),
                         dtype_policy="auto",
                         device_policy="auto",
                         allow_tiling=bool(hires_execution_plan.upscale_plan.allow_tiling),
@@ -2367,6 +2375,10 @@ class GenerationPipeline:
                         "native_dimension_match": bool(upscale_contract.get("native_dimension_match", False)),
                         "aspect_policy": str(hires_execution_plan.upscale_plan.aspect_policy),
                         "padding_mode": str(hires_execution_plan.upscale_plan.padding_mode),
+                        "blurred_edge_method": str(hires_execution_plan.upscale_plan.blurred_edge_method),
+                        "blurred_edge_compare_diagnostics": bool(
+                            hires_execution_plan.upscale_plan.blurred_edge_compare_diagnostics
+                        ),
                         "final_size_correction_filter": str(hires_execution_plan.upscale_plan.final_size_correction_filter),
                         "target_correction": dict(upscale_contract.get("target_correction") or {}),
                         "exact_resize_filter": str(hires_execution_plan.upscale_plan.exact_resize_filter),

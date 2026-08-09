@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { option, notify } from "../utils.js";
+import { setActionIcon } from "./action-icons.js?v=2";
 
 const editorViewState = new Map();
 
@@ -559,7 +560,12 @@ export function readAdvancedValues(container) {
   return values;
 }
 
-function applyProfileValues(container, values) {
+function applyProfileValues(container, values, { replace = true } = {}) {
+  if (replace) {
+    container.querySelectorAll("[data-schema-path]").forEach((input) => {
+      assignInputValue(input, readInputDefaultValue(input));
+    });
+  }
   container.querySelectorAll("[data-schema-path]").forEach((input) => {
     const value = valueAtPath(values, input.dataset.schemaPath, undefined);
     if (value === undefined) return;
@@ -574,11 +580,32 @@ function applyProfileValues(container, values) {
   });
 }
 
+function makeAdvancedIconButton(icon, label, { critical = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ui-action-button ui-icon-control ui-action-button--compact";
+  if (critical) button.classList.add("is-critical");
+  setActionIcon(button, icon, { label, title: label, replace: true });
+  return button;
+}
+
+function normalizedProfile(profile = {}, source = "user") {
+  return {
+    name: String(profile.name || "").trim(),
+    values: profile.values || {},
+    plugin_id: profile.plugin_id || "",
+    source: profile.source || source,
+  };
+}
+
 export async function renderAdvancedEditor({
   container,
   descriptor,
   kind,
   currentValues = {},
+  builtinProfiles = [],
+  selectedProfileName = "",
+  onProfileStateChange = () => {},
   onChange = () => {},
 }) {
   container.replaceChildren();
@@ -588,14 +615,17 @@ export async function renderAdvancedEditor({
   }
 
   const viewState = getViewState(kind);
+  let profileInput;
+  let syncProfilePresentation = () => {};
   const triggerChange = () => {
     updateSafetyOverrideState(container, kind);
     applyEditorFilters(container, kind);
+    syncProfilePresentation();
     onChange();
   };
 
   const toolbar = document.createElement("div");
-  toolbar.className = "profile-toolbar preset-toolbar";
+  toolbar.className = "profile-toolbar preset-toolbar advanced-profile-toolbar";
 
   const selectorBlock = document.createElement("label");
   selectorBlock.className = "field-block preset-selector-block";
@@ -603,19 +633,16 @@ export async function renderAdvancedEditor({
   selectorLabel.textContent = `${kind[0].toUpperCase()}${kind.slice(1)} profile`;
   const selectorRow = document.createElement("span");
   selectorRow.className = "input-action-row";
-  const profileInput = document.createElement("input");
+  profileInput = document.createElement("input");
   profileInput.type = "text";
   profileInput.placeholder = `Type or select a ${kind} profile…`;
   profileInput.autocomplete = "off";
+  profileInput.dataset.advancedProfileKind = kind;
   const profileListId = `${kind}-advanced-profile-list`;
   profileInput.setAttribute("list", profileListId);
   const profileList = document.createElement("datalist");
   profileList.id = profileListId;
-  const profileArrow = document.createElement("button");
-  profileArrow.type = "button";
-  profileArrow.className = "small-button";
-  profileArrow.textContent = "⌄";
-  profileArrow.title = `Show ${kind} profiles`;
+  const profileArrow = makeAdvancedIconButton("chevron-down", `Show ${kind} profiles`);
   profileArrow.addEventListener("click", () => {
     profileInput.focus();
     try { profileInput.showPicker?.(); } catch { /* Browser may not expose a picker for datalists. */ }
@@ -624,30 +651,25 @@ export async function renderAdvancedEditor({
   selectorBlock.append(selectorLabel, selectorRow, profileList);
 
   const profileActions = document.createElement("div");
-  profileActions.className = "preset-actions";
-  const loadButton = document.createElement("button");
-  const saveButton = document.createElement("button");
+  profileActions.className = "preset-actions advanced-profile-actions";
+  const loadButton = makeAdvancedIconButton("load", `Load ${kind} profile`);
+  const saveButton = makeAdvancedIconButton("save", `Save ${kind} profile`);
   const saveAsButton = document.createElement("button");
-  const deleteButton = document.createElement("button");
-  const exportButton = document.createElement("button");
-  const importButton = document.createElement("button");
+  saveAsButton.type = "button";
+  saveAsButton.className = "ui-action-button ui-icon-control ui-action-button--compact";
+  setActionIcon(saveAsButton, "save-as", { label: `Save ${kind} profile as new`, title: `Save ${kind} profile as new`, replace: true });
+  const deleteButton = makeAdvancedIconButton("delete", `Delete ${kind} profile`, { critical: true });
+  const exportButton = makeAdvancedIconButton("export", `Save ${kind} profile to local file`);
+  const importButton = makeAdvancedIconButton("import", `Load ${kind} profile from local file`);
   const importInput = document.createElement("input");
-  [loadButton, saveButton, saveAsButton, deleteButton, exportButton, importButton].forEach((button) => {
-    button.type = "button";
-    button.className = "secondary-button compact-button";
-  });
-  deleteButton.className = "danger-button compact-button";
-  loadButton.textContent = "Load";
-  saveButton.textContent = "Save";
-  saveAsButton.textContent = "Save as";
-  deleteButton.textContent = "Delete";
-  exportButton.textContent = "Save local";
-  importButton.textContent = "Load local";
   importInput.type = "file";
   importInput.accept = ".json,application/json";
   importInput.hidden = true;
   profileActions.append(loadButton, saveButton, saveAsButton, deleteButton, exportButton, importButton, importInput);
-  toolbar.append(selectorBlock, profileActions);
+
+  const profileStatus = document.createElement("small");
+  profileStatus.className = "field-status subtle advanced-profile-status";
+  toolbar.append(selectorBlock, profileActions, profileStatus);
   container.append(toolbar);
 
   if (kind === "scheduler" && descriptor.config_schema?.properties?.allow_randomization_range_override) {
@@ -676,7 +698,7 @@ export async function renderAdvancedEditor({
   searchWrap.append(searchLabel, searchInput);
 
   const modifiedWrap = document.createElement("label");
-  modifiedWrap.className = "schema-filter-toggle";
+  modifiedWrap.className = "schema-filter-toggle schema-filter-toggle--switch";
   const modifiedOnly = document.createElement("input");
   modifiedOnly.type = "checkbox";
   modifiedOnly.checked = Boolean(viewState.modifiedOnly);
@@ -688,11 +710,7 @@ export async function renderAdvancedEditor({
   modifiedText.textContent = "Show modified only";
   modifiedWrap.append(modifiedOnly, modifiedText);
 
-  const clearButton = document.createElement("button");
-  clearButton.type = "button";
-  clearButton.className = "small-button";
-  clearButton.textContent = "Clear";
-  clearButton.title = "Clear search and filters";
+  const clearButton = makeAdvancedIconButton("filter-reset", `Clear ${kind} search and filters`);
   clearButton.addEventListener("click", () => {
     viewState.search = "";
     viewState.modifiedOnly = false;
@@ -731,11 +749,8 @@ export async function renderAdvancedEditor({
     summaryText.textContent = groupName;
     const summaryActions = document.createElement("span");
     summaryActions.className = "schema-group-summary-actions";
-    const resetButton = document.createElement("button");
-    resetButton.type = "button";
-    resetButton.className = "small-button schema-reset-section-button";
-    resetButton.textContent = "Reset section";
-    resetButton.title = `Reset the ${groupName} section to defaults`;
+    const resetButton = makeAdvancedIconButton("reset", `Reset section: ${groupName} to defaults`);
+    resetButton.classList.add("schema-reset-section-button");
     summaryActions.append(resetButton);
     summary.append(summaryText, summaryActions);
 
@@ -782,19 +797,50 @@ export async function renderAdvancedEditor({
 
   const getProfiles = () => JSON.parse(profileInput.dataset.profiles || "[]");
   const findProfile = (name) => getProfiles().find((item) => String(item.name || "").trim() === String(name || "").trim());
+  const publishProfileState = () => {
+    const selected = findProfile(profileInput.value);
+    const values = readAdvancedValues(container);
+    const dirty = selected ? !sameValue(values, selected.values || {}) : Object.keys(values || {}).length > 0;
+    onProfileStateChange({
+      name: selected?.name || "",
+      source: selected?.source || "",
+      dirty,
+      values,
+    });
+    return { selected, dirty, values };
+  };
   const syncProfileButtons = () => {
     const existing = findProfile(profileInput.value);
     loadButton.disabled = !existing;
-    saveButton.disabled = !existing;
-    deleteButton.disabled = !existing;
+    saveButton.disabled = !(existing && existing.source !== "builtin");
+    deleteButton.disabled = !(existing && existing.source !== "builtin");
   };
+  const syncProfileStatus = () => {
+    const { selected, dirty, values } = publishProfileState();
+    if (selected) {
+      profileStatus.textContent = dirty
+        ? `${selected.source === "builtin" ? "Built-in" : "Saved"} profile “${selected.name}” is selected with unsaved manual changes.`
+        : `${selected.source === "builtin" ? "Built-in" : "Saved"} profile “${selected.name}” is active.`;
+    } else if (Object.keys(values || {}).length) {
+      profileStatus.textContent = `Manual ${kind} configuration is active and has not been saved as a profile.`;
+    } else {
+      profileStatus.textContent = `Default ${kind} settings are active.`;
+    }
+    syncProfileButtons();
+  };
+  syncProfilePresentation = syncProfileStatus;
 
   async function refreshProfiles(selectedName = "") {
-    const profiles = await api.profiles(kind, descriptor.plugin_id);
-    profileList.replaceChildren(...profiles.map((profile) => option(profile.name, profile.name)));
+    const userProfiles = (await api.profiles(kind, descriptor.plugin_id)).map((profile) => normalizedProfile(profile, "user"));
+    const builtins = (builtinProfiles || []).map((profile) => normalizedProfile(profile, "builtin"));
+    const profiles = [...builtins, ...userProfiles];
+    profileList.replaceChildren(...profiles.map((profile) => option(
+      profile.name,
+      profile.source === "builtin" ? `${profile.name} (built-in)` : profile.name,
+    )));
     profileInput.dataset.profiles = JSON.stringify(profiles);
     if (selectedName) profileInput.value = selectedName;
-    syncProfileButtons();
+    syncProfileStatus();
   }
 
   function loadNamedProfile(name, { announce = true } = {}) {
@@ -803,7 +849,7 @@ export async function renderAdvancedEditor({
     profileInput.value = profile.name;
     applyProfileValues(container, profile.values || {});
     triggerChange();
-    syncProfileButtons();
+    syncProfileStatus();
     if (announce) notify(`${kind[0].toUpperCase()}${kind.slice(1)} profile loaded.`);
     return true;
   }
@@ -832,8 +878,8 @@ export async function renderAdvancedEditor({
 
   saveButton.addEventListener("click", async () => {
     const existing = findProfile(profileInput.value);
-    if (!existing) {
-      notify(`Select an existing ${kind} profile name to save over, or use Save as.`, "error");
+    if (!existing || existing.source === "builtin") {
+      notify(`Select an existing saved ${kind} profile to update, or use Save as.`, "error");
       return;
     }
     try {
@@ -853,13 +899,12 @@ export async function renderAdvancedEditor({
 
   deleteButton.addEventListener("click", async () => {
     const existing = findProfile(profileInput.value);
-    if (!existing) return;
+    if (!existing || existing.source === "builtin") return;
     if (!window.confirm(`Delete the ${kind} profile "${existing.name}"?`)) return;
     try {
       await api.deleteProfile(kind, existing.name, descriptor.plugin_id);
-      await refreshProfiles("");
       profileInput.value = "";
-      syncProfileButtons();
+      await refreshProfiles("");
       notify(`${kind[0].toUpperCase()}${kind.slice(1)} profile deleted.`);
     } catch (error) {
       notify(error.message, "error");
@@ -894,29 +939,30 @@ export async function renderAdvancedEditor({
     try {
       const payload = JSON.parse(await file.text());
       applyProfileValues(container, payload.values || {});
-      triggerChange();
       profileInput.value = String(payload.name || file.name.replace(/\.json$/i, "")).trim();
-      syncProfileButtons();
+      triggerChange();
+      syncProfileStatus();
       notify(`${kind[0].toUpperCase()}${kind.slice(1)} settings loaded from local file.`);
     } catch (error) {
       notify(`Unable to load the local ${kind} profile: ${error.message}`, "error");
     }
   });
 
-  profileInput.addEventListener("input", syncProfileButtons);
+  profileInput.addEventListener("input", syncProfileStatus);
   profileInput.addEventListener("change", () => {
     if (findProfile(profileInput.value)) {
       loadNamedProfile(profileInput.value, { announce: false });
     }
-    syncProfileButtons();
+    syncProfileStatus();
   });
 
   try {
-    await refreshProfiles();
+    await refreshProfiles(selectedProfileName);
   } catch (error) {
     notify(error.message, "error");
   }
 
   updateSafetyOverrideState(container, kind);
   applyEditorFilters(container, kind);
+  syncProfileStatus();
 }

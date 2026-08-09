@@ -1,18 +1,18 @@
 <aside class="panel controls-panel" id="controlsPanel" data-panel-scale-key="controls" data-workspace-panel="generation_controls" data-default-zone="left">
   <div class="panel-heading">
     <h2>Generation Controls</h2>
-    <button class="icon-button panel-toggle" data-target="controlsPanel" type="button" aria-label="Collapse generation controls">⌃</button>
+    <button class="ui-action-button ui-icon-control panel-toggle" data-target="controlsPanel" type="button" aria-label="Collapse generation controls" title="Collapse generation controls" aria-expanded="true"><span class="ui-icon" data-icon="chevron-up" aria-hidden="true"></span></button>
   </div>
 
   <form id="generationForm" autocomplete="off">
     <div class="field-block model-selector-block">
-      <span>Checkpoint Model</span>
+      <div class="field-label-with-status"><span>Checkpoint Model</span><span class="status-light-host" id="modelStatusLightHost"></span></div>
       <div class="model-selector-row">
         <select id="modelPath" name="model_path" aria-label="Checkpoint model"></select>
-        <button class="startup-defaults-trigger" id="startupDefaultsTrigger" type="button" aria-controls="startupDefaultsDrawer" aria-expanded="false" title="Open startup defaults">
+        <button class="startup-defaults-trigger ui-icon-control" id="startupDefaultsTrigger" type="button" aria-controls="startupDefaultsDrawer" aria-expanded="false" title="Open startup defaults">
           <span>Defaults</span>
           <span class="startup-defaults-count" id="startupDefaultsCount">0</span>
-          <span aria-hidden="true">›</span>
+          <span class="ui-icon" data-icon="chevron-right" aria-hidden="true"></span>
         </button>
       </div>
       <small id="modelLoadStatus" class="field-status">Waiting for backend model activation…</small>
@@ -23,63 +23,126 @@
       <span>VAE</span>
       <select id="vaePath" name="vae_path" aria-label="VAE"></select>
       <div class="inline-actions">
-        <button class="secondary-button compact-button" id="vaeFetchCivitaiButton" type="button">Refresh selected VAE from CivitAI</button>
+        <button class="ui-action-button ui-icon-control" id="vaeFetchCivitaiButton" type="button" aria-label="Refresh selected VAE metadata from CivitAI" title="Refresh selected VAE metadata from CivitAI"><span class="ui-icon" data-icon="cloud-refresh" aria-hidden="true"></span></button>
       </div>
       <small id="vaeSelectionStatus" class="field-status subtle">Automatic / checkpoint embedded.</small>
     </div>
 
     <section class="prompt-parser-panel" id="promptParserPanel">
-      <div class="prompt-parser-grid">
-        <label class="field-block">
-          <span>Prompt Parser</span>
-          <select id="promptParserName" name="prompt_parser_name"></select>
-          <small>Selects the parser engine that interprets the translated prompt.</small>
-        </label>
-        <label class="field-block">
-          <span>Shortcut Profile</span>
-          <select id="promptShortcutProfileName" name="prompt_shortcut_profile_name"></select>
-          <small>Controls user-facing aliases before the selected parser receives the prompt.</small>
-        </label>
-        <label class="field-block">
-          <span>Parser Preset</span>
-          <select id="promptParserPresetName" name="prompt_parser_preset_name"></select>
-          <small>Loads a saved parser, shortcut profile, and parser-option combination.</small>
-        </label>
-      </div>
-      <input id="promptParserKwargs" type="hidden" value="{}">
-      <input id="promptShortcutProfileSnapshot" type="hidden" value="{}">
-      <div id="promptParserExperimentalWarning" class="prompt-preflight-message is-warning" role="status" hidden></div>
-      <details class="prompt-parser-advanced" id="promptParserAdvancedSection">
-        <summary>Advanced Parser Settings</summary>
-        <div class="prompt-parser-settings-grid" id="promptParserAdvancedContent"></div>
-        <small id="promptParserSettingsStatus" class="field-status subtle">Settings are provided by the selected parser descriptor.</small>
+      <details class="prompt-parser-suite" id="promptParserSuite" open>
+        <summary>Prompt Parser</summary>
+        <div class="prompt-parser-suite-body">
+          <div class="prompt-parser-grid">
+            <label class="field-block">
+              <span>Prompt Parser</span>
+              <select id="promptParserName" name="prompt_parser_name"></select>
+              <small>Selects the parser engine that interprets the translated prompt.</small>
+            </label>
+            <label class="field-block">
+              <span>Shortcut Profile</span>
+              <select id="promptShortcutProfileName" name="prompt_shortcut_profile_name"></select>
+              <small>Controls user-facing aliases before the selected parser receives the prompt.</small>
+            </label>
+            <label class="field-block">
+              <span>Parser Preset</span>
+              <select id="promptParserPresetName" name="prompt_parser_preset_name"></select>
+              <small>Loads a saved parser, shortcut profile, and parser-option combination.</small>
+            </label>
+          </div>
+          <input id="promptParserKwargs" type="hidden" value="{}">
+          <input id="promptShortcutProfileSnapshot" type="hidden" value="{}">
+          <div id="promptParserExperimentalWarning" class="prompt-preflight-message is-warning" role="status" hidden></div>
+
+          <details class="prompt-parser-advanced" id="promptParserAdvancedSection">
+            <summary>Advanced Parser Settings</summary>
+            <div class="prompt-parser-settings-grid" id="promptParserAdvancedContent"></div>
+            <small id="promptParserSettingsStatus" class="field-status subtle">Settings are provided by the selected parser descriptor.</small>
+            <div class="prompt-parser-toolbar ui-action-bar" id="promptParserActionBar" data-action-bar data-action-bar-key="parser-advanced" data-action-bar-align="start" data-action-bar-overflow-label="More parser actions" role="toolbar" aria-label="Advanced parser actions">
+              <button class="ui-action-button ui-icon-control" id="savePromptParserPresetButton" type="button" data-action-priority="90" aria-label="Save parser preset" title="Save parser preset"><span class="ui-icon" data-icon="save" aria-hidden="true"></span></button>
+              <button class="ui-action-button ui-icon-control" id="deletePromptParserPresetButton" type="button" data-action-priority="40" aria-label="Delete parser preset" title="Delete parser preset"><span class="ui-icon" data-icon="delete" aria-hidden="true"></span></button>
+              <button class="ui-action-button ui-icon-control" id="validateCurrentPromptButton" type="button" data-action-priority="95" aria-label="Validate and preview current prompt" title="Validate and preview current prompt"><span class="ui-icon" data-icon="validate" aria-hidden="true"></span></button>
+            </div>
+            <label class="checkbox-row prompt-shadow-toggle">
+              <input id="promptShadowCompare" name="prompt_shadow_compare" type="checkbox">
+              <span>Compare both parsers during model-free validation</span>
+            </label>
+            <small class="field-status subtle">Shadow comparison never changes the selected parser or route; it records differences for testing and diagnostics.</small>
+          </details>
+
+          <details class="prompt-symbol-section" id="promptSymbolPaletteSection">
+            <summary>Parser Symbol Palette</summary>
+            <p class="field-status subtle">Insert parser symbols at the current prompt caret. Shortcut preferences change the aliases used by each symbol.</p>
+            <div class="prompt-symbol-target-row">
+              <label>
+                <span>Insert into</span>
+                <select id="promptSymbolTarget">
+                  <option value="auto">Auto-detect caret</option>
+                  <option value="positive">Positive Prompt</option>
+                  <option value="negative">Base Negative Prompt</option>
+                  <option value="hires_positive">Hires Positive Prompt</option>
+                  <option value="hires_negative">Hires Negative Prompt</option>
+                </select>
+              </label>
+              <button class="ui-action-button ui-icon-control" id="editPromptShortcutProfilesButton" type="button" aria-label="Edit parser symbol shortcuts" title="Edit parser symbol shortcuts"><span class="ui-icon" data-icon="settings" aria-hidden="true"></span></button>
+            </div>
+            <div class="prompt-symbol-palette" id="promptSymbolPalette" role="toolbar" aria-label="Prompt parser symbol palette"></div>
+          </details>
+
+          <small id="promptParserSelectionStatus" class="field-status subtle">Select a parser and shortcut profile.</small>
+
+      <details class="prompt-translation-preview prompt-preflight-inspector" id="promptTranslationPreview">
+        <summary>Prompt Translation and Preflight Preview</summary>
+        <p class="prompt-preflight-explainer">Shows how IMAGE_GEN interprets your prompt before generation. Start with the changes summary; open Full Pipeline or an individual inspector only when you need the exact intermediate representation.</p>
+        <section class="prompt-preflight-overview" aria-label="Prompt preflight summary">
+          <div class="prompt-preflight-overview-item"><span>Preflight</span><strong id="promptPreflightValidity">Waiting</strong></div>
+          <div class="prompt-preflight-overview-item"><span>Positive</span><strong id="promptPreflightPositiveSummary">No preview</strong></div>
+          <div class="prompt-preflight-overview-item"><span>Negative</span><strong id="promptPreflightNegativeSummary">No preview</strong></div>
+          <div class="prompt-preflight-overview-item"><span>Hires</span><strong id="promptPreflightHiresSummary">No preview</strong></div>
+          <div class="prompt-preflight-overview-item"><span>REGION</span><strong id="promptPreflightRegionSummary">No preview</strong></div>
+        </section>
+        <div class="prompt-preflight-messages">
+          <section id="promptPreflightBlockingSection" hidden><h4>Blocking errors</h4><ul id="promptPreflightBlocking"></ul></section>
+          <section id="promptPreflightWarningSection" hidden><h4>Behavior warnings</h4><ul id="promptPreflightWarnings"></ul></section>
+          <section id="promptPreflightNoticeSection" hidden><h4>Notices</h4><ul id="promptPreflightNotices"></ul></section>
+        </div>
+        <div id="promptTranslationWarnings" class="field-status subtle"></div>
+        <div class="prompt-preflight-view-tabs" role="group" aria-label="Prompt preview detail level">
+          <button id="promptPreflightChangesTab" type="button" class="secondary-button compact-button is-active" aria-pressed="true">Changes</button>
+          <button id="promptPreflightPipelineTab" type="button" class="secondary-button compact-button" aria-pressed="false">Full Pipeline</button>
+        </div>
+        <section id="promptPreflightChangesView" class="prompt-preflight-changes-view">
+          <section class="prompt-change-card"><header><div><h4>Positive prompt</h4><small>Semantic/source changes are shown first; canonical structure is summarized separately.</small></div><strong id="promptPositiveChangeCount">No changes</strong></header><div id="promptPositiveChanges" class="prompt-change-list"></div></section>
+          <section class="prompt-change-card"><header><div><h4>Negative prompt</h4><small>Semantic/source changes are shown first; canonical structure is summarized separately.</small></div><strong id="promptNegativeChangeCount">No changes</strong></header><div id="promptNegativeChanges" class="prompt-change-list"></div></section>
+          <section class="prompt-change-card"><header><div><h4>Hires interpretation</h4><small>Only differences from the base pass are surfaced here.</small></div><strong id="promptHiresChangeCount">Same as base</strong></header><div id="promptHiresChanges" class="prompt-change-list"></div></section>
+          <section class="prompt-change-card"><header><div><h4>REGION</h4><small>Native regional branches stay compact when inactive.</small></div><strong id="promptRegionChangeCount">Inactive</strong></header><div id="promptRegionChanges" class="prompt-change-list"></div></section>
+        </section>
+        <section id="promptPreflightPipelineView" class="prompt-preflight-pipeline-view" hidden>
+          <section class="prompt-route-summary" id="promptRouteSummarySection" hidden>
+            <h3>Combined-dispatch route and parser shadow comparison</h3>
+            <div class="prompt-route-grid">
+              <section><h4>Base positive route</h4><pre id="promptRouteBasePositive"></pre></section>
+              <section><h4>Base negative route</h4><pre id="promptRouteBaseNegative"></pre></section>
+            </div>
+            <div class="prompt-route-grid">
+              <section><h4>Base positive shadow</h4><pre id="promptShadowBasePositive"></pre></section>
+              <section><h4>Base negative shadow</h4><pre id="promptShadowBaseNegative"></pre></section>
+            </div>
+          </section>
+          <h3 class="prompt-pass-heading">Base pass</h3>
+          <div class="prompt-pipeline-flow">
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Positive · Raw</h4><small>Exact positive prompt entered by the user.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationPositiveRaw" data-prompt-inspector-compare-target="promptTranslationPositiveExpanded" data-prompt-inspector-title="Positive · Raw"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationPositiveRaw"></pre></section>
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Positive · Parser input</h4><small>Prompt after shortcut expansion and before parser canonicalization.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationPositiveExpanded" data-prompt-inspector-title="Positive · Parser input"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationPositiveExpanded"></pre></section>
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Positive · Canonical JSON</h4><small>Machine-readable canonical structure used for deterministic interpretation and replay. This is not a rewritten prompt.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationPositiveCanonical" data-prompt-inspector-title="Positive · Canonical JSON"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationPositiveCanonical"></pre></section>
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Negative · Raw</h4><small>Exact negative prompt entered by the user.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationNegativeRaw" data-prompt-inspector-compare-target="promptTranslationNegativeExpanded" data-prompt-inspector-title="Negative · Raw"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationNegativeRaw"></pre></section>
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Negative · Parser input</h4><small>Prompt after shortcut expansion and before parser canonicalization.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationNegativeExpanded" data-prompt-inspector-title="Negative · Parser input"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationNegativeExpanded"></pre></section>
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Negative · Canonical JSON</h4><small>Machine-readable canonical structure used for deterministic interpretation and replay. This is not a rewritten prompt.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationNegativeCanonical" data-prompt-inspector-title="Negative · Canonical JSON"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationNegativeCanonical"></pre></section>
+            <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Per-image expansion and semantics</h4><small>Resolved batch-slot prompts and semantic fingerprints.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationBaseSlots" data-prompt-inspector-title="Base · Per-image expansion"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationBaseSlots"></pre></section>
+            <section class="region-preflight-card" id="promptRegionBaseCard"><h4>REGION activation timeline</h4><div id="promptRegionBaseTimeline" class="region-timeline"></div><pre id="promptRegionBaseEstimate"></pre></section>
+          </div>
+        </section>
       </details>
-      <div class="prompt-parser-toolbar">
-        <button class="secondary-button compact-button" id="savePromptParserPresetButton" type="button">Save Parser Preset</button>
-        <button class="secondary-button compact-button" id="deletePromptParserPresetButton" type="button">Delete Preset</button>
-        <button class="secondary-button compact-button" id="editPromptShortcutProfilesButton" type="button">Edit Shortcut Profiles</button>
-        <button class="secondary-button compact-button" id="validateCurrentPromptButton" type="button">Validate / Preview</button>
-      </div>
-      <label class="checkbox-row prompt-shadow-toggle">
-        <input id="promptShadowCompare" name="prompt_shadow_compare" type="checkbox">
-        <span>Compare both parsers during model-free validation</span>
-      </label>
-      <small class="field-status subtle">Shadow comparison never changes the selected parser or route; it records differences for testing and diagnostics.</small>
-      <div class="prompt-symbol-target-row">
-        <strong>Parser Symbol Palette</strong>
-        <label>
-          <span>Insert into</span>
-          <select id="promptSymbolTarget">
-            <option value="auto">Auto-detect caret</option>
-            <option value="positive">Positive Prompt</option>
-            <option value="negative">Base Negative Prompt</option>
-            <option value="hires_positive">Hires Positive Prompt</option>
-            <option value="hires_negative">Hires Negative Prompt</option>
-          </select>
-        </label>
-      </div>
-      <div class="prompt-symbol-palette" id="promptSymbolPalette" role="toolbar" aria-label="Prompt parser symbol palette"></div>
-      <small id="promptParserSelectionStatus" class="field-status subtle">Select a parser and shortcut profile.</small>
+        </div>
+      </details>
 
       <details class="prompt-hires-routing" id="promptHiresRoutingSection">
         <summary>Hires / Second Pass</summary>
@@ -148,6 +211,11 @@
           <span>Advanced deterministic correction fingerprint (optional metadata hash)</span>
         </label>
         <small id="hiresCorrectionFingerprintStatus" class="field-status subtle">Correction fingerprint is off. Enabling it hashes only the deterministic correction contract; it does not add an image-processing pass.</small>
+        <label class="inline-checkbox diagnostic-toggle">
+          <input id="hiresBlurredEdgeCompareDiagnostics" name="hires_blurred_edge_compare_diagnostics" type="checkbox">
+          <span>Blurred-edge comparison diagnostic (runs the alternate method too)</span>
+        </label>
+        <small id="hiresBlurredEdgeCompareStatus" class="field-status subtle">Blurred-edge comparison diagnostic is off. Enable it only when you want side-by-side timing and quality-proxy metadata.</small>
         <div class="prompt-parser-grid hires-quality-grid">
           <label class="field-block">
             <span>Hires refinement steps</span>
@@ -208,6 +276,13 @@
             </select>
           </label>
           <label class="field-block">
+            <span>Blurred-edge method</span>
+            <select id="hiresBlurredEdgeMethod" name="hires_blurred_edge_method">
+              <option value="box" selected>Current method (fast box blur)</option>
+              <option value="gaussian_1d">1D separable Gaussian</option>
+            </select>
+          </label>
+          <label class="field-block">
             <span>Final size correction filter</span>
             <select id="hiresFinalSizeCorrectionFilter" name="hires_final_size_correction_filter">
               <option value="auto" selected>Auto (Area down / Bicubic up)</option>
@@ -218,11 +293,14 @@
             </select>
           </label>
         </div>
-        <div class="inline-actions">
-          <button class="secondary-button" id="refreshUpscalersButton" type="button">Refresh upscalers</button>
-          <button class="secondary-button" id="upscalerFetchCivitaiButton" type="button">Refresh selected from CivitAI</button>
-          <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
+        <div class="hires-upscaler-toolbar-row">
+          <div class="ui-action-bar" id="hiresUpscalerActionBar" data-action-bar data-action-bar-key="hires-upscaler" data-action-bar-align="start" data-action-bar-overflow-label="More upscaler actions" role="toolbar" aria-label="Hires upscaler actions">
+            <button class="ui-action-button ui-icon-control" id="refreshUpscalersButton" type="button" data-action-priority="90" aria-label="Refresh upscalers" title="Refresh upscalers"><span class="ui-icon" data-icon="refresh" aria-hidden="true"></span></button>
+            <button class="ui-action-button ui-icon-control" id="upscalerFetchCivitaiButton" type="button" data-action-priority="70" aria-label="Refresh selected upscaler metadata from CivitAI" title="Refresh selected upscaler metadata from CivitAI"><span class="ui-icon" data-icon="cloud-refresh" aria-hidden="true"></span></button>
+          </div>
+          <span class="status-light-host" id="hiresUpscalerStatusLightHost"></span>
         </div>
+        <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
         <small id="hiresNativePlanStatus" class="field-status subtle">Native upscaler target plan is unavailable until a supported model is selected.</small>
         <small id="hiresCorrectionSeverityStatus" class="field-status subtle">Correction severity: unavailable.</small>
         <small id="hiresTilingStatus" class="field-status subtle">Tiling capability follows the selected model descriptor.</small>
@@ -282,61 +360,36 @@
         <small id="hiresPromptRoutingStatus" class="field-status subtle">The second pass currently inherits base prompt processing.</small>
         <details class="prompt-translation-preview hires-prompt-preview" id="hiresPromptTranslationPreview">
           <summary>Hires Prompt Translation and Route Preview</summary>
-          <section class="prompt-route-summary" id="hiresPromptRouteSummarySection">
-            <div class="prompt-route-grid">
-              <section><h4>Hires positive route</h4><pre id="promptRouteHiresPositive"></pre></section>
-              <section><h4>Hires negative route</h4><pre id="promptRouteHiresNegative"></pre></section>
-            </div>
-            <div class="prompt-route-grid">
-              <section><h4>Hires positive shadow</h4><pre id="promptShadowHiresPositive"></pre></section>
-              <section><h4>Hires negative shadow</h4><pre id="promptShadowHiresNegative"></pre></section>
-            </div>
-          </section>
+          <p class="prompt-preflight-explainer">Shows whether the hires pass interprets prompts differently from the base pass. Unchanged hires processing stays compact; expand the pipeline only when you need the exact intermediate representations.</p>
+          <div id="promptHiresInterpretationSummary" class="prompt-pass-summary"></div>
           <div id="promptHiresInterpretationWarning" class="prompt-preflight-message is-warning" hidden></div>
-          <div class="prompt-translation-grid">
-            <section><h4>Positive: raw</h4><pre id="promptTranslationHiresPositiveRaw"></pre></section>
-            <section><h4>Positive: parser input</h4><pre id="promptTranslationHiresPositiveExpanded"></pre></section>
-            <section><h4>Positive: canonical</h4><pre id="promptTranslationHiresPositiveCanonical"></pre></section>
-            <section><h4>Negative: raw</h4><pre id="promptTranslationHiresNegativeRaw"></pre></section>
-            <section><h4>Negative: parser input</h4><pre id="promptTranslationHiresNegativeExpanded"></pre></section>
-            <section><h4>Negative: canonical</h4><pre id="promptTranslationHiresNegativeCanonical"></pre></section>
-            <section><h4>Per-image expansion and semantics</h4><pre id="promptTranslationHiresSlots"></pre></section>
-            <section class="region-preflight-card"><h4>REGION activation timeline</h4><div id="promptRegionHiresTimeline" class="region-timeline"></div><pre id="promptRegionHiresEstimate"></pre></section>
-          </div>
+          <details class="prompt-pipeline-details" id="promptHiresFullPipeline">
+            <summary>Inspect full hires pipeline</summary>
+            <section class="prompt-route-summary" id="hiresPromptRouteSummarySection">
+              <div class="prompt-route-grid">
+                <section><h4>Hires positive route</h4><pre id="promptRouteHiresPositive"></pre></section>
+                <section><h4>Hires negative route</h4><pre id="promptRouteHiresNegative"></pre></section>
+              </div>
+              <div class="prompt-route-grid">
+                <section><h4>Hires positive shadow</h4><pre id="promptShadowHiresPositive"></pre></section>
+                <section><h4>Hires negative shadow</h4><pre id="promptShadowHiresNegative"></pre></section>
+              </div>
+            </section>
+            <div class="prompt-pipeline-flow">
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Positive · Raw</h4><small>Exact hires positive prompt before parser translation.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresPositiveRaw" data-prompt-inspector-compare-target="promptTranslationHiresPositiveExpanded" data-prompt-inspector-title="Hires positive · Raw"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresPositiveRaw"></pre></section>
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Positive · Parser input</h4><small>Text handed to the selected hires parser after shortcut expansion.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresPositiveExpanded" data-prompt-inspector-title="Hires positive · Parser input"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresPositiveExpanded"></pre></section>
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Positive · Canonical JSON</h4><small>Machine-readable canonical structure used for deterministic interpretation and replay. This is not a rewritten prompt.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresPositiveCanonical" data-prompt-inspector-title="Hires positive · Canonical JSON"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresPositiveCanonical"></pre></section>
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Negative · Raw</h4><small>Exact hires negative prompt before parser translation.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresNegativeRaw" data-prompt-inspector-compare-target="promptTranslationHiresNegativeExpanded" data-prompt-inspector-title="Hires negative · Raw"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresNegativeRaw"></pre></section>
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Negative · Parser input</h4><small>Text handed to the selected hires parser after shortcut expansion.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresNegativeExpanded" data-prompt-inspector-title="Hires negative · Parser input"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresNegativeExpanded"></pre></section>
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Negative · Canonical JSON</h4><small>Machine-readable canonical structure used for deterministic interpretation and replay. This is not a rewritten prompt.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresNegativeCanonical" data-prompt-inspector-title="Hires negative · Canonical JSON"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresNegativeCanonical"></pre></section>
+              <section class="prompt-inspector-card"><div class="prompt-inspector-heading"><div><h4>Per-image expansion and semantics</h4><small>Resolved batch-slot prompts and semantic fingerprints.</small></div><button type="button" class="ui-action-button ui-icon-control ui-action-button--compact" data-prompt-inspector-target="promptTranslationHiresSlots" data-prompt-inspector-title="Hires · Per-image expansion"><span class="ui-icon" data-icon="maximize" aria-hidden="true"></span></button></div><pre id="promptTranslationHiresSlots"></pre></section>
+              <section class="region-preflight-card" id="promptRegionHiresCard"><h4>REGION activation timeline</h4><div id="promptRegionHiresTimeline" class="region-timeline"></div><pre id="promptRegionHiresEstimate"></pre></section>
+            </div>
+          </details>
         </details>
       </details>
 
-      <details class="prompt-translation-preview" id="promptTranslationPreview">
-        <summary>Prompt Translation and Preflight Preview</summary>
-        <div class="prompt-preflight-messages">
-          <section id="promptPreflightBlockingSection" hidden><h4>Blocking errors</h4><ul id="promptPreflightBlocking"></ul></section>
-          <section id="promptPreflightWarningSection" hidden><h4>Behavior warnings</h4><ul id="promptPreflightWarnings"></ul></section>
-          <section id="promptPreflightNoticeSection" hidden><h4>Notices</h4><ul id="promptPreflightNotices"></ul></section>
-        </div>
-        <div id="promptTranslationWarnings" class="field-status subtle"></div>
-        <section class="prompt-route-summary" id="promptRouteSummarySection" hidden>
-          <h3>Combined-dispatch route and parser shadow comparison</h3>
-          <div class="prompt-route-grid">
-            <section><h4>Base positive route</h4><pre id="promptRouteBasePositive"></pre></section>
-            <section><h4>Base negative route</h4><pre id="promptRouteBaseNegative"></pre></section>
-          </div>
-          <div class="prompt-route-grid">
-            <section><h4>Base positive shadow</h4><pre id="promptShadowBasePositive"></pre></section>
-            <section><h4>Base negative shadow</h4><pre id="promptShadowBaseNegative"></pre></section>
-          </div>
-        </section>
-        <h3 class="prompt-pass-heading">Base pass</h3>
-        <div class="prompt-translation-grid">
-          <section><h4>Positive: raw</h4><pre id="promptTranslationPositiveRaw"></pre></section>
-          <section><h4>Positive: parser input</h4><pre id="promptTranslationPositiveExpanded"></pre></section>
-          <section><h4>Positive: canonical</h4><pre id="promptTranslationPositiveCanonical"></pre></section>
-          <section><h4>Negative: raw</h4><pre id="promptTranslationNegativeRaw"></pre></section>
-          <section><h4>Negative: parser input</h4><pre id="promptTranslationNegativeExpanded"></pre></section>
-          <section><h4>Negative: canonical</h4><pre id="promptTranslationNegativeCanonical"></pre></section>
-          <section><h4>Per-image expansion and semantics</h4><pre id="promptTranslationBaseSlots"></pre></section>
-          <section class="region-preflight-card"><h4>REGION activation timeline</h4><div id="promptRegionBaseTimeline" class="region-timeline"></div><pre id="promptRegionBaseEstimate"></pre></section>
-        </div>
-      </details>
+
     </section>
 
     <label class="field-block prompt-field">
@@ -608,7 +661,7 @@
       <span>Seed</span>
       <span class="input-action-row">
         <input id="seed" name="seed" type="number" step="1">
-        <button class="small-button" id="randomSeedButton" type="button" title="Use random seed">◇</button>
+        <button class="ui-action-button ui-icon-control" id="randomSeedButton" type="button" aria-label="Use random seed" title="Use random seed"><span class="ui-icon" data-icon="randomize" aria-hidden="true"></span></button>
       </span>
     </label>
 
@@ -621,7 +674,7 @@
       <span>Sampler</span>
       <span class="input-action-row">
         <select id="samplerName" name="sampler_name"></select>
-        <button class="small-button" id="samplerSettingsButton" type="button" title="Sampler settings">⚙</button>
+        <button class="ui-action-button ui-icon-control" id="samplerSettingsButton" type="button" aria-label="Sampler settings" title="Sampler settings"><span class="ui-icon" data-icon="settings" aria-hidden="true"></span></button>
       </span>
     </label>
 
@@ -629,7 +682,7 @@
       <span>Scheduler</span>
       <span class="input-action-row">
         <select id="schedulerName" name="scheduler_name"></select>
-        <button class="small-button" id="schedulerSettingsButton" type="button" title="Scheduler settings">⚙</button>
+        <button class="ui-action-button ui-icon-control" id="schedulerSettingsButton" type="button" aria-label="Scheduler settings" title="Scheduler settings"><span class="ui-icon" data-icon="settings" aria-hidden="true"></span></button>
       </span>
     </label>
 
@@ -637,7 +690,7 @@
       <span>Generation Profile</span>
       <span class="input-action-row">
         <select id="generationProfile"></select>
-        <button class="small-button" id="saveGenerationProfileButton" type="button" title="Save generation profile">▣</button>
+        <button class="ui-action-button ui-icon-control" id="saveGenerationProfileButton" type="button" aria-label="Save generation profile" title="Save generation profile"><span class="ui-icon" data-icon="save" aria-hidden="true"></span></button>
       </span>
     </label>
 
@@ -648,26 +701,6 @@
 
     <details class="advanced-section" id="schedulerAdvanced">
       <summary>Scheduler Advanced</summary>
-      <div id="schedulerPresetToolbar" class="advanced-content preset-toolbar" hidden>
-        <label class="field-block preset-selector-block">
-          <span>Scheduler preset</span>
-          <span class="input-action-row">
-            <input id="schedulerPresetSelect" type="text" list="schedulerPresetList" autocomplete="off" placeholder="Type or select a scheduler preset…">
-            <button type="button" id="schedulerPresetPickerButton" class="small-button" title="Show scheduler presets">⌄</button>
-          </span>
-          <datalist id="schedulerPresetList"></datalist>
-        </label>
-        <div class="preset-actions">
-          <button type="button" id="schedulerPresetLoadButton" class="secondary-button compact-button">Load</button>
-          <button type="button" id="schedulerPresetUpdateButton" class="secondary-button compact-button">Save</button>
-          <button type="button" id="schedulerPresetSaveButton" class="secondary-button compact-button">Save as</button>
-          <button type="button" id="schedulerPresetDeleteButton" class="danger-button compact-button">Delete</button>
-          <button type="button" id="schedulerPresetExportButton" class="secondary-button compact-button">Save local</button>
-          <button type="button" id="schedulerPresetImportButton" class="secondary-button compact-button">Load local</button>
-          <input type="file" id="schedulerPresetImportInput" accept=".json,application/json" hidden>
-        </div>
-        <small id="schedulerPresetStatus" class="field-status subtle">Preset management is available for supported schedulers.</small>
-      </div>
       <div class="advanced-content" id="schedulerAdvancedContent"></div>
     </details>
 
@@ -703,18 +736,24 @@
     </details>
 
     <div class="generate-row">
-      <button class="primary-button generate-button" id="generateButton" type="button">Generate</button>
-      <button class="primary-button split-arrow" id="generateMenuButton" type="button" aria-label="Generation options">⌄</button>
-      <button class="infinity-button" id="infinityButton" type="button">∞ Generate Forever</button>
+      <button class="primary-button generate-button ui-icon-control" id="generateButton" type="button" aria-busy="false" data-generation-state="idle">
+        <span class="generate-button__icon" id="generateButtonIcon" aria-hidden="true"></span>
+        <span class="generate-button__content">
+          <span class="generate-button__label" id="generateButtonLabel">Generate</span>
+          <span class="generate-button__status" id="generateButtonStatus" aria-live="polite" aria-atomic="true" aria-hidden="true" hidden></span>
+        </span>
+      </button>
+      <button class="primary-button split-arrow ui-icon-control" id="generateMenuButton" type="button" aria-label="Generation options" title="Generation options"><span class="ui-icon" data-icon="chevron-down" aria-hidden="true"></span></button>
+      <button class="infinity-button ui-icon-control" id="infinityButton" type="button"><span class="ui-icon" data-icon="infinity" aria-hidden="true"></span><span id="infinityButtonLabel">Generate Forever</span></button>
     </div>
     <div class="region-builder-launch-row">
       <button class="secondary-button" id="openRegionBuilderButton" type="button">Open REGION Builder</button>
       <small class="field-status subtle">Parser-independent REGION addon for the active positive prompt target.</small>
     </div>
     <div class="generation-interrupt-row">
-      <button class="secondary-button is-hidden" id="pauseGenerationButton" type="button">Pause After Current Image</button>
-      <button class="secondary-button is-hidden" id="skipGenerationButton" type="button">Skip Current Image</button>
+      <button class="ui-action-button ui-icon-control is-hidden" id="pauseGenerationButton" type="button" aria-label="Pause after current image" title="Pause after current image"><span class="ui-icon" data-icon="pause" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control is-hidden" id="skipGenerationButton" type="button" aria-label="Skip current image" title="Skip current image"><span class="ui-icon" data-icon="skip-next" aria-hidden="true"></span></button>
     </div>
-    <button class="danger-button is-hidden" id="cancelButton" type="button">Cancel Active Generation</button>
+    <button class="ui-action-button ui-icon-control is-critical is-hidden" id="cancelButton" type="button" aria-label="Cancel active generation" title="Cancel active generation"><span class="ui-icon" data-icon="stop" aria-hidden="true"></span></button>
   </form>
 </aside>

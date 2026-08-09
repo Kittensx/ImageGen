@@ -14,6 +14,36 @@
     <label class="checkbox-row"><input id="dialogRestoreLastSession" type="checkbox"><span>Restore last generation settings after reopening</span></label>
     <label class="checkbox-row"><input id="followNewestOutput" type="checkbox"><span>Follow newest completed output automatically</span></label>
     <fieldset class="settings-group">
+      <legend>Appearance</legend>
+      <div class="settings-icon-action-row">
+        <div class="settings-icon-action-copy">
+          <strong>Theme Manager</strong>
+          <small>Customize IMAGE_GEN accent, surface, typography, and button text colors. Footer theme links remain available as quick shortcuts.</small>
+        </div>
+        <button class="ui-action-button ui-icon-control ui-action-button--large" id="openThemeManagerButton" type="button" aria-label="Open Theme Manager" title="Open Theme Manager">
+          <span class="ui-icon" data-icon="theme" aria-hidden="true"></span>
+        </button>
+      </div>
+    </fieldset>
+    <fieldset class="settings-group civitai-settings-group">
+      <legend>CivitAI Connection</legend>
+      <div class="settings-icon-action-row">
+        <div class="settings-icon-action-copy">
+          <strong>Connect CivitAI</strong>
+          <small id="civitaiSettingsStatusText">Checking connection…</small>
+          <small>Your API key is stored in IMAGE_GEN's local secrets folder, not in WebUI preferences.</small>
+        </div>
+        <div class="civitai-settings-actions">
+          <button class="civitai-status-button" id="civitaiSettingsStatusButton" type="button" aria-label="CivitAI connection status" title="CivitAI connection status">
+            <img class="civitai-status-light" id="civitaiSettingsStatusLight" src="/assets/icons/status/gray.svg" alt="">
+          </button>
+          <button class="ui-action-button ui-icon-control ui-action-button--large" id="openCivitaiConnectionButton" type="button" aria-label="Connect CivitAI" title="Connect CivitAI">
+            <span class="ui-icon" data-icon="key" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>Live Preview</legend>
       <label class="checkbox-row"><input id="dialogLivePreviewEnabled" type="checkbox"><span>Generate live preview frames while sampling</span></label>
       <label class="checkbox-row"><input id="dialogCfgLabEnabled" type="checkbox"><span>Enable CFG Lab telemetry and live trajectory</span></label>
@@ -176,20 +206,75 @@
   </form>
 </dialog>
 
+<dialog id="civitaiConnectionDialog" class="settings-dialog civitai-connection-dialog">
+  <form method="dialog" class="civitai-connection-surface">
+    <div class="dialog-heading">
+      <div>
+        <h2>Connect CivitAI</h2>
+        <p>Connect your CivitAI account so IMAGE_GEN can fetch model metadata, activation text, and preview information.</p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="Close CivitAI connection">×</button>
+    </div>
+    <p class="settings-warning" id="civitaiConnectionReason" role="status" hidden></p>
+    <div class="civitai-connection-status">
+      <img class="civitai-status-light" id="civitaiDialogStatusLight" src="/assets/icons/status/gray.svg" alt="">
+      <div>
+        <strong id="civitaiConnectionStatusText">Checking connection…</strong>
+        <small id="civitaiConnectionStatusDetail">IMAGE_GEN is checking the configured credential.</small>
+      </div>
+    </div>
+    <section class="civitai-connection-step">
+      <span class="civitai-step-number" aria-hidden="true">1</span>
+      <div>
+        <strong>Get your API key from CivitAI</strong>
+        <p>Open your CivitAI account settings, create or copy an API key, then return here.</p>
+        <a class="civitai-external-link" href="https://civitai.com/user/account" target="_blank" rel="noopener noreferrer">
+          <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
+          <span>Open CivitAI account settings</span>
+        </a>
+      </div>
+    </section>
+    <section class="civitai-connection-step">
+      <span class="civitai-step-number" aria-hidden="true">2</span>
+      <div class="civitai-credential-entry">
+        <strong>Paste the API key into IMAGE_GEN</strong>
+        <label class="field-block">
+          <span>CivitAI API key</span>
+          <input id="civitaiApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your CivitAI API key">
+        </label>
+        <p id="civitaiCredentialManagedNote" class="settings-warning" hidden></p>
+        <p class="settings-hint">The key is written locally to <code id="civitaiCredentialPath">secrets/civitai_api_key.txt</code>. IMAGE_GEN creates the folder/file when needed. The key is not returned to the browser after it is saved.</p>
+      </div>
+    </section>
+    <footer class="dialog-actions civitai-connection-actions">
+      <button class="secondary-button ui-icon-control" id="testCivitaiConnectionButton" value="none" type="button" aria-label="Test CivitAI connection" title="Test CivitAI connection">
+        <span class="ui-icon" data-icon="refresh" aria-hidden="true"></span><span>Test</span>
+      </button>
+      <button class="secondary-button danger-button ui-icon-control" id="removeCivitaiCredentialButton" value="none" type="button" aria-label="Remove saved CivitAI credential" title="Remove saved CivitAI credential">
+        <span class="ui-icon" data-icon="delete" aria-hidden="true"></span><span>Disconnect</span>
+      </button>
+      <span class="dialog-action-spacer"></span>
+      <button class="primary-button ui-icon-control" id="saveCivitaiCredentialButton" value="none" type="button" aria-label="Save CivitAI API key and connect" title="Save CivitAI API key and connect">
+        <span class="ui-icon" data-icon="save" aria-hidden="true"></span><span>Save &amp; Connect</span>
+      </button>
+    </footer>
+  </form>
+</dialog>
+
 <dialog id="promptShortcutProfileDialog" class="settings-dialog prompt-shortcut-profile-dialog">
   <form method="dialog">
     <div class="dialog-heading">
       <div>
         <h2>Prompt Shortcut Profiles</h2>
-        <p>Built-in profiles are read-only. Duplicate one to create a customizable user profile.</p>
+        <p>Assign readable keyboard shortcuts to prompt operators without editing JSON. Built-in profiles are read-only; duplicate one to customize it.</p>
       </div>
       <button class="icon-button" value="cancel" aria-label="Close prompt shortcut profiles">×</button>
     </div>
-    <div class="prompt-profile-editor-toolbar">
-      <label class="field-block"><span>Profile</span><select id="promptShortcutProfileEditorSelect"></select></label>
-      <button class="secondary-button compact-button" id="duplicatePromptShortcutProfileButton" type="button">Duplicate</button>
-      <button class="secondary-button compact-button" id="newPromptShortcutProfileButton" type="button">New</button>
-      <button class="secondary-button compact-button" id="importPromptShortcutProfileButton" type="button">Import JSON</button>
+    <div class="prompt-profile-editor-toolbar ui-action-bar" id="promptShortcutProfileTopActionBar" data-action-bar data-action-bar-key="shortcut-profile-top" data-action-bar-align="start" data-action-bar-overflow-label="More shortcut profile actions" role="toolbar" aria-label="Shortcut profile actions">
+      <label class="field-block prompt-profile-picker" data-action-pinned="true"><span>Profile</span><select id="promptShortcutProfileEditorSelect"></select></label>
+      <button class="ui-action-button ui-icon-control" id="duplicatePromptShortcutProfileButton" type="button" data-action-priority="90" aria-label="Duplicate shortcut profile" title="Duplicate shortcut profile"><span class="ui-icon" data-icon="duplicate" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control" id="newPromptShortcutProfileButton" type="button" data-action-priority="80" aria-label="Create new shortcut profile" title="Create new shortcut profile"><span class="ui-icon" data-icon="new" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control" id="importPromptShortcutProfileButton" type="button" data-action-priority="45" aria-label="Import shortcut profile JSON" title="Import shortcut profile JSON"><span class="ui-icon" data-icon="import" aria-hidden="true"></span></button>
       <input id="importPromptShortcutProfileInput" type="file" accept=".json,application/json" hidden>
     </div>
     <div class="prompt-profile-editor-grid">
@@ -198,17 +283,41 @@
       <label class="field-block"><span>Version</span><input id="promptShortcutProfileEditorVersion" type="text" maxlength="40" value="1"></label>
       <label class="field-block"><span>Compatible parsers</span><input id="promptShortcutProfileEditorParsers" type="text" value="legacy, parser21"></label>
     </div>
-    <label class="field-block">
-      <span>Profile JSON mappings</span>
-      <textarea id="promptShortcutProfileEditorJson" rows="18" spellcheck="false"></textarea>
-    </label>
+    <div class="prompt-profile-editor-grid prompt-profile-metadata-grid">
+      <label class="field-block"><span>Escape character</span><input id="promptShortcutProfileEditorEscape" type="text" maxlength="8" inputmode="text"></label>
+      <label class="field-block"><span>Credit</span><input id="promptShortcutProfileEditorCredit" type="text" maxlength="240"></label>
+    </div>
+    <label class="field-block"><span>Description</span><input id="promptShortcutProfileEditorDescription" type="text" maxlength="500"></label>
+
+    <section class="prompt-shortcut-mapping-section" aria-labelledby="promptShortcutAliasesHeading">
+      <header>
+        <div>
+          <h3 id="promptShortcutAliasesHeading">Keyboard shortcuts</h3>
+          <p>Enter the shortcut text for each operator. Separate multiple accepted aliases with commas. Blank operators are not enabled by this profile.</p>
+        </div>
+      </header>
+      <div id="promptShortcutAliasEditor" class="prompt-shortcut-alias-editor"></div>
+    </section>
+
+    <details class="prompt-shortcut-palette-editor-section">
+      <summary>Symbol palette shortcuts</summary>
+      <p class="field-status subtle">Customize the keyboard text inserted by palette helpers such as attention, de-emphasis, weights, alternates, and schedules. Operator-backed helpers continue to use the shortcut mappings above.</p>
+      <div id="promptShortcutPaletteEditor" class="prompt-shortcut-palette-editor"></div>
+    </details>
+
+    <details class="prompt-shortcut-emitter-section">
+      <summary>Parser output mappings</summary>
+      <p class="field-status subtle">These values control what each compatible parser receives after a shortcut is translated. Most profiles can leave the duplicated defaults unchanged.</p>
+      <div id="promptShortcutEmitterEditor" class="prompt-shortcut-emitter-editor"></div>
+    </details>
+
+    <input id="promptShortcutProfileEditorJson" type="hidden" value="{}">
     <div id="promptShortcutProfileValidation" class="field-status subtle" role="status"></div>
-    <menu>
-      <button class="secondary-button" id="validatePromptShortcutProfileButton" value="none" type="button">Validate</button>
-      <button class="secondary-button" id="exportPromptShortcutProfileButton" value="none" type="button">Export JSON</button>
-      <button class="danger-button" id="deletePromptShortcutProfileButton" value="none" type="button">Delete User Profile</button>
-      <span class="status-spacer"></span>
-      <button class="primary-button" id="savePromptShortcutProfileButton" value="none" type="button">Save User Profile</button>
+    <menu class="prompt-profile-editor-actions ui-action-bar" id="promptShortcutProfileBottomActionBar" data-action-bar data-action-bar-key="shortcut-profile-save" data-action-bar-overflow-label="More shortcut profile actions" role="toolbar" aria-label="Shortcut profile save and validation actions">
+      <button class="ui-action-button ui-icon-control" id="validatePromptShortcutProfileButton" value="none" type="button" data-action-priority="95" aria-label="Validate shortcut profile" title="Validate shortcut profile"><span class="ui-icon" data-icon="validate" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control" id="exportPromptShortcutProfileButton" value="none" type="button" data-action-priority="55" aria-label="Export shortcut profile JSON" title="Export shortcut profile JSON"><span class="ui-icon" data-icon="export" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control is-danger" id="deletePromptShortcutProfileButton" value="none" type="button" data-action-priority="40" aria-label="Delete user shortcut profile" title="Delete user shortcut profile"><span class="ui-icon" data-icon="delete" aria-hidden="true"></span></button>
+      <button class="ui-action-button ui-icon-control is-primary" id="savePromptShortcutProfileButton" value="none" type="button" data-action-priority="100" data-action-pinned="true" aria-label="Save user shortcut profile" title="Save user shortcut profile"><span class="ui-icon" data-icon="save" aria-hidden="true"></span></button>
     </menu>
   </form>
 </dialog>
