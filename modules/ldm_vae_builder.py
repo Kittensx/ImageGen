@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - IMAGE_GEN currently pins a newer torch.
+    SDPBackend = None
+    sdpa_kernel = None
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,6 +18,13 @@ from modules.component_placement import place_component
 
 def swish(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
+
+
+# Preserve the historical VAE attention implementation for ordinary decode sizes so
+# existing seed/output behavior stays untouched. Very large hires decodes switch to
+# global memory-efficient attention before the quadratic score matrix is materialized.
+_VAE_ATTN_LEGACY_MAX_TOKENS = 12_288
+_VAE_ATTN_FALLBACK_QUERY_CHUNK = 512
 
 
 class ResnetBlock(nn.Module):
@@ -54,13 +67,100 @@ class ResnetBlock(nn.Module):
 
 
 class AttnBlock(nn.Module):
-    def __init__(self, channels: int):
+    def __init__(self, channels: int, *, optimize_large_tokens: bool = False):
         super().__init__()
+        self.optimize_large_tokens = bool(optimize_large_tokens)
         self.norm = nn.GroupNorm(32, channels, eps=1e-6, affine=True)
         self.q = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
         self.k = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
         self.v = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
         self.proj_out = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
+
+    @staticmethod
+    def _legacy_attention(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        b, c, h, w = q.shape
+        tokens = h * w
+        q_tokens = q.reshape(b, c, tokens).permute(0, 2, 1)
+        k_channels = k.reshape(b, c, tokens)
+        weights = torch.bmm(q_tokens, k_channels) * (c ** -0.5)
+        weights = torch.softmax(weights, dim=2)
+        v_channels = v.reshape(b, c, tokens)
+        return torch.bmm(v_channels, weights.permute(0, 2, 1)).reshape(b, c, h, w)
+
+    @staticmethod
+    def _chunked_global_attention(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        """Exact-global attention with bounded score memory.
+
+        This is the compatibility fallback when CUDA cannot provide a fused SDPA
+        kernel for the VAE's unusually wide single attention head. It preserves
+        global key/value coverage; unlike VAE tiling, it does not split the image
+        into independent spatial attention regions. Float32 score accumulation also
+        avoids fp16 dot-product overflow seen in some checkpoint-embedded VAEs.
+        """
+
+        b, c, h, w = q.shape
+        tokens = h * w
+        result_dtype = q.dtype
+        q_tokens = q.reshape(b, c, tokens).permute(0, 2, 1)
+        k_tokens = k.reshape(b, c, tokens).permute(0, 2, 1)
+        v_tokens = v.reshape(b, c, tokens).permute(0, 2, 1)
+        k_transposed = k_tokens.float().transpose(1, 2)
+        v_float = v_tokens.float()
+        scale = c ** -0.5
+        chunks: list[torch.Tensor] = []
+        for start in range(0, tokens, _VAE_ATTN_FALLBACK_QUERY_CHUNK):
+            end = min(tokens, start + _VAE_ATTN_FALLBACK_QUERY_CHUNK)
+            scores = torch.bmm(q_tokens[:, start:end].float(), k_transposed) * scale
+            probabilities = torch.softmax(scores, dim=-1)
+            chunks.append(torch.bmm(probabilities, v_float).to(dtype=result_dtype))
+        attended = torch.cat(chunks, dim=1)
+        return attended.permute(0, 2, 1).reshape(b, c, h, w)
+
+    @staticmethod
+    def _memory_efficient_global_attention(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        b, c, h, w = q.shape
+        tokens = h * w
+        q_tokens = q.reshape(b, c, tokens).permute(0, 2, 1).unsqueeze(1)
+        k_tokens = k.reshape(b, c, tokens).permute(0, 2, 1).unsqueeze(1)
+        v_tokens = v.reshape(b, c, tokens).permute(0, 2, 1).unsqueeze(1)
+
+        # Never permit SDPA's quadratic math backend on this large-token path.
+        # Prefer fused CUDA kernels; if this GPU/head shape cannot use one, fall
+        # back to bounded query chunks while keeping attention global.
+        if q.is_cuda and sdpa_kernel is not None and SDPBackend is not None:
+            backends = [
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.CUDNN_ATTENTION,
+            ]
+            try:
+                with sdpa_kernel(backends=backends, set_priority=True):
+                    attended = F.scaled_dot_product_attention(
+                        q_tokens,
+                        k_tokens,
+                        v_tokens,
+                        dropout_p=0.0,
+                        is_causal=False,
+                    )
+                attended = attended.squeeze(1).permute(0, 2, 1).reshape(b, c, h, w)
+                if bool(torch.isfinite(attended).all()):
+                    return attended
+            except RuntimeError:
+                pass
+
+        return AttnBlock._chunked_global_attention(q, k, v)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h_ = self.norm(x)
@@ -68,14 +168,14 @@ class AttnBlock(nn.Module):
         k = self.k(h_)
         v = self.v(h_)
 
-        b, c, h, w = q.shape
-        q = q.reshape(b, c, h * w).permute(0, 2, 1)
-        k = k.reshape(b, c, h * w)
-        w_ = torch.bmm(q, k) * (c ** -0.5)
-        w_ = torch.softmax(w_, dim=2)
-
-        v = v.reshape(b, c, h * w)
-        h_ = torch.bmm(v, w_.permute(0, 2, 1)).reshape(b, c, h, w)
+        token_count = int(q.shape[-2]) * int(q.shape[-1])
+        if (
+            self.optimize_large_tokens
+            and token_count > _VAE_ATTN_LEGACY_MAX_TOKENS
+        ):
+            h_ = self._memory_efficient_global_attention(q, k, v)
+        else:
+            h_ = self._legacy_attention(q, k, v)
 
         h_ = self.proj_out(h_)
         return x + h_
@@ -137,10 +237,13 @@ class DecoderUpBlock(nn.Module):
 
 
 class MidBlock(nn.Module):
-    def __init__(self, channels: int):
+    def __init__(self, channels: int, *, optimize_large_tokens: bool = False):
         super().__init__()
         self.block_1 = ResnetBlock(channels, channels)
-        self.attn_1 = AttnBlock(channels)
+        self.attn_1 = AttnBlock(
+            channels,
+            optimize_large_tokens=optimize_large_tokens,
+        )
         self.block_2 = ResnetBlock(channels, channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -193,7 +296,11 @@ class Decoder(nn.Module):
         shallowest_out = decoder_specs[0][1]
 
         self.conv_in = nn.Conv2d(z_channels, deepest_in, kernel_size=3, stride=1, padding=1)
-        self.mid = MidBlock(deepest_in)
+        # Only decoder-side large-token attention needs this protection. The
+        # encoder already succeeds for the same hires request and must retain
+        # its historical math so pixel-neural VAE re-encoding stays bit-for-bit
+        # on the existing path as far as PyTorch permits.
+        self.mid = MidBlock(deepest_in, optimize_large_tokens=True)
 
         self.up = nn.ModuleList([
             DecoderUpBlock(decoder_specs[0][0], decoder_specs[0][1], add_upsample=False),
