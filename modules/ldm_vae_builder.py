@@ -97,32 +97,46 @@ class AttnBlock(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
     ) -> torch.Tensor:
-        """Exact-global attention with bounded score memory.
+        """Exact-global attention with bounded score memory and stable SDPA math.
 
-        This is the compatibility fallback when CUDA cannot provide a fused SDPA
-        kernel for the VAE's unusually wide single attention head. It preserves
-        global key/value coverage; unlike VAE tiling, it does not split the image
-        into independent spatial attention regions. Float32 score accumulation also
-        avoids fp16 dot-product overflow seen in some checkpoint-embedded VAEs.
+        This is the compatibility fallback when the fused large-token path is either
+        unavailable or produces a numerically unsafe decoder result. Queries are
+        chunked while every chunk still attends to the complete key/value field, so
+        this does not introduce VAE tile boundaries. The public tensor dtype is kept
+        unchanged: no VAE parameters or q/k/v tensors are promoted to another dtype.
         """
 
         b, c, h, w = q.shape
         tokens = h * w
-        result_dtype = q.dtype
-        q_tokens = q.reshape(b, c, tokens).permute(0, 2, 1)
-        k_tokens = k.reshape(b, c, tokens).permute(0, 2, 1)
-        v_tokens = v.reshape(b, c, tokens).permute(0, 2, 1)
-        k_transposed = k_tokens.float().transpose(1, 2)
-        v_float = v_tokens.float()
-        scale = c ** -0.5
+        q_tokens = q.reshape(b, c, tokens).permute(0, 2, 1).unsqueeze(1)
+        k_tokens = k.reshape(b, c, tokens).permute(0, 2, 1).unsqueeze(1)
+        v_tokens = v.reshape(b, c, tokens).permute(0, 2, 1).unsqueeze(1)
         chunks: list[torch.Tensor] = []
         for start in range(0, tokens, _VAE_ATTN_FALLBACK_QUERY_CHUNK):
             end = min(tokens, start + _VAE_ATTN_FALLBACK_QUERY_CHUNK)
-            scores = torch.bmm(q_tokens[:, start:end].float(), k_transposed) * scale
-            probabilities = torch.softmax(scores, dim=-1)
-            chunks.append(torch.bmm(probabilities, v_float).to(dtype=result_dtype))
-        attended = torch.cat(chunks, dim=1)
-        return attended.permute(0, 2, 1).reshape(b, c, h, w)
+            q_chunk = q_tokens[:, :, start:end, :]
+            if q.is_cuda and sdpa_kernel is not None and SDPBackend is not None:
+                # Query chunking bounds the math backend's otherwise quadratic score
+                # workspace, so it is safe to use here as the numerical recovery path.
+                with sdpa_kernel(backends=[SDPBackend.MATH], set_priority=True):
+                    attended_chunk = F.scaled_dot_product_attention(
+                        q_chunk,
+                        k_tokens,
+                        v_tokens,
+                        dropout_p=0.0,
+                        is_causal=False,
+                    )
+            else:
+                attended_chunk = F.scaled_dot_product_attention(
+                    q_chunk,
+                    k_tokens,
+                    v_tokens,
+                    dropout_p=0.0,
+                    is_causal=False,
+                )
+            chunks.append(attended_chunk)
+        attended = torch.cat(chunks, dim=2)
+        return attended.squeeze(1).permute(0, 2, 1).reshape(b, c, h, w)
 
     @staticmethod
     def _memory_efficient_global_attention(
@@ -169,16 +183,25 @@ class AttnBlock(nn.Module):
         v = self.v(h_)
 
         token_count = int(q.shape[-2]) * int(q.shape[-1])
-        if (
+        large_token_path = bool(
             self.optimize_large_tokens
             and token_count > _VAE_ATTN_LEGACY_MAX_TOKENS
-        ):
+        )
+        if large_token_path:
             h_ = self._memory_efficient_global_attention(q, k, v)
         else:
             h_ = self._legacy_attention(q, k, v)
 
-        h_ = self.proj_out(h_)
-        return x + h_
+        result = x + self.proj_out(h_)
+        if large_token_path and not bool(torch.isfinite(result).all()):
+            # Some checkpoint-embedded fp16 VAEs can survive the fused attention
+            # itself but overflow in the following projection/residual. Recompute
+            # only this oversized decoder attention block through the bounded math
+            # path. This leaves the VAE, latent, q/k/v, and returned tensor dtypes
+            # untouched and does not alter ordinary/base decode behavior.
+            h_ = self._chunked_global_attention(q, k, v)
+            result = x + self.proj_out(h_)
+        return result
 
 
 class Downsample(nn.Module):
