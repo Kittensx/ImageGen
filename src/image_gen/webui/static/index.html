@@ -59,6 +59,13 @@
             : "Inter";
           const primaryButtonText = normalizeHex(parsed?.typography?.primary_button_text, "#ffffff");
           const secondaryButtonText = normalizeHex(parsed?.typography?.secondary_button_text, "#d5f1ff");
+          const semantic = parsed?.semantic && typeof parsed.semantic === "object" ? parsed.semantic : {};
+          const surfaceSecondary = normalizeHex(semantic.surface_secondary, mixHex(surface, "#ffffff", 0.08));
+          const componentSurface = normalizeHex(semantic.component_surface, surface);
+          const componentBorder = normalizeHex(semantic.component_border, mixHex(surface, "#ffffff", 0.22));
+          const componentAccent = normalizeHex(semantic.component_accent, accent);
+          const textPrimary = normalizeHex(semantic.text_primary, "#f4f9fd");
+          const textSecondary = normalizeHex(semantic.text_secondary, "#9db2c4");
           const root = doc.style;
           root.setProperty("--sky-50", mixHex(accent, "#ffffff", 0.92));
           root.setProperty("--sky-100", mixHex(accent, "#ffffff", 0.82));
@@ -67,12 +74,27 @@
           root.setProperty("--sky-400", mixHex(accent, "#ffffff", 0.18));
           root.setProperty("--sky-500", accent);
           root.setProperty("--sky-600", mixHex(accent, "#000000", 0.18));
+          root.setProperty("--theme-surface-primary", surface);
+          root.setProperty("--theme-surface-secondary", surfaceSecondary);
+          root.setProperty("--component-surface", componentSurface);
+          root.setProperty("--component-border", componentBorder);
+          root.setProperty("--component-accent", componentAccent);
           root.setProperty("--charcoal-950", mixHex(surface, "#000000", 0.48));
           root.setProperty("--charcoal-900", mixHex(surface, "#000000", 0.24));
-          root.setProperty("--charcoal-850", surface);
-          root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
-          root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
-          root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+          root.setProperty("--charcoal-850", componentSurface);
+          root.setProperty("--charcoal-800", surfaceSecondary);
+          root.setProperty("--charcoal-700", mixHex(surfaceSecondary, "#ffffff", 0.12));
+          root.setProperty("--line", componentBorder);
+          root.setProperty("--text", textPrimary);
+          root.setProperty("--muted", textSecondary);
+          root.setProperty("--text-primary", textPrimary);
+          root.setProperty("--text-secondary", textSecondary);
+          root.setProperty("--text-muted", textSecondary);
+          root.setProperty("--surface", surface);
+          root.setProperty("--surface-1", componentSurface);
+          root.setProperty("--surface-2", surfaceSecondary);
+          root.setProperty("--surface-3", mixHex(surfaceSecondary, "#ffffff", 0.10));
+          root.setProperty("--surface-raised", surfaceSecondary);
           root.setProperty("--font-ui", FONT_STACKS[fontFamily]);
           root.setProperty("--primary-button-text", primaryButtonText);
           root.setProperty("--secondary-button-text", secondaryButtonText);
@@ -81,6 +103,80 @@
       } catch (_error) {
         doc.dataset.themePrepaint = "cache-error";
       }
+
+      // Apply the saved Home workspace shape as soon as its fragment enters the DOM.
+      // The MutationObserver callback runs before the next paint, preventing the default
+      // component order/style from flashing before the workspace registry mounts.
+      try {
+        const HOME_LAYOUT_KEY = "image-gen.workspace-layout.v1.home";
+        const HOME_COMPONENT_IDS = new Set([
+          "home.welcome",
+          "home.readiness",
+          "home.quick-launch",
+          "home.profile",
+          "home.discord",
+          "home.developer-updates",
+        ]);
+        const rawLayout = window.localStorage.getItem(HOME_LAYOUT_KEY);
+        const parsedLayout = rawLayout ? JSON.parse(rawLayout) : null;
+        const savedComponents = Array.isArray(parsedLayout?.components) ? parsedLayout.components : [];
+        if (savedComponents.length) {
+          const canonicalVariant = (value) => {
+            const token = String(value || "standard").trim().toLowerCase();
+            return token === "featured" ? "feature" : token;
+          };
+          const applySavedHomeLayout = () => {
+            const root = document.querySelector('[data-workspace-page="home"]');
+            if (!root) return false;
+            const byId = new Map([...root.children]
+              .filter((node) => node.matches?.("[data-workspace-component]"))
+              .map((node) => [String(node.dataset.workspaceComponent || ""), node]));
+            savedComponents.forEach((entry, index) => {
+              const componentId = String(entry?.componentId || "").trim();
+              if (!HOME_COMPONENT_IDS.has(componentId)) return;
+              const node = byId.get(componentId);
+              if (!node) return;
+              const spanValue = Number(entry?.span);
+              const span = Number.isFinite(spanValue) ? Math.max(1, Math.min(12, Math.round(spanValue))) : Number(node.dataset.componentSpan || 12);
+              const orderValue = Number(entry?.order);
+              node.style.order = String(Number.isFinite(orderValue) ? Math.round(orderValue) : index);
+              node.style.setProperty("--workspace-component-span", String(span));
+              node.dataset.componentSpan = String(span);
+              if (entry?.variant) {
+                const variant = canonicalVariant(entry.variant);
+                node.dataset.componentVariant = variant;
+                [...node.classList].forEach((className) => {
+                  if (className.startsWith("component-shell--variant-")) node.classList.remove(className);
+                });
+                node.classList.add(`component-shell--variant-${variant}`);
+              }
+              const state = String(entry?.shellState || "expanded").trim().toLowerCase();
+              node.dataset.componentShellState = state;
+              node.classList.toggle("component-shell--summary", state === "summary");
+              node.classList.toggle("component-shell--collapsed", state === "collapsed");
+              node.classList.toggle("component-shell--side", state === "side");
+              const body = node.querySelector(":scope > [data-component-shell-body]");
+              if (body) body.hidden = state !== "expanded";
+              const summary = node.querySelector(":scope > [data-component-shell-summary]");
+              if (summary) summary.hidden = state !== "summary";
+              node.hidden = entry?.visible === false;
+              node.dataset.workspaceComponentVisible = String(entry?.visible !== false);
+            });
+            doc.dataset.workspaceLayoutPrepaint = "home";
+            return true;
+          };
+          if (!applySavedHomeLayout()) {
+            const observer = new MutationObserver(() => {
+              if (applySavedHomeLayout()) observer.disconnect();
+            });
+            observer.observe(doc, { childList: true, subtree: true });
+            window.__IMAGE_GEN_HOME_LAYOUT_PREPAINT_OBSERVER__ = observer;
+          }
+        }
+      } catch (_error) {
+        doc.dataset.workspaceLayoutPrepaint = "cache-error";
+      }
+
       const path = String(window.location.pathname || "/").replace(/\/+$/, "") || "/";
       const hash = String(window.location.hash || "").replace(/^#/, "").trim().toLowerCase();
       const route = ["generation", "checkpoints", "loras", "workspace-manager"].includes(hash) ? hash : "home";
@@ -89,23 +185,26 @@
       }
     })();
   </script>
-  <script src="/assets/js/theme-runtime.js?v=theme-prepaint1"></script>
+  <script src="/assets/js/theme-runtime.js?v=theme-manager-tm02"></script>
   <script>window.ImageGenThemeRuntime?.applyCached();</script>
   <title>WebUI</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath fill=%27%23179ee7%27 d=%27M0 0h32v32H0z%27/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/assets/css/tokens.css?v=0.1.40">
+  <link rel="stylesheet" href="/assets/css/tokens.css?v=theme-manager-tm02">
   <link rel="stylesheet" href="/assets/css/base.css?v=0.1.40">
   <link rel="stylesheet" href="/assets/css/layout.css?v=0.1.74">
-  <link rel="stylesheet" href="/assets/css/components.css?v=civitai-connect1">
+  <link rel="stylesheet" href="/assets/css/components.css?v=theme-manager-tm02a">
+  <link rel="stylesheet" href="/assets/css/seed-controls.css?v=qol-seed-ui5">
   <link rel="stylesheet" href="/assets/css/responsive.css?v=0.1.77">
-  <link rel="stylesheet" href="/assets/css/home.css?v=home-shell1">
-  <link rel="stylesheet" href="/assets/css/component-shell.css?v=featured-shell1">
+  <link rel="stylesheet" href="/assets/css/home.css?v=help-center1">
+  <link rel="stylesheet" href="/assets/css/markdown-reader.css?v=help-center1">
+  <link rel="stylesheet" href="/assets/css/help-center.css?v=help-center1">
+  <link rel="stylesheet" href="/assets/css/component-shell.css?v=content-capabilities1">
   <link rel="stylesheet" href="/assets/css/bug-reports.css?v=bug-reporter1">
   <link rel="stylesheet" href="/assets/css/profile.css?v=home-shell1">
   <link rel="stylesheet" href="/assets/css/ui-icons.css?v=home-shell1">
   <link rel="stylesheet" href="/assets/css/action-bar.css?v=responsive-action-bar1">
-  <link rel="stylesheet" href="/assets/css/site-sidebar.css?v=shared-sidebar-r2">
-  <link rel="stylesheet" href="/assets/css/workspace-manager.css?v=workspace-manager1">
+  <link rel="stylesheet" href="/assets/css/site-sidebar.css?v=shared-sidebar-r3">
+  <link rel="stylesheet" href="/assets/css/workspace-manager.css?v=workspace-responsive2">
   <style>
     html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #homeWorkspace,
     html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #checkpointWorkspace,
@@ -147,12 +246,12 @@
         <span id="workerText">Connecting…</span>
       </div>
     </header>
-    <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=shared-sidebar-r2"></div>
-    <div data-fragment="/assets/views/home.html?v=home-shell1"></div>
+    <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=shared-sidebar-r3"></div>
+    <div data-fragment="/assets/views/home.html?v=help-center1"></div>
     <div data-fragment="/assets/views/bug-reports.html?v=bug-reporter1"></div>
     <main class="workspace is-hidden" id="workspace" data-active-workspace="generation">
       <section class="workspace-column left-column" id="workspaceLeftColumn" data-workspace-zone="left" aria-label="Left workspace column">
-        <div data-fragment="/assets/views/controls.html?v=prompt-cards1"></div>
+        <div data-fragment="/assets/views/controls.html?v=qol-seed-ui5"></div>
       </section>
       <div class="workspace-splitter" id="leftColumnSplitter" role="separator" aria-label="Resize generation controls" aria-orientation="vertical" tabindex="0"></div>
       <div data-fragment="/assets/views/startup-defaults.html?v=0.1.75"></div>
@@ -160,9 +259,9 @@
       <div class="workspace-splitter" id="rightColumnSplitter" role="separator" aria-label="Resize live preview and utilities" aria-orientation="vertical" tabindex="0"></div>
       <div data-fragment="/assets/views/utilities.html?v=status-action-icons1"></div>
     </main>
-    <div data-fragment="/assets/views/checkpoints.html?v=0.1.74"></div>
+    <div data-fragment="/assets/views/checkpoints.html?v=0.1.74-cardfix1"></div>
     <div data-fragment="/assets/views/loras.html?v=0.1.77"></div>
-    <div data-fragment="/assets/views/workspace-manager.html?v=workspace-manager1"></div>
+    <div data-fragment="/assets/views/workspace-manager.html?v=workspace-responsive2"></div>
     <footer class="statusbar">
       <span data-product-name-template="{product} WebUI">WebUI</span>
       <span id="projectPath">Project: —</span>
@@ -175,7 +274,7 @@
       </span>
     </footer>
   </div>
-  <div data-fragment="/assets/views/overlays.html?v=civitai-connect1"></div>
+  <div data-fragment="/assets/views/overlays.html?v=theme-manager-tm02a"></div>
   <script>
     (() => {
       const showBootFailure = (message) => {
@@ -219,7 +318,7 @@ Reload UI after applying the latest patch.`;
       }, 15000);
     })();
   </script>
-  <script type="module" src="/assets/js/site-sidebar.js?v=shared-sidebar-r2"></script>
-  <script type="module" src="/assets/js/main.js?v=home-shell1"></script>
+  <script type="module" src="/assets/js/site-sidebar.js?v=shared-sidebar-r3"></script>
+  <script type="module" src="/assets/js/main.js?v=clean-install1"></script>
 </body>
 </html>

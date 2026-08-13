@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from modules.asset_discovery import resolve_nested_asset
 from modules.checkpoint_inspector import CheckpointInspector
 from modules.project_context import ProjectContext
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
+from image_gen.systems.sd21_support import SD21SupportManager
 
 
 def _canonical_text(value: str | os.PathLike[str]) -> str:
@@ -71,6 +73,10 @@ class ActiveModelSelection:
         }
 
 
+class ModelSelectionUnavailableError(ValueError):
+    """Expected no-model/stale-model state, not an application failure."""
+
+
 class WebUIModelSelectionState:
     """Server-authoritative checkpoint selection for the WebUI.
 
@@ -86,11 +92,17 @@ class WebUIModelSelectionState:
         self._lock = threading.RLock()
         self._inspector = CheckpointInspector()
         self._inspection_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
+        self._sd21_support: SD21SupportManager | None = None
+
+    def _sd21_support_manager(self) -> SD21SupportManager:
+        if self._sd21_support is None:
+            self._sd21_support = SD21SupportManager(self.context)
+        return self._sd21_support
 
     def _resolve_existing_model(self, value: str | os.PathLike[str]) -> Path:
         text = _canonical_text(value)
         if not text:
-            raise ValueError("Choose a checkpoint model first.")
+            raise ModelSelectionUnavailableError("No checkpoint is installed or selected. Add a checkpoint before generating.")
 
         candidates: list[Path] = []
         direct = self.context.resolve_project_path(text).expanduser().resolve()
@@ -126,10 +138,19 @@ class WebUIModelSelectionState:
                 )
             return path
 
+        if checkpoints_dir is not None and checkpoints_dir.is_dir():
+            nested = resolve_nested_asset(
+                checkpoints_dir,
+                text,
+                extensions=MODEL_EXTENSIONS,
+            )
+            if nested is not None:
+                return nested
+
         configured_root = checkpoints_dir.resolve() if checkpoints_dir is not None else self.context.project_root.resolve()
         attempted = "; ".join(str(item) for item in unique_candidates)
-        raise ValueError(
-            "Selected checkpoint could not be resolved. "
+        raise ModelSelectionUnavailableError(
+            "Selected checkpoint is not available in the local checkpoint library. "
             f"Requested: {text}. "
             f"Configured checkpoint root: {configured_root}. "
             f"Attempted: {attempted}"
@@ -202,6 +223,27 @@ class WebUIModelSelectionState:
 
     def activate(self, model_path: str | os.PathLike[str], *, source: str = "webui") -> ActiveModelSelection:
         selection = self.authorize(model_path, source=source)
+        if str(selection.architecture or "").strip().casefold() == "sd2.x":
+            support = self._sd21_support_manager().ensure_for_architecture(
+                selection.architecture,
+                launch_if_missing=True,
+                reason=f"checkpoint_activation:{source or 'webui'}",
+            )
+            if not support.ready:
+                if support.installer_running:
+                    raise ValueError(
+                        "Stable Diffusion 2.1 runtime support is still installing in a separate setup window. "
+                        "Wait for that installer to finish, then activate the checkpoint again."
+                    )
+                raise ValueError(
+                    "Stable Diffusion 2.1 runtime support files are missing. IMAGE_GEN attempted to launch the "
+                    "separate SD2.1 support installer. Complete that installer, then activate the checkpoint again."
+                )
+            if not support.hardware_eligible:
+                raise ValueError(
+                    "The selected Stable Diffusion 2.x model cannot be activated on the currently qualified GPU. "
+                    f"{support.hardware_reason}"
+                )
         with self._lock:
             self._active = selection
         return selection
@@ -236,8 +278,8 @@ class WebUIModelSelectionState:
                 browser_resolved_path = str(requested)
             except ValueError as exc:
                 browser_resolve_error = str(exc)
-                raise ValueError(
-                    "The checkpoint selected in the browser could not be resolved by the backend. "
+                raise ModelSelectionUnavailableError(
+                    "The checkpoint selected in the browser is no longer available. "
                     "Refresh the model list and select it again. "
                     f"Details: {exc}"
                 ) from exc
@@ -248,7 +290,7 @@ class WebUIModelSelectionState:
             if active is None or requested_token != active_token or selection_mismatch:
                 active = self.activate(str(requested), source="job_submission")
         elif active is None:
-            raise ValueError("Choose a checkpoint model first.")
+            raise ModelSelectionUnavailableError("No checkpoint is installed or selected. Add a checkpoint before generating.")
 
         active_path = Path(active.resolved_path).expanduser().resolve()
         browser_matches_active = not requested_path or _path_token(active_path) == _path_token(browser_resolved_path)
@@ -276,4 +318,4 @@ class WebUIModelSelectionState:
         return incoming, active
 
 
-__all__ = ["ActiveModelSelection", "WebUIModelSelectionState"]
+__all__ = ["ActiveModelSelection", "ModelSelectionUnavailableError", "WebUIModelSelectionState"]

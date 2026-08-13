@@ -169,6 +169,7 @@ html[data-site-sidebar="collapsed"] {
 .site-nav-icon[data-icon="loras"] { --ui-icon-mask: url("../icons/sidebar/loras.svg"); }
 .site-nav-icon[data-icon="region-outpaint"] { --ui-icon-mask: url("../icons/sidebar/region-outpaint.svg"); }
 .site-nav-icon[data-icon="workspace-manager"] { --ui-icon-mask: url("../icons/sidebar/workspace-manager.svg"); }
+.site-nav-icon[data-icon="diagnostics"] { --ui-icon-mask: url("../icons/sidebar/diagnostics.svg"); }
 .site-nav-icon[data-icon="settings"] { --ui-icon-mask: url("../icons/sidebar/settings.svg"); }
 .site-sidebar-toggle-icon[data-icon="collapse"] { --ui-icon-mask: url("../icons/sidebar/collapse.svg"); }
 

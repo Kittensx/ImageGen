@@ -28,6 +28,22 @@
       <small id="vaeSelectionStatus" class="field-status subtle">Automatic / checkpoint embedded.</small>
     </div>
 
+    <div class="field-block">
+      <span>SD2.x Runtime</span>
+      <select id="sd2RuntimeProfileOverride" name="sd2_runtime_profile_override" aria-label="SD2 runtime profile">
+        <option value="">Automatic / infer from checkpoint</option>
+        <option value="sd2.0-base-512">Stable Diffusion 2.0 Base 512</option>
+        <option value="sd2.0-768-v">Stable Diffusion 2.0 768-v</option>
+        <option value="sd2.1-base-512">Stable Diffusion 2.1 Base 512</option>
+        <option value="sd2.1-768-v">Stable Diffusion 2.1 768-v</option>
+      </select>
+      <label class="checkbox-row">
+        <input type="checkbox" id="sd2DedicatedGeneration" name="sd2_dedicated_generation">
+        <span>Enable SD2.x dedicated runtime</span>
+      </label>
+      <small id="sd2RuntimeStatus" class="field-status subtle">SD2.x runtime controls activate automatically when an SD2.x checkpoint is selected.</small>
+    </div>
+
     <section class="prompt-parser-panel" id="promptParserPanel">
       <details class="prompt-parser-suite" id="promptParserSuite" open>
         <summary>Prompt Parser</summary>
@@ -301,6 +317,14 @@
           <span class="status-light-host" id="hiresUpscalerStatusLightHost"></span>
         </div>
         <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
+        <div id="hiresUpscalerRecovery" class="field-error-recovery" hidden>
+          <strong>Hires needs an available upscaler.</strong>
+          <span id="hiresUpscalerRecoveryMessage">Install or move a supported upscaler into a configured asset folder, then refresh discovery.</span>
+          <div class="input-action-row">
+            <button class="secondary-button compact-button" id="hiresRecoveryRefreshButton" type="button">Refresh Upscalers</button>
+            <button class="secondary-button compact-button" id="hiresRecoveryConfigButton" type="button">Edit User Config</button>
+          </div>
+        </div>
         <small id="hiresNativePlanStatus" class="field-status subtle">Native upscaler target plan is unavailable until a supported model is selected.</small>
         <small id="hiresCorrectionSeverityStatus" class="field-status subtle">Correction severity: unavailable.</small>
         <small id="hiresTilingStatus" class="field-status subtle">Tiling capability follows the selected model descriptor.</small>
@@ -334,7 +358,7 @@
         </div>
         <small id="hiresPairStatus" class="field-status subtle">The second pass inherits the base sampler, scheduler, and CFG settings.</small>
         <label class="checkbox-row hires-save-lowres-row">
-          <input id="hiresSaveLowres" name="hires_save_lowres" type="checkbox" checked>
+          <input id="hiresSaveLowres" name="hires_save_lowres" type="checkbox">
           <span>Save the exact low-resolution base artifact</span>
         </label>
         <label class="checkbox-row">
@@ -568,6 +592,11 @@
             </select>
           </label>
           <button class="secondary-button compact-button" id="applyCfgPresetButton" type="button">Apply Preset</button>
+          <button class="secondary-button compact-button" id="saveCfgPresetButton" type="button">Save Preset</button>
+          <button class="secondary-button compact-button" id="exportCfgPresetButton" type="button">Export</button>
+          <button class="secondary-button compact-button" id="importCfgPresetButton" type="button">Import</button>
+          <button class="secondary-button compact-button" id="deleteCfgPresetButton" type="button">Delete</button>
+          <input id="importCfgPresetInput" type="file" accept=".json,application/json" hidden>
           <button class="secondary-button compact-button" id="openCfgSweepButton" type="button">Open Seed-Locked CFG Sweep</button>
           <label class="field-block cfg-prompt-policy-field">
             <span>SuperHybrid prompt CFG</span>
@@ -598,7 +627,7 @@
               <option value="sigma_shaped">Sigma-shaped</option>
               <option value="step_shaped">Step-shaped</option>
             </select>
-            <small>Controls whether the requested CFG stays flat or becomes an explicit per-step effective curve.</small>
+            <small>Controls whether the requested CFG stays flat or becomes an explicit per-step effective curve across all samplers.</small>
           </label>
           <label class="field-block">
             <span>Curve type</span>
@@ -614,7 +643,7 @@
           <label class="field-block cfg-range-field">
             <span>Canonical CFG rescale</span>
             <span class="cfg-range-control"><input id="cfgRescaleRange" type="range" min="0" max="1" step="0.01" value="0"><input id="cfgRescaleNumber" name="cfg_rescale" type="number" min="0" max="1" step="0.01" value="0"></span>
-            <small>Blends guided-output variance toward the conditional branch. This is not the legacy KES clamp path.</small>
+            <small>Blends guided-output variance toward the conditional branch. This remains the canonical shared CFG rescale path.</small>
           </label>
           <label class="field-block cfg-range-field cfg-kes-only">
             <span>Curve strength</span>
@@ -657,13 +686,36 @@
       </div>
     </details>
 
-    <label class="field-block inline-action-field">
+    <label class="field-block inline-action-field seed-field-block">
       <span>Seed</span>
       <span class="input-action-row">
-        <input id="seed" name="seed" type="number" step="1">
+        <input id="seed" name="seed" type="text" inputmode="text" placeholder="-1 or -1, [5000,1925048]">
         <button class="ui-action-button ui-icon-control" id="randomSeedButton" type="button" aria-label="Use random seed" title="Use random seed"><span class="ui-icon" data-icon="randomize" aria-hidden="true"></span></button>
       </span>
     </label>
+    <input id="seedAdvancedEnabled" type="hidden" value="false">
+    <div class="seed-advanced-toggle-row">
+      <button class="secondary-button compact-button seed-advanced-toggle" id="seedAdvancedToggle" type="button" aria-pressed="false">Advanced seed</button>
+      <small class="field-status subtle">Use ranges, random progression, or sequential progression.</small>
+    </div>
+    <details class="advanced-section batch-seed-section" id="batchSeedStrategy" hidden>
+      <summary>Seed Strategy</summary>
+      <div class="advanced-content compact-fields">
+        <label class="field-block"><span>Seed progression</span>
+          <select id="batchSeedMode" name="batch_seed_mode">
+            <option value="random_range" selected>Random within range</option>
+            <option value="random">Random</option>
+            <option value="sequential">Sequential</option>
+          </select>
+        </label>
+        <div class="field-grid two-column" id="batchSeedRangeFields">
+          <label><span>Range minimum</span><input id="seedRangeMin" name="seed_range_min" type="number" min="0" max="2147483647" step="1" value="0"></label>
+          <label><span>Range maximum</span><input id="seedRangeMax" name="seed_range_max" type="number" min="0" max="2147483647" step="1" value="2147483647"></label>
+        </div>
+        <label class="checkbox-row" id="seedNoDuplicatesRow"><input id="seedNoDuplicates" name="seed_no_duplicates" type="checkbox" checked><span>Avoid duplicate seeds until the selected range is exhausted</span></label>
+        <small class="field-status subtle" id="seedStrategyStatus">The Seed field and range controls stay synchronized. Range seeds are sampled without replacement until exhausted.</small>
+      </div>
+    </details>
 
     <div class="field-grid two-column">
       <label><span>Batch Size</span><input id="batchSize" name="batch_size" type="number" min="1" max="32"></label>
@@ -709,7 +761,7 @@
       <div class="advanced-content compact-fields">
         <label><span>Output Folder</span><input id="outputDir" name="output_dir" type="text"></label>
         <label><span>Filename Pattern</span><input id="outputPrefix" name="output_prefix" type="text"></label>
-        <label class="checkbox-row"><input id="saveTxt" name="save_txt" type="checkbox" checked><span>Save TXT metadata</span></label>
+        <label class="checkbox-row"><input id="saveTxt" name="save_txt" type="checkbox"><span>Save TXT metadata</span></label>
         <label class="checkbox-row"><input id="saveJson" name="save_json" type="checkbox" checked><span>Save compact replay JSON</span></label>
         <label class="checkbox-row"><input id="saveDiagnosticsJson" name="save_diagnostics_json" type="checkbox"><span>Save pruned diagnostics JSON</span></label>
         <div class="output-pattern-builder-panel">

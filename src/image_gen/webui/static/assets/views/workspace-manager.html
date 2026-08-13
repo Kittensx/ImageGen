@@ -26,6 +26,24 @@
       </div>
     </div>
 
+    <section class="workspace-manager-responsive-preview" aria-labelledby="workspaceManagerPreviewHeading">
+      <header class="workspace-manager-preview-header">
+        <div>
+          <span class="home-eyebrow" id="workspaceManagerPreviewHeading">Responsive preview</span>
+          <strong id="workspaceManagerPreviewLabel">Wide - 1600px workspace</strong>
+        </div>
+        <div class="workspace-manager-preview-widths" role="group" aria-label="Preview workspace width">
+          <button type="button" class="workspace-manager-preview-width is-active" data-workspace-preview-class="wide" aria-pressed="true">Wide</button>
+          <button type="button" class="workspace-manager-preview-width" data-workspace-preview-class="standard" aria-pressed="false">Standard</button>
+          <button type="button" class="workspace-manager-preview-width" data-workspace-preview-class="compact" aria-pressed="false">Compact</button>
+          <button type="button" class="workspace-manager-preview-width" data-workspace-preview-class="narrow" aria-pressed="false">Narrow</button>
+        </div>
+      </header>
+      <div class="workspace-manager-preview-scroll" tabindex="0" aria-label="Responsive workspace wireframe preview">
+        <div class="workspace-manager-preview-canvas" id="workspaceManagerPreviewCanvas"></div>
+      </div>
+    </section>
+
     <div class="workspace-manager-summary" id="workspaceManagerSummary" role="status">Loading registered workspaces…</div>
     <div class="workspace-manager-component-list" id="workspaceManagerComponentList" aria-live="polite"></div>
   </section>

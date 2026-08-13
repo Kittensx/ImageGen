@@ -44,6 +44,18 @@
       </div>
     </fieldset>
     <fieldset class="settings-group">
+      <legend>User Configuration</legend>
+      <div class="settings-icon-action-row">
+        <div class="settings-icon-action-copy">
+          <strong>user-config.yml</strong>
+          <small>Edit the local advanced configuration without leaving ImageGen. YAML is validated before it replaces the current file and the previous file is backed up.</small>
+        </div>
+        <button class="ui-action-button ui-icon-control ui-action-button--large" id="openUserConfigEditorButton" type="button" aria-label="Edit user config" title="Edit user config">
+          <span class="ui-icon" data-icon="settings" aria-hidden="true"></span>
+        </button>
+      </div>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>Live Preview</legend>
       <label class="checkbox-row"><input id="dialogLivePreviewEnabled" type="checkbox"><span>Generate live preview frames while sampling</span></label>
       <label class="checkbox-row"><input id="dialogCfgLabEnabled" type="checkbox"><span>Enable CFG Lab telemetry and live trajectory</span></label>
@@ -202,6 +214,59 @@
       <button class="secondary-button" id="resetLayoutButton" value="none" type="button">Reset UI Layout</button>
       <button class="secondary-button" id="reloadWorkspaceButton" value="none" type="button">Restart WebUI Backend</button>
       <button class="primary-button" id="saveSettingsButton" value="none" type="button">Save Settings</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="parameterRangeDialog" class="settings-dialog parameter-range-dialog">
+  <form method="dialog">
+    <div class="dialog-heading">
+      <div>
+        <h2 id="parameterRangeTitle">Advanced Range</h2>
+        <p>Randomize this numeric setting per generated image and/or enforce hard minimum/maximum bounds.</p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="Close advanced range">×</button>
+    </div>
+    <p class="field-status subtle">Request field: <code id="parameterRangePath"></code></p>
+    <label class="field-block"><span>Range expression</span><input id="parameterRangeExpression" type="text" spellcheck="false" placeholder="[x, y]"></label>
+    <small id="parameterRangeSyntaxHint" class="field-status subtle">Advanced syntax accepts <code>[x,y]</code> and also <code>-1 [x,y]</code> or <code>-1, [x,y]</code>. The controls below are the structured form of the same range.</small>
+    <label class="checkbox-row"><input id="parameterRangeEnabled" type="checkbox"><span>Randomize within this range</span></label>
+    <div class="field-grid two-column">
+      <label><span>Random minimum</span><input id="parameterRangeMin" type="number" step="any"></label>
+      <label><span>Random maximum</span><input id="parameterRangeMax" type="number" step="any"></label>
+    </div>
+    <label class="checkbox-row"><input id="parameterRangeInteger" type="checkbox"><span>Resolve whole numbers only</span></label>
+    <div class="field-grid two-column">
+      <label><span><input id="parameterRangeLockMinEnabled" type="checkbox"> Lock minimum</span><input id="parameterRangeLockMin" type="number" step="any"></label>
+      <label><span><input id="parameterRangeLockMaxEnabled" type="checkbox"> Lock maximum</span><input id="parameterRangeLockMax" type="number" step="any"></label>
+    </div>
+    <small class="field-status subtle">Locks remain active even when randomization is off. For CFG Scale, these locks also clamp the effective per-step CFG trajectory.</small>
+    <menu class="dialog-actions">
+      <button class="secondary-button" id="parameterRangeClearButton" value="none" type="button">Clear Range</button>
+      <span class="dialog-action-spacer"></span>
+      <button class="primary-button" id="parameterRangeSaveButton" value="none" type="button">Apply</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="userConfigDialog" class="settings-dialog user-config-dialog">
+  <form method="dialog">
+    <div class="dialog-heading">
+      <div>
+        <h2>Edit User Configuration</h2>
+        <p>Edit <code>user_config/user-config.yml</code>. ImageGen validates YAML before saving and keeps a <code>.bak</code> copy of the previous file.</p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="Close user config editor">×</button>
+    </div>
+    <label class="field-block">
+      <span id="userConfigPath">user_config/user-config.yml</span>
+      <textarea id="userConfigText" class="metadata-pre" rows="24" spellcheck="false" aria-label="User config YAML"></textarea>
+    </label>
+    <p id="userConfigStatus" class="field-status subtle" role="status">Load the current file to edit it.</p>
+    <menu class="dialog-actions">
+      <button class="secondary-button" id="reloadUserConfigButton" value="none" type="button">Reload</button>
+      <span class="dialog-action-spacer"></span>
+      <button class="primary-button" id="saveUserConfigButton" value="none" type="button">Validate &amp; Save</button>
     </menu>
   </form>
 </dialog>
@@ -395,6 +460,25 @@
         </div>
       </section>
 
+      <section class="theme-color-section theme-semantic-section" id="themeSemanticColorSection">
+        <header>
+          <div>
+            <h3>Surfaces, shells, and text</h3>
+            <p>Semantic roles keep cards and text consistent across workspaces. Low-contrast combinations are allowed, but Theme Manager can warn before applying colors that may make text unreadable.</p>
+          </div>
+        </header>
+        <div class="theme-semantic-grid">
+          <div class="theme-button-text-control"><strong>Secondary surface</strong><div class="theme-color-input-row"><label class="field-block"><span>Color</span><input id="themeSurfaceSecondaryColor" type="color" value="#172431"></label><label class="field-block"><span>Hex</span><input id="themeSurfaceSecondaryHex" type="text" maxlength="7" value="#172431"></label></div></div>
+          <div class="theme-button-text-control"><strong>Component / shell surface</strong><div class="theme-color-input-row"><label class="field-block"><span>Color</span><input id="themeComponentSurfaceColor" type="color" value="#111d29"></label><label class="field-block"><span>Hex</span><input id="themeComponentSurfaceHex" type="text" maxlength="7" value="#111d29"></label></div></div>
+          <div class="theme-button-text-control"><strong>Component / shell border</strong><div class="theme-color-input-row"><label class="field-block"><span>Color</span><input id="themeComponentBorderColor" type="color" value="#2b4358"></label><label class="field-block"><span>Hex</span><input id="themeComponentBorderHex" type="text" maxlength="7" value="#2b4358"></label></div></div>
+          <div class="theme-button-text-control"><strong>Component / shell accent</strong><div class="theme-color-input-row"><label class="field-block"><span>Color</span><input id="themeComponentAccentColor" type="color" value="#179ee7"></label><label class="field-block"><span>Hex</span><input id="themeComponentAccentHex" type="text" maxlength="7" value="#179ee7"></label></div></div>
+          <div class="theme-button-text-control"><strong>Primary text</strong><div class="theme-color-input-row"><label class="field-block"><span>Color</span><input id="themeTextPrimaryColor" type="color" value="#f4f9fd"></label><label class="field-block"><span>Hex</span><input id="themeTextPrimaryHex" type="text" maxlength="7" value="#f4f9fd"></label></div></div>
+          <div class="theme-button-text-control"><strong>Secondary / muted text</strong><div class="theme-color-input-row"><label class="field-block"><span>Color</span><input id="themeTextSecondaryColor" type="color" value="#9db2c4"></label><label class="field-block"><span>Hex</span><input id="themeTextSecondaryHex" type="text" maxlength="7" value="#9db2c4"></label></div></div>
+        </div>
+        <label class="checkbox-row theme-contrast-warning-toggle"><input id="themeContrastWarningsEnabled" type="checkbox" checked><span>Warn before saving or applying low-contrast themes</span></label>
+        <small>Turn this off if you intentionally use low-contrast colors. Contrast diagnostics will still be shown in the editor.</small>
+      </section>
+
       <section class="theme-color-section theme-typography-section" id="themeTypographySection">
         <header>
           <div>
@@ -439,13 +523,30 @@
     <section class="theme-live-preview" aria-label="Theme preview">
       <header><strong>Live preview</strong><span>Accent header</span></header>
       <div>
-        <article><strong>Dark surface panel</strong><small>Controls and panels use the selected dark color family.</small></article>
+        <article class="theme-preview-component">
+          <i aria-hidden="true"></i>
+          <strong>Component shell / primary text</strong>
+          <small>Secondary / muted explanatory text uses its own semantic role.</small>
+        </article>
         <button type="button" class="primary-button">Primary action</button>
         <button type="button" class="secondary-button">Secondary action</button>
       </div>
     </section>
 
+    <div class="theme-contrast-report" id="themeContrastReport" role="status" aria-live="polite"></div>
     <p class="settings-warning is-hidden" id="themePaletteWarning"></p>
+
+    <section class="theme-local-library" aria-labelledby="themeLocalLibraryTitle">
+      <header>
+        <div><strong id="themeLocalLibraryTitle">Local theme packages</strong><small id="themeLocalPackageStatus">Loading external theme library…</small></div>
+      </header>
+      <div class="theme-local-import">
+        <label class="field-block"><span>Local package</span><input id="themeLocalPackageFile" type="file" accept=".zip,.igtheme,.igtheme.zip,application/zip"></label>
+        <button class="secondary-button" id="themeLocalPackageImportButton" type="button">Import package</button>
+      </div>
+      <small>Packages are validated before installation, stored outside the IMAGE_GEN source tree, and remain disabled until explicitly selected.</small>
+      <div class="theme-package-list" id="themeLocalPackageList"></div>
+    </section>
     <menu>
       <button class="secondary-button" id="resetThemePaletteButton" value="none" type="button">Reset Theme</button>
       <span class="status-spacer"></span>
@@ -871,7 +972,7 @@
       <span></span>
       <button class="secondary-button" id="variationExportButton" type="button" disabled>Export Expanded Queue</button>
       <button class="primary-button" id="variationPreflightButton" type="button">Preview Final Jobs</button>
-      <button class="primary-button" id="variationSubmitButton" type="button" disabled>Queue Validated Jobs</button>
+      <button class="primary-button" id="variationSubmitButton" type="button">Queue Jobs</button>
     </footer>
   </section>
 </dialog>

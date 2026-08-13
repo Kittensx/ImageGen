@@ -78,6 +78,9 @@ export const api = {
   health: () => request("/api/health"),
   changelog: () => request("/api/changelog"),
   changelogEntry: (entryDate) => request(`/api/changelog/${encodeURIComponent(entryDate)}`),
+  helpCatalog: () => request("/api/help"),
+  helpSearch: (query) => request(`/api/help/search?q=${encodeURIComponent(String(query || ""))}`),
+  helpTopic: (topicId) => request(`/api/help/topic/${String(topicId || "").split("/").map((part) => encodeURIComponent(part)).join("/")}`),
   profile: () => request("/api/profile"),
   updateProfileSharing: (values = {}) => request("/api/profile/sharing", {
     method: "PATCH",
@@ -140,7 +143,7 @@ export const api = {
   }),
   checkpointAssets: () => request("/api/assets/checkpoints"),
   refreshCheckpointAssets: () => request("/api/assets/checkpoints/refresh", { method: "POST" }),
-  checkpointDetails: (assetId) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}`),
+  checkpointDetails: (assetId, { inspect = true } = {}) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}?inspect=${inspect ? "1" : "0"}`),
   saveCheckpointMetadata: (assetId, values) => request(`/api/assets/checkpoints/${encodeURIComponent(assetId)}`, {
     method: "PATCH",
     body: JSON.stringify(values),
@@ -174,7 +177,7 @@ export const api = {
   }),
   enrichLorasFromCivitai: (mode = "missing") => api.enrichAssetsFromCivitai("lora", mode),
   enrichLoraFromCivitai: (assetId, overwrite = false) => api.enrichAssetFromCivitai("lora", assetId, overwrite),
-  loraDetails: (assetId) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`),
+  loraDetails: (assetId, { inspect = true } = {}) => request(`/api/assets/loras/${encodeURIComponent(assetId)}?inspect=${inspect ? "1" : "0"}`),
   saveLoraMetadata: (assetId, values) => request(`/api/assets/loras/${encodeURIComponent(assetId)}`, {
     method: "PATCH",
     body: JSON.stringify(values),
@@ -210,6 +213,16 @@ export const api = {
     });
   },
   openTextualInversionFolder: (assetId) => request(`/api/assets/textual-inversions/${encodeURIComponent(assetId)}/open-folder`, { method: "POST" }),
+  themeLibrary: () => request("/api/themes/library"),
+  themeEffective: () => request("/api/themes/effective"),
+  importThemePackage: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request("/api/themes/import", { method: "POST", body: form });
+  },
+  enableThemePackage: (packageId) => request(`/api/themes/${encodeURIComponent(packageId)}/enable`, { method: "POST" }),
+  disableThemePackage: (packageId) => request(`/api/themes/${encodeURIComponent(packageId)}/disable`, { method: "POST" }),
+  removeThemePackage: (packageId) => request(`/api/themes/${encodeURIComponent(packageId)}`, { method: "DELETE" }),
   defaultAssets: () => request("/api/default-assets"),
   saveDefaultAssets: (values) => request("/api/default-assets", {
     method: "PUT",
@@ -315,6 +328,11 @@ export const api = {
     method: "PUT",
     body: JSON.stringify(values),
   }),
+  userConfig: () => request("/api/user-config"),
+  saveUserConfig: (text) => request("/api/user-config", {
+    method: "PUT",
+    body: JSON.stringify({ text }),
+  }),
   jobs: () => request("/api/jobs"),
   validateScheduler: (values) => request("/api/schedulers/validate", {
     method: "POST",
@@ -332,6 +350,12 @@ export const api = {
     body: JSON.stringify(jobId ? { job_id: jobId } : {}),
   }),
   resumeQueue: () => request("/api/queue/resume", { method: "POST" }),
+  pauseJob: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}/pause`, { method: "POST" }),
+  resumeJob: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" }),
+  reorderJob: (jobId, direction) => request(`/api/jobs/${encodeURIComponent(jobId)}/reorder`, {
+    method: "POST",
+    body: JSON.stringify({ direction }),
+  }),
   skipJobImage: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}/skip`, {
     method: "POST",
   }),

@@ -35,6 +35,8 @@ function finishDrag() {
   if (!drag) return;
   document.getElementById('canvasWrap').classList.remove('dragging');
   drag = null;
+  document.querySelectorAll('.region-block').forEach((element) => clearRegionResizeHover(element));
+  render();
   rebuild();
   updateEditor();
 }

@@ -1,7 +1,8 @@
 const SIDEBAR_STORAGE_KEY = "image-gen.site-sidebar.state";
 const MAIN_PATHS = new Set(["/", "/index.html"]);
 const MAIN_WORKSPACES = new Set(["home", "generation", "checkpoints", "loras", "workspace-manager"]);
-const MAIN_ROUTES = new Set([...MAIN_WORKSPACES, "settings"]);
+const MAIN_OVERLAY_ROUTES = new Set(["settings", "bug-manager"]);
+const MAIN_ROUTES = new Set([...MAIN_WORKSPACES, ...MAIN_OVERLAY_ROUTES]);
 
 function normalizePath(pathname = window.location.pathname) {
   const value = String(pathname || "/");
@@ -39,6 +40,7 @@ function applySidebarState(state) {
   } catch (_error) {
     // Sidebar state is a convenience only.
   }
+  window.dispatchEvent(new CustomEvent("image-gen-sidebar-state-change", { detail: { state: value } }));
 }
 
 function activeWorkspace() {
@@ -116,6 +118,10 @@ async function activateMainRoute(route, { updateHistory = false, replaceHistory 
 
   if (route === "settings") {
     window.dispatchEvent(new CustomEvent("image-gen-open-settings", { detail: { source: "sidebar" } }));
+  } else if (route === "bug-manager") {
+    const settingsDialog = document.getElementById("settingsDialog");
+    if (settingsDialog?.open) settingsDialog.close();
+    window.dispatchEvent(new CustomEvent("image-gen-open-bug-reporter", { detail: { source: "sidebar" } }));
   } else {
     const settingsDialog = document.getElementById("settingsDialog");
     if (settingsDialog?.open) settingsDialog.close();
@@ -166,8 +172,9 @@ function bindNavigation() {
   window.addEventListener("image-gen-workspace-changed", (event) => {
     const workspace = String(event.detail?.workspace || "").trim().toLowerCase();
     if (!MAIN_WORKSPACES.has(workspace)) return;
-    if (routeFromLocation() !== "settings") writeRoute(workspace, { replace: true });
-    renderActiveRoute(routeFromLocation() === "settings" ? "settings" : workspace);
+    const currentRoute = routeFromLocation();
+    if (!MAIN_OVERLAY_ROUTES.has(currentRoute)) writeRoute(workspace, { replace: true });
+    renderActiveRoute(MAIN_OVERLAY_ROUTES.has(currentRoute) ? currentRoute : workspace);
   });
 
   window.addEventListener("image-gen-settings-opened", () => {
@@ -175,6 +182,16 @@ function bindNavigation() {
   });
 
   window.addEventListener("image-gen-settings-closed", () => {
+    const workspace = activeWorkspace();
+    writeRoute(workspace, { replace: true });
+    renderActiveRoute(workspace);
+  });
+
+  window.addEventListener("image-gen-bug-reporter-opened", () => {
+    renderActiveRoute("bug-manager");
+  });
+
+  window.addEventListener("image-gen-bug-reporter-closed", () => {
     const workspace = activeWorkspace();
     writeRoute(workspace, { replace: true });
     renderActiveRoute(workspace);

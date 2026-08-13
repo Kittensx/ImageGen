@@ -1,4 +1,4 @@
-import { api } from "../api.js?v=civitai-connect1";
+import { api } from "../api.js?v=asset-card-latency1";
 import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
@@ -67,6 +67,50 @@ function familyLabel(value) {
   return value || "Unknown";
 }
 
+function adapterFormatLabel(value) {
+  const token = String(value || "").trim().toLowerCase();
+  const labels = {
+    standard_kohya_lora: "Standard LoRA / Kohya",
+    standard_diffusers_peft_lora: "Standard LoRA / Diffusers PEFT",
+    standard_lora_up_down: "Standard LoRA / up-down",
+    lycoris_loha: "LyCORIS / LoHa",
+    lycoris_lokr: "LyCORIS / LoKr",
+    lycoris_locon: "LyCORIS / LoCon",
+    lycoris_other: "LyCORIS / Other",
+    non_adapter_full_model: "Full model / checkpoint-like",
+    unknown_adapter: "Unknown adapter",
+    invalid: "Invalid adapter file",
+  };
+  return labels[token] || value || "Unknown";
+}
+
+function runtimeSupportLabel(value) {
+  const token = String(value || "").trim().toLowerCase();
+  const labels = {
+    supported: "Supported",
+    supported_with_warning: "Supported with warning",
+    partial: "Partial / blocked",
+    unsupported: "Unsupported in this build",
+    misclassified: "Not a LoRA adapter",
+    invalid: "Invalid",
+  };
+  return labels[token] || value || "Unknown";
+}
+
+function targetScopesLabel(value) {
+  const scopes = Array.isArray(value) ? value : [];
+  if (!scopes.length) return "Unknown";
+  const labels = {
+    unet: "UNet",
+    text_encoder: "Text Encoder",
+    text_encoder_2: "Text Encoder 2",
+    linear: "Linear",
+    convolution: "Convolution",
+    other: "Other",
+  };
+  return scopes.map((scope) => labels[String(scope)] || String(scope)).join(" + ");
+}
+
 function civitaiLookupFor(model = {}) {
   const metadata = model?.metadata || {};
   const lookup = model?.civitai_lookup || metadata?._civitai_lookup || {};
@@ -133,6 +177,15 @@ function activeModelFamily() {
 }
 
 function compatibilityFor(model) {
+  const runtimeState = String(model?.runtime_support_state || "").trim().toLowerCase();
+  if (["unsupported", "partial", "misclassified", "invalid"].includes(runtimeState) || model?.runtime_loadable === false && runtimeState) {
+    const reason = String(model?.support_reason || "").trim();
+    return {
+      compatible: false,
+      pending: false,
+      message: reason || `Runtime support: ${runtimeSupportLabel(runtimeState)}.`,
+    };
+  }
   const loraFamily = normalizeFamily(model?.model_family || model?.detected_model_family || model?.architecture);
   const modelFamily = activeModelFamily();
   if (!loraFamily || loraFamily === "any") return { compatible: true, pending: !loraFamily, message: "LoRA model family is not restricted." };
@@ -323,6 +376,7 @@ export function bindLoraWorkspace({ defaultAssetsController, showGenerationWorks
   let loras = Array.isArray(state.loras) ? [...state.loras] : [];
   let selectedId = "";
   let selectedDetails = null;
+  const detailCache = new Map();
   let search = "";
   let activeFilter = "all";
   let sortMode = "recent";
@@ -658,7 +712,10 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     try {
       const updated = await api.saveLoraMetadata(model.asset_id, { favorite: !model.favorite });
       const merged = mergeCatalogRecord(updated) || updated;
-      if (selectedDetails?.asset_id === model.asset_id) selectedDetails = merged;
+      if (selectedDetails?.asset_id === model.asset_id) {
+        selectedDetails = merged;
+        detailCache.set(model.asset_id, merged);
+      }
       renderCards();
       renderDetails();
     } catch (error) {
@@ -764,8 +821,10 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const tagRow = document.createElement("div");
     tagRow.className = "lora-tag-row";
     if (model.category) addTag(tagRow, model.category);
-    const family = familyLabel(model.model_family);
+    const family = familyLabel(model.model_family || model.detected_model_family);
     if (family !== "Unknown") addTag(tagRow, family, "is-family");
+    if (model.adapter_format) addTag(tagRow, adapterFormatLabel(model.adapter_format));
+    if (model.runtime_support_state && model.runtime_support_state !== "supported") addTag(tagRow, runtimeSupportLabel(model.runtime_support_state));
     (model.tags || []).filter((tag) => String(tag).toLowerCase() !== String(model.category || "").toLowerCase()).slice(0, 2).forEach((tag) => addTag(tagRow, tag));
     const info = document.createElement("div");
     info.className = "lora-card-info";
@@ -793,7 +852,10 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       }),
     );
     card.append(previewWrap, body, actions);
-    card.addEventListener("dblclick", () => openDetails(model));
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button,a,input,textarea,select,label")) return;
+      openDetails(model);
+    });
     queueMicrotask(() => {
       if (image.isConnected) setPreview(image, fallback, model);
     });
@@ -843,7 +905,10 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     $("#loraDetailHash").textContent = model.sha256 || (model.inspection_error ? "Inspection unavailable" : "Not inspected");
     $("#loraDetailNetworkType").textContent = model.network_type || "Unknown";
     $("#loraDetailTensorFormat").textContent = model.tensor_key_format || "Unknown";
+    $("#loraDetailAdapterFormat").textContent = adapterFormatLabel(model.adapter_format);
     $("#loraDetailModelFamily").textContent = familyLabel(model.model_family || model.detected_model_family);
+    $("#loraDetailTargets").textContent = targetScopesLabel(model.target_scopes);
+    $("#loraDetailRuntimeSupport").textContent = runtimeSupportLabel(model.runtime_support_state);
     $("#loraDetailModified").textContent = model.modified_iso || "—";
     $("#loraMetadataNickname").value = metadata.nickname || model.nickname || "";
     $("#loraMetadataActivationText").value = metadata.activation_text || model.activation_text || "";
@@ -861,6 +926,8 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     if (model.category) addTag(tags, model.category);
     const family = familyLabel(model.model_family || model.detected_model_family);
     if (family !== "Unknown") addTag(tags, family, "is-family");
+    if (model.adapter_format) addTag(tags, adapterFormatLabel(model.adapter_format));
+    if (model.runtime_support_state) addTag(tags, runtimeSupportLabel(model.runtime_support_state));
     (metadata.tags || model.tags || []).slice(0, 4).forEach((tag) => addTag(tags, tag));
     setPreview($("#loraDetailPreview"), $("#loraDetailPreviewFallback"), model);
     const active = activeRecordFor(model);
@@ -886,27 +953,38 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     $("#loraDetailStatus").classList.toggle("warning", !compatibility.compatible || Boolean(civitai.manual_activation_text_search_required));
   };
 
+  const updateSelectedCardState = () => {
+    document.querySelectorAll("#loraCardGrid .lora-card").forEach((card) => {
+      card.classList.toggle("is-selected", card.dataset.assetId === selectedId);
+    });
+  };
+
   const openDetails = async (model, { focusEditor = false } = {}) => {
     const requestId = ++detailsRequestSerial;
     selectedId = model.asset_id;
     state.selectedLoraAssetId = selectedId;
-    renderCards();
+    selectedDetails = detailCache.get(model.asset_id) || model;
+    updateSelectedCardState();
     $("#loraDetailEmpty")?.classList.add("is-hidden");
     $("#loraDetailContent")?.classList.remove("is-hidden");
     detailsPanel?.classList.add("is-open");
-    $("#loraDetailStatus").textContent = "Inspecting LoRA metadata…";
+    renderDetails();
+    $("#loraDetailStatus").textContent = detailCache.has(model.asset_id)
+      ? "Showing cached LoRA metadata."
+      : "Loading saved LoRA metadata…";
     try {
-      const response = await api.loraDetails(model.asset_id);
+      const response = await api.loraDetails(model.asset_id, { inspect: false });
       const merged = mergeCatalogRecord(response) || response;
-      renderCards();
+      detailCache.set(model.asset_id, merged);
       if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
       selectedDetails = merged;
       renderDetails();
       if (focusEditor) $("#loraMetadataNickname")?.focus();
     } catch (error) {
       if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
-      selectedDetails = { ...model, metadata: {}, inspection_error: error.message };
+      selectedDetails = { ...selectedDetails, inspection_error: error.message };
       renderDetails();
+      $("#loraDetailStatus").textContent = `Unable to load LoRA metadata: ${error.message}`;
     }
   };
 
@@ -1132,6 +1210,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     try {
       const updated = await api.enrichAssetFromCivitai("lora", selectedDetails.asset_id, false);
       selectedDetails = mergeCatalogRecord(updated) || updated;
+      detailCache.set(selectedDetails.asset_id, selectedDetails);
       renderCards();
       renderDetails();
       renderDefaults();

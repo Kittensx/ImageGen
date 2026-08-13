@@ -321,19 +321,32 @@ async function syncGithub({ announce = false } = {}) {
 async function openDialog() {
   const dialog = $("#bugReportDialog");
   if (!dialog) return;
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
+  window.dispatchEvent(new CustomEvent("image-gen-bug-reporter-opened"));
   setText("#bugReportGithubStatus", "Checking local failures and GitHub fingerprints…");
   await loadLocalReports({ renderDialogAfter: true });
   await syncGithub();
 }
 
+function closeDialog() {
+  const dialog = $("#bugReportDialog");
+  if (!dialog?.open) return;
+  dialog.close();
+  window.dispatchEvent(new CustomEvent("image-gen-bug-reporter-closed"));
+}
+
 export function bindBugReporter() {
   $("#homeReviewBugReports")?.addEventListener("click", openDialog);
+  window.addEventListener("image-gen-open-bug-reporter", openDialog);
   $("#homeSyncBugReports")?.addEventListener("click", () => syncGithub({ announce: true }));
   $("#syncBugReportsButton")?.addEventListener("click", () => syncGithub({ announce: true }));
-  $("#closeBugReportDialog")?.addEventListener("click", () => $("#bugReportDialog")?.close());
+  $("#closeBugReportDialog")?.addEventListener("click", closeDialog);
   $("#bugReportDialog")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) event.currentTarget.close();
+    if (event.target === event.currentTarget) closeDialog();
+  });
+  $("#bugReportDialog")?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeDialog();
   });
   window.addEventListener("image-gen-bug-report-refresh", () => {
     loadLocalReports({ renderDialogAfter: Boolean($("#bugReportDialog")?.open) });

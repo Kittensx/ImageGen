@@ -1,5 +1,5 @@
 {
-  "settings_defaults_version": 12,
+  "settings_defaults_version": 13,
   "restore_last_session": true,
   "ui_scale": 105,
   "density": "comfortable",
@@ -17,8 +17,23 @@
       "font_family": "Inter",
       "primary_button_text": "#ffffff",
       "secondary_button_text": "#d5f1ff"
+    },
+    "semantic": {
+      "surface_secondary": "#172431",
+      "component_surface": "#111d29",
+      "component_border": "#2b4358",
+      "component_accent": "#179ee7",
+      "text_primary": "#f4f9fd",
+      "text_secondary": "#9db2c4"
     }
   },
+  "theme_storage": {
+    "theme_library_root": "",
+    "theme_user_root": "",
+    "theme_cache_root": "",
+    "theme_preview_root": ""
+  },
+  "theme_contrast_warnings_enabled": true,
   "live_preview_enabled": true,
   "live_preview_mode": "fast",
   "live_preview_interval": 10,

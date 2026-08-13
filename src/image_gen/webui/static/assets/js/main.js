@@ -1,42 +1,46 @@
 import { loadFragments } from "./fragments.js";
 import { configureBranding, productName } from "./branding.js?v=brand1";
 
-import { api } from "./api.js?v=civitai-connect1";
+import { api } from "./api.js?v=asset-card-latency1";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js?v=svg-profile2";
 import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
 import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
-import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=0.1.83";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=status-action-icons1";
+import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=qol-seed-ui5";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=qol-seed-range3";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=responsive-action-bar1";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
-import { bindSettings } from "./features/settings.js?v=0.1.63";
+import { bindSettings } from "./features/settings.js?v=theme-manager-tm02a";
 import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civitai-connect1";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
 import { bindWorkspaceLayout } from "./features/layout.js?v=responsive-action-bar1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
-import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=civitai-connect1";
-import { bindLoraWorkspace } from "./features/loras.js?v=civitai-connect1";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-card-latency1";
+import { bindLoraWorkspace } from "./features/loras.js?v=asset-card-latency1";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindHomeWorkspace } from "./features/home.js?v=home-shell1";
-import { bindHomeComponents } from "./features/home-components.js?v=featured-shell1";
-import { bindWorkspaceManager } from "./features/workspace-manager.js?v=workspace-manager1";
-import { bindChangelog } from "./features/changelog.js?v=home-shell1";
-import { bindBugReporter } from "./features/bug-reports.js?v=home-shell1";
-import { bindImageGenProfile } from "./features/profile.js?v=home-shell1";
+import { bindHomeComponents } from "./features/home-components.js?v=content-capabilities2";
+import { bindWorkspaceManager } from "./features/workspace-manager.js?v=workspace-responsive2";
+import { bindChangelog } from "./features/changelog.js?v=content-capabilities2";
+import { bindHelpCenter } from "./features/help-center.js?v=help-center1";
+import { bindBugReporter } from "./features/bug-reports.js?v=bug-manager1";
+import { bindImageGenProfile } from "./features/profile.js?v=clean-install1";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
 import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js?v=responsive-action-bar1";
-import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.45";
+import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.46-cfg-standard";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
 import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=prompt-cards1";
 import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
 import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=civitai-connect1";
+import { bindUserConfigEditor } from "./features/user-config-editor.js?v=qol1";
+import { bindParameterRanges } from "./features/parameter-ranges.js?v=qol2";
+import { bindSeedControls } from "./features/seed-controls.js?v=qol-seed-ui5";
 import { bindOutpaintPrototype } from "./features/outpaint-prototype.js?v=0.1.84";
 
 const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
@@ -266,22 +270,25 @@ function renderModelArchitectureStatus(activeModel = null) {
   if (!activeModel) {
     status.textContent = "Architecture: waiting for activation.";
     status.className = "field-status subtle";
+    applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: true });
     return;
   }
   if (summary) {
     status.textContent = `Architecture: ${summary}`;
     status.className = "field-status ready subtle";
+    applySd2RuntimePolicy({ activeModel, autoEnable: true });
     return;
   }
   status.textContent = "Architecture: unknown for the current checkpoint.";
   status.className = "field-status subtle";
+  applySd2RuntimePolicy({ activeModel, autoEnable: true });
 }
 
 async function activateSelectedModel({ quiet = false } = {}) {
   const requestedPath = $("#modelPath").value;
   if (!requestedPath) {
     state.activeModel = null;
-    setModelReadyState(false, "Choose a checkpoint model.", "error");
+    setModelReadyState(false, "No checkpoint is installed or selected. Add a checkpoint before generating.", "subtle");
     renderModelArchitectureStatus(null);
     throw new Error("Choose a checkpoint model first.");
   }
@@ -352,10 +359,10 @@ async function ensureSelectedModelReady() {
 async function applyStartupModelBehavior(bootstrap, current = {}) {
   const mode = String(state.settings.checkpoint_startup_mode || "last_used").trim().toLowerCase();
   const preload = state.settings.checkpoint_preload_on_startup !== false;
-  const lastUsed = resolveCatalogModelPath(current.model_path || "") || current.model_path || "";
-  const pinned = resolveCatalogModelPath(state.settings.checkpoint_startup_path || "") || state.settings.checkpoint_startup_path || "";
+  const lastUsed = resolveCatalogModelPath(current.model_path || "");
+  const pinned = resolveCatalogModelPath(state.settings.checkpoint_startup_path || "");
   const configuredDefaultSource = bootstrap.defaults?.model_path || bootstrap.effective_generation?.model_path || "";
-  const configuredDefault = resolveCatalogModelPath(configuredDefaultSource) || configuredDefaultSource;
+  const configuredDefault = resolveCatalogModelPath(configuredDefaultSource);
   const active = bootstrap.active_model || null;
 
   let selectedPath = "";
@@ -366,11 +373,19 @@ async function applyStartupModelBehavior(bootstrap, current = {}) {
     syncModelDropdownSelection(selectedPath);
   }
 
+  if (!state.models.length) {
+    state.activeModel = null;
+    modelRuntimeReadyPath = "";
+    renderModelArchitectureStatus(null);
+    setModelReadyState(false, "No checkpoints are installed. Add a checkpoint to the model library before generating.", "subtle");
+    return;
+  }
+
   if (mode === "none" || !selectedPath) {
     state.activeModel = active || null;
     modelRuntimeReadyPath = "";
     renderModelArchitectureStatus(state.activeModel);
-    setModelReadyState(false, "Startup behavior is set to start with no model. Choose a checkpoint before generating.", "subtle");
+    setModelReadyState(false, "Start with no model is active. Choose a checkpoint before generating.", "subtle");
     return;
   }
 
@@ -411,6 +426,58 @@ function applyVaeSelectionPolicy() {
     status.textContent = `Manual external VAE selected: ${label}${civitaiLabel}`;
   }
   status.className = "field-status subtle";
+}
+
+function selectedModelRecord() {
+  const requestedPath = $("#modelPath")?.value || "";
+  const normalizedRequested = normalizedModelPath(requestedPath);
+  return state.models.find((item) => normalizedModelPath(item.path) === normalizedRequested) || state.activeModel || null;
+}
+
+function modelFamilyForSd2Controls(model = null) {
+  const source = model || selectedModelRecord();
+  const raw = String(
+    source?.architecture
+      || source?.architecture_contract?.family
+      || source?.model_family
+      || source?.architecture_summary
+      || "",
+  ).trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.includes("sd2") || raw.includes("stable diffusion 2") || raw.includes("2.0") || raw.includes("2.1")) {
+    return "sd2.x";
+  }
+  return raw;
+}
+
+function applySd2RuntimePolicy({ activeModel = null, autoEnable = true } = {}) {
+  const select = $("#sd2RuntimeProfileOverride");
+  const toggle = $("#sd2DedicatedGeneration");
+  const status = $("#sd2RuntimeStatus");
+  if (!select || !toggle || !status) return;
+  const family = modelFamilyForSd2Controls(activeModel);
+  const isSd2 = family === "sd2.x";
+  if (!isSd2) {
+    select.disabled = true;
+    toggle.disabled = true;
+    toggle.checked = false;
+    select.value = "";
+    delete toggle.dataset.userOverridden;
+    status.textContent = "SD2.x runtime controls are disabled until an SD2.x checkpoint is selected.";
+    status.className = "field-status subtle";
+    return;
+  }
+  select.disabled = false;
+  toggle.disabled = false;
+  if (autoEnable && !toggle.dataset.userOverridden) {
+    toggle.checked = true;
+  }
+  const mode = toggle.checked ? "Dedicated SD2.x runtime enabled." : "Dedicated SD2.x runtime is currently disabled.";
+  const profileLabel = select.value
+    ? ` Runtime profile override: ${select.selectedOptions?.[0]?.textContent || select.value}.`
+    : " Runtime profile: automatic checkpoint-qualified inference.";
+  status.textContent = `${mode}${profileLabel}`;
+  status.className = `field-status subtle${toggle.checked ? " ready" : ""}`;
 }
 
 async function enrichSelectedVaeFromCivitai() {
@@ -459,12 +526,9 @@ function populateModels(current = {}) {
     `${item.display_name || item.embedded_name || item.name} · ${item.size_mb} MB`,
   ));
   const requestedModelRaw = current.model_path || "";
-  const requestedModel = resolveCatalogModelPath(requestedModelRaw) || requestedModelRaw;
-  if (requestedModel && !state.models.some((item) => normalizedModelPath(item.path) === normalizedModelPath(requestedModel))) {
-    const configuredLabel = requestedModelRaw && normalizedModelPath(requestedModelRaw) !== normalizedModelPath(requestedModel)
-      ? `${requestedModel} (resolved from ${requestedModelRaw})`
-      : `${requestedModel} (configured)`;
-    modelOptions.unshift(option(requestedModel, configuredLabel));
+  const requestedModel = resolveCatalogModelPath(requestedModelRaw);
+  if (!modelOptions.length) {
+    modelOptions.push(option("", "No checkpoints installed"));
   }
   replaceOptions($("#modelPath"), modelOptions, requestedModel);
 
@@ -472,6 +536,7 @@ function populateModels(current = {}) {
   state.vaes.forEach((item) => vaeOptions.push(option(item.path, `${item.name} · ${item.size_mb} MB`)));
   replaceOptions($("#vaePath"), vaeOptions, current.vae_path || "");
   applyVaeSelectionPolicy();
+  applySd2RuntimePolicy({ autoEnable: !("sd2_dedicated_generation" in current), activeModel: selectedModelRecord() });
   $("#modelCount").textContent = state.models.length;
   $("#vaeCount").textContent = state.vaes.length;
 }
@@ -650,12 +715,14 @@ function bindFormPersistence() {
   $("#generationForm").addEventListener("change", saveSessionSoon);
   $("#randomSeedButton").addEventListener("click", () => {
     $("#seed").value = "-1";
+    $("#seed").dispatchEvent(new Event("input", { bubbles: true }));
     saveSessionSoon();
   });
 }
 
 function bindModelSelection() {
   $("#modelPath").addEventListener("change", async () => {
+    applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: true });
     try {
       await activateSelectedModel();
       saveSessionSoon();
@@ -855,6 +922,8 @@ async function start() {
   try {
     await loadFragments();
     enforceExactDimensionInputs();
+    bindParameterRanges();
+    bindSeedControls({ onChange: saveSessionSoon });
     const bootstrap = await api.bootstrap();
     configureBranding(bootstrap.application || {});
     state.bootstrap = bootstrap;
@@ -903,6 +972,7 @@ async function start() {
           populateModels(collectCurrentValues());
         }
         $("#modelPath").value = modelPath;
+    applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: true });
         const active = await activateSelectedModel();
         saveSessionSoon();
         return active;
@@ -932,6 +1002,7 @@ async function start() {
       loras: state.loras,
     });
     bindChangelog();
+    await bindHelpCenter();
     bindBugReporter();
     bindImageGenProfile();
     window.addEventListener("image-gen-active-prompt-assets-updated", saveSessionSoon);
@@ -946,8 +1017,17 @@ async function start() {
     bindOutputPatternBuilder();
     bindPromptTools({ saveSessionSoon });
     bindHiresUpscalers(saveSessionSoon);
+    bindUserConfigEditor();
+    window.addEventListener("image-gen-parameter-ranges-changed", saveSessionSoon);
     bindOutpaintPrototype(saveSessionSoon);
     $("#vaePath")?.addEventListener("change", applyVaeSelectionPolicy);
+    $("#sd2DedicatedGeneration")?.addEventListener("change", (event) => {
+      event.currentTarget.dataset.userOverridden = "true";
+      applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: false });
+    });
+    $("#sd2RuntimeProfileOverride")?.addEventListener("change", () => {
+      applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: false });
+    });
     $("#vaeFetchCivitaiButton")?.addEventListener("click", enrichSelectedVaeFromCivitai);
     renderGallery(state.recentOutputs);
     renderPromptPresets(bootstrap.prompt_presets || []);

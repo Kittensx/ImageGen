@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "imagegen://schemas/theme-tokens/1",
+  "title": "IMAGE_GEN Semantic Theme Tokens",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "color.accent": {"$ref": "#/$defs/color"},
+    "color.surface.primary": {"$ref": "#/$defs/color"},
+    "color.surface.secondary": {"$ref": "#/$defs/color"},
+    "color.component.surface": {"$ref": "#/$defs/color"},
+    "color.component.border": {"$ref": "#/$defs/color"},
+    "color.component.accent": {"$ref": "#/$defs/color"},
+    "color.text.primary": {"$ref": "#/$defs/color"},
+    "color.text.secondary": {"$ref": "#/$defs/color"},
+    "color.border": {"$ref": "#/$defs/color"},
+    "color.success": {"$ref": "#/$defs/color"},
+    "color.warning": {"$ref": "#/$defs/color"},
+    "color.error": {"$ref": "#/$defs/color"},
+    "typography.family": {"type": "string", "minLength": 1},
+    "buttons.primary.text": {"$ref": "#/$defs/color"},
+    "buttons.secondary.text": {"$ref": "#/$defs/color"},
+    "radius.panel": {"type": "string"},
+    "radius.control": {"type": "string"},
+    "shadow.panel": {"type": "string"}
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    }
+  }
+}

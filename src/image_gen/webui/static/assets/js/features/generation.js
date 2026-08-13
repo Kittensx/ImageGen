@@ -9,7 +9,7 @@ import {
 } from "./live-preview.js?v=status-action-icons1";
 import { showOutput, upsertRecentOutput } from "./gallery.js?v=0.1.46";
 import { openOutputDetailsData } from "./output-details.js";
-import { preflightCurrentPrompt } from "./prompt-tools.js?v=prompt-cards1";
+import { preflightCurrentPrompt } from "./prompt-tools.js?v=qol-seed-range3";
 import { resetGenerateControl, setGenerateControlState } from "../components/generation-control.js?v=0.1.0";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 import { setActionIcon } from "../components/action-icons.js?v=0.1.0";
@@ -201,7 +201,15 @@ async function copyQueueSeed(job) {
 }
 
 function activeJob() {
-  return state.jobs.find((job) => ACTIVE_JOB_STATUSES.has(String(job.status || ""))) || null;
+  const workerActiveId = String(workerState?.active_job_id || "");
+  if (workerActiveId) {
+    const workerActive = state.jobs.find((job) => String(job.job_id || "") === workerActiveId);
+    if (workerActive) return workerActive;
+  }
+  return state.jobs.find((job) => {
+    const status = String(job.status || "");
+    return ACTIVE_JOB_STATUSES.has(status) && status !== "paused";
+  }) || null;
 }
 
 function monitoredJob() {
@@ -337,10 +345,12 @@ function renderWorker(worker) {
     : worker?.queue_pause_requested
       ? "Pause pending"
       : "";
+  const pausedCount = Number(worker?.paused || 0);
+  const queueSummary = `${Number(worker?.queued || 0)} queued${pausedCount ? ` · ${pausedCount} paused` : ""}`;
   $("#workerText").textContent = online
     ? pauseLabel
-      ? `${pauseLabel} · ${worker.queued} queued`
-      : worker.active_job_id ? `Active · ${worker.queued} queued` : `Online · ${worker.queued} queued`
+      ? `${pauseLabel} · ${queueSummary}`
+      : worker.active_job_id ? `Active · ${queueSummary}` : `Online · ${queueSummary}`
     : "Offline";
   $("#footerWorkerStatus").textContent = `Worker: ${online ? (pauseLabel || "online").toLowerCase() : "offline"}`;
   $("#workerPill").classList.toggle("is-offline", !online);
@@ -400,14 +410,15 @@ function renderQueue(jobs) {
   }
 
   list.className = "stack-list";
-  visibleJobs.slice(0, 12).forEach((job) => {
+  visibleJobs.forEach((job) => {
     const card = document.createElement("article");
     card.className = "queue-card";
     card.dataset.jobId = job.job_id;
     card.tabIndex = 0;
     const header = document.createElement("header");
     const title = document.createElement("strong");
-    title.textContent = shortText(job.request?.positive_prompt || "Untitled generation", 38);
+    const queueTitle = shortText(job.request?.positive_prompt || "Untitled generation", 38);
+    title.textContent = job.status === "paused" ? `|| ${queueTitle}` : queueTitle;
     const badge = document.createElement("span");
     badge.className = `status-badge ${job.status}`;
     badge.textContent = humanizeStage(job.worker_stage || job.status);
@@ -430,6 +441,21 @@ function renderQueue(jobs) {
     const timing = document.createElement("small");
     timing.textContent = job.completed_at ? `Finished ${formatTime(job.completed_at)}` : `Started ${formatTime(job.started_at || job.created_at)}`;
     card.append(header, settings, timing);
+    const orchestration = job.model_runtime_diagnostics?.batch_orchestration || {};
+    const completedProgress = Math.max(0, Number(orchestration.completed_images ?? job.resume_completed_images ?? 0));
+    const attemptedProgress = Math.max(completedProgress, Number(orchestration.attempted_images ?? job.resume_image_index ?? 0));
+    const unlimitedProgress = Boolean(job.request?.unlimited || orchestration.mode === "unlimited");
+    const finiteProgressTotal = Math.max(
+      1,
+      Number(orchestration.requested_image_count || 0)
+        || (Math.max(1, Number(job.request?.batch_count || 1)) * Math.max(1, Number(job.request?.batch_size || 1))),
+    );
+    if (unlimitedProgress || finiteProgressTotal > 1) {
+      const progress = document.createElement("small");
+      progress.className = "queue-batch-progress";
+      progress.textContent = `${attemptedProgress} of ${unlimitedProgress ? "∞" : finiteProgressTotal}`;
+      card.append(progress);
+    }
     const pendingSaves = Number(job.pending_save_batches || 0);
     const completedSaves = Number(job.completed_save_batches || 0);
     const failedSaves = Number(job.failed_save_batches || 0);
@@ -447,8 +473,8 @@ function renderQueue(jobs) {
       const pauseStatus = document.createElement("small");
       pauseStatus.className = "queue-diagnostic-path";
       pauseStatus.textContent = job.status === "paused"
-        ? "Queue paused between images."
-        : "Queue will pause after the current image finishes.";
+        ? "Paused. Other queued batches may continue."
+        : "This batch will pause after the current image finishes.";
       card.append(pauseStatus);
     }
     if (Number(job.skipped_images || 0) > 0) {
@@ -476,6 +502,47 @@ function renderQueue(jobs) {
 
     const actions = document.createElement("div");
     actions.className = "queue-actions";
+    if (["queued", "running", "preparing_model", "warming_model", "paused"].includes(String(job.status || ""))) {
+      const pauseResumeButton = document.createElement("button");
+      pauseResumeButton.type = "button";
+      pauseResumeButton.className = "small-button queue-pause-resume-button";
+      const isPaused = job.status === "paused";
+      const pauseRequested = Boolean(job.pause_after_current_requested);
+      decorateQueueAction(pauseResumeButton, {
+        icon: isPaused ? "play" : "pause",
+        label: isPaused ? "Play / requeue batch" : pauseRequested ? "Pause pending" : "Pause batch",
+      });
+      pauseResumeButton.disabled = pauseRequested;
+      pauseResumeButton.addEventListener("click", async () => {
+        try {
+          const response = isPaused ? await api.resumeJob(job.job_id) : await api.pauseJob(job.job_id);
+          renderWorker(response.worker || workerState);
+          renderQueue(response.jobs || state.jobs);
+          updateActiveState();
+        } catch (error) {
+          notify(error.message, "error");
+        }
+      });
+      actions.append(pauseResumeButton);
+    }
+    if (job.status === "queued") {
+      for (const [direction, icon, label] of [["up", "chevron-up", "Move higher"], ["down", "chevron-down", "Move lower"]]) {
+        const moveButton = document.createElement("button");
+        moveButton.type = "button";
+        moveButton.className = "small-button queue-reorder-button";
+        decorateQueueAction(moveButton, { icon, label });
+        moveButton.addEventListener("click", async () => {
+          try {
+            const response = await api.reorderJob(job.job_id, direction);
+            renderWorker(response.worker || workerState);
+            renderQueue(response.jobs || state.jobs);
+          } catch (error) {
+            notify(error.message, "error");
+          }
+        });
+        actions.append(moveButton);
+      }
+    }
     if (jobCanBeCancelled(job)) {
       const cancelButton = document.createElement("button");
       cancelButton.type = "button";
@@ -954,7 +1021,12 @@ async function submit(unlimited) {
     );
     scheduleRecentOutputsPolling();
   } catch (error) {
-    notify(error.message, "error");
+    const message = String(error?.message || error || "Generation could not be queued.");
+    if (/upscaler|hires[^.]*model/i.test(message)) {
+      window.dispatchEvent(new CustomEvent("image-gen-hires-upscaler-error", { detail: { message } }));
+    } else {
+      notify(message, "error");
+    }
   } finally {
     submitInFlight = false;
     setSubmissionBusy(false);

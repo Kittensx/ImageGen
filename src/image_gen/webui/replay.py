@@ -36,6 +36,8 @@ _EDITABLE_FIELDS = {
     "negative_prompt",
     "model_path",
     "vae_path",
+    "sd2_runtime_profile_override",
+    "sd2_dedicated_generation",
     "width",
     "height",
     "steps",
@@ -153,10 +155,32 @@ _BATCH_OVERRIDE_FIELDS = {
     "sampler_kwargs",
     "scheduler_kwargs",
 }
+_REPLAY_USER_PREFERENCE_DEFAULTS = {
+    # Replay may record these historical values for inspection, but must never
+    # silently reactivate them when the current client omits preference state.
+    "save_txt": False,
+    "save_json": True,
+    "save_diagnostics_json": False,
+    "hires_save_lowres": False,
+    "hires_save_upscaled_pre_denoise": False,
+    "hires_save_vae_roundtrip": False,
+    "outpaint_diagnostic_artifacts": False,
+    "outpaint_shape_save_base": False,
+}
+
 _OPERATIONAL_FIELDS = {
     "output_dir",
     "output_prefix",
     "save_images",
+    # Output/artifact toggles are user preferences, not creative replay state.
+    "save_txt",
+    "save_json",
+    "save_diagnostics_json",
+    "hires_save_lowres",
+    "hires_save_upscaled_pre_denoise",
+    "hires_save_vae_roundtrip",
+    "outpaint_diagnostic_artifacts",
+    "outpaint_shape_save_base",
     "live_preview_enabled",
     "live_preview_mode",
     "live_preview_interval",
@@ -170,6 +194,8 @@ _OPERATIONAL_FIELDS = {
 }
 _PRESERVABLE_BACKEND_FIELDS = {
     "cfg_rescale",
+    "sd2_runtime_profile_override",
+    "sd2_dedicated_generation",
     "compatibility_mode",
     "clip_skip",
     "tiling",
@@ -734,6 +760,8 @@ class ReplayService:
             for name in _OPERATIONAL_FIELDS:
                 if name in current:
                     request[name] = copy.deepcopy(current[name])
+                elif name in _REPLAY_USER_PREFERENCE_DEFAULTS:
+                    request[name] = copy.deepcopy(_REPLAY_USER_PREFERENCE_DEFAULTS[name])
 
         if mode == "exact":
             self._restore_recorded_hires_base_dimensions(request)

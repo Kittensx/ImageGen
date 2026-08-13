@@ -1,9 +1,48 @@
 /* Region canvas/list/table rendering. */
+function regionResizeCursor(direction) {
+  return direction ? `${direction}-resize` : 'pointer';
+}
+
+function clearRegionResizeHover(element) {
+  if (!element) return;
+  element.classList.remove('resize-hover');
+  element.dataset.hoverDir = '';
+  element.style.cursor = interactionMode === 'pan' ? 'grab' : 'pointer';
+}
+
+function getRegionResizeDirection(event, element) {
+  if (!element || interactionMode !== 'select' || paintMode) return '';
+  const rect = element.getBoundingClientRect();
+  if (!rect.width || !rect.height) return '';
+  const hitPadding = 12;
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  const nearLeft = localX <= hitPadding;
+  const nearRight = (rect.width - localX) <= hitPadding;
+  const nearTop = localY <= hitPadding;
+  const nearBottom = (rect.height - localY) <= hitPadding;
+  const vertical = nearTop ? 'n' : (nearBottom ? 's' : '');
+  const horizontal = nearLeft ? 'w' : (nearRight ? 'e' : '');
+  return `${vertical}${horizontal}`;
+}
+
+function updateRegionResizeHover(event, element) {
+  if (!element || drag || interactionMode !== 'select' || paintMode) {
+    clearRegionResizeHover(element);
+    return '';
+  }
+  const dir = getRegionResizeDirection(event, element);
+  element.classList.toggle('resize-hover', Boolean(dir));
+  element.dataset.hoverDir = dir;
+  element.style.cursor = regionResizeCursor(dir);
+  return dir;
+}
+
 function render() {
   const wrap = document.getElementById('canvasWrap');
   const vc = document.getElementById('viewContainer');
   const es = document.getElementById('emptyState');
-  (vc||wrap).querySelectorAll('.region-block').forEach(e=>e.remove());
+  (vc||wrap).querySelectorAll('.region-block,.region-stack-panel').forEach(e=>e.remove());
   const hasRegions = regions.length > 0;
   es.style.display = hasRegions ? 'none' : 'flex';
   const px = document.getElementById('pixelMode').checked;
@@ -23,6 +62,10 @@ function render() {
       `<div class="r-text">${esc(r.text)||'&nbsp;'}</div>` +
       `<div class="r-coords">${fmt(r.x1*mx)},${fmt(r.x2*mx)},${fmt(r.y1*my)},${fmt(r.y2*my)}</div>` +
       `<button class="remove-btn" title="Delete region R${i+1}" aria-label="Delete region R${i+1}" onclick="event.stopPropagation();removeRegion(${i})">✕</button>` +
+      `<div class="resize-handle resize-n" data-dir="n" data-idx="${i}"></div>` +
+      `<div class="resize-handle resize-e" data-dir="e" data-idx="${i}"></div>` +
+      `<div class="resize-handle resize-s" data-dir="s" data-idx="${i}"></div>` +
+      `<div class="resize-handle resize-w" data-dir="w" data-idx="${i}"></div>` +
       `<div class="resize-handle resize-se" data-dir="se" data-idx="${i}"></div>` +
       `<div class="resize-handle resize-sw" data-dir="sw" data-idx="${i}"></div>` +
       `<div class="resize-handle resize-ne" data-dir="ne" data-idx="${i}"></div>` +
@@ -34,30 +77,62 @@ function render() {
       if (paintMode) { selectRegion(i); toast(`Painting R${i+1} (${r.text||'empty'})`); }
     };
 
-    const startRegionMove = (e) => {
-      if (interactionMode !== 'select' || paintMode || (e.button ?? 0) !== 0 || e.target.closest('.remove-btn,.resize-handle')) return;
+    const startRegionPointerAction = (e) => {
+      if (interactionMode !== 'select' || paintMode || (e.button ?? 0) !== 0 || e.target.closest('.remove-btn')) return;
       e.preventDefault();
       e.stopPropagation();
       selectRegion(i);
-      drag = { mode:'move', idx:i, startX:e.clientX, startY:e.clientY, x1:r.x1, x2:r.x2, y1:r.y1, y2:r.y2 };
-      wrap.classList.add('dragging');
+      const resizeDir = e.target.closest('.resize-handle')?.dataset.dir || updateRegionResizeHover(e, el) || el.dataset.hoverDir || '';
+      if (resizeDir) {
+        drag = { mode:'resize', idx:i, dir:resizeDir, startX:e.clientX, startY:e.clientY, x1:r.x1, x2:r.x2, y1:r.y1, y2:r.y2 };
+      } else {
+        drag = { mode:'move', idx:i, startX:e.clientX, startY:e.clientY, x1:r.x1, x2:r.x2, y1:r.y1, y2:r.y2 };
+        wrap.classList.add('dragging');
+      }
     };
-    el.addEventListener('mousedown', startRegionMove);
-    el.addEventListener('pointerdown', startRegionMove);
+    const refreshResizeHover = (e) => updateRegionResizeHover(e, el);
+    const clearResizeHover = () => clearRegionResizeHover(el);
+    el.addEventListener('mousedown', startRegionPointerAction);
+    el.addEventListener('pointerdown', startRegionPointerAction);
+    el.addEventListener('mousemove', refreshResizeHover);
+    el.addEventListener('pointermove', refreshResizeHover);
+    el.addEventListener('mouseleave', clearResizeHover);
+    el.addEventListener('pointerleave', clearResizeHover);
 
     (vc||wrap).appendChild(el);
 
     el.querySelectorAll('.resize-handle').forEach(h => {
-      const startRegionResize = (e) => {
-        if (interactionMode !== 'select' || paintMode || (e.button ?? 0) !== 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        drag = { mode:'resize', idx:i, dir:h.dataset.dir, startX:e.clientX, startY:e.clientY, x1:r.x1, x2:r.x2, y1:r.y1, y2:r.y2 };
-      };
-      h.addEventListener('mousedown', startRegionResize);
-      h.addEventListener('pointerdown', startRegionResize);
+      h.addEventListener('mousedown', startRegionPointerAction);
+      h.addEventListener('pointerdown', startRegionPointerAction);
+      h.addEventListener('mousemove', refreshResizeHover);
+      h.addEventListener('pointermove', refreshResizeHover);
     });
   });
+
+  if (sel >= 0 && sel < regions.length) {
+    const related = relatedRegionEntries(sel);
+    if (related.length > 1) {
+      const panel = document.createElement('aside');
+      panel.className = 'region-stack-panel';
+      const heading = document.createElement('strong');
+      heading.textContent = 'Regions here';
+      panel.appendChild(heading);
+      related.forEach(({ index, relation }) => {
+        const region = regions[index];
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `region-stack-item${index === sel ? ' active' : ''}`;
+        button.innerHTML = `<span>R${index + 1}</span><span>${esc(region.text) || '(empty)'}</span><small>${relation}</small>`;
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          selectRegion(index);
+        });
+        panel.appendChild(button);
+      });
+      (vc || wrap).appendChild(panel);
+    }
+  }
 
   buildPresets();
   rebuildTable();

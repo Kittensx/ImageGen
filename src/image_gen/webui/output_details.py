@@ -30,6 +30,8 @@ _FORM_REPLAY_FIELDS = {
     "negative_prompt",
     "model_path",
     "vae_path",
+    "sd2_runtime_profile_override",
+    "sd2_dedicated_generation",
     "width",
     "height",
     "steps",
@@ -126,6 +128,8 @@ _BACKEND_REPLAY_OPTIONAL_MAP = {
     "tiling": "tiling",
 }
 _BACKEND_REPLAY_EXTRA_FIELDS = {
+    "sd2_runtime_profile_override",
+    "sd2_dedicated_generation",
     "prompt_parser_name",
     "prompt_parser_kwargs",
     "prompt_cfg_pass_schedules",

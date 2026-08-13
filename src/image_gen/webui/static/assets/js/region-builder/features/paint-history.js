@@ -19,7 +19,9 @@ function undoPaint() {
   undoStack.pop();
   ctx.putImageData(prev, 0, 0);
   canvasImgData = ctx.getImageData(0, 0, w, h);
+  canvasMaskDirty = true;
 }
+
 
 function redoPaint() {
   if (!redoStack.length || !paintMode) return;
@@ -33,6 +35,7 @@ function redoPaint() {
   redoStack.pop();
   ctx.putImageData(next, 0, 0);
   canvasImgData = ctx.getImageData(0, 0, w, h);
+  canvasMaskDirty = true;
 }
 
 function serializeCanvas() {

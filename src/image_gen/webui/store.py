@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from image_gen.webui.default_assets import default_document, normalize_document
+from image_gen.webui.theme.contracts import normalize_legacy_theme_palette
+from image_gen.webui.theme.storage import normalize_theme_storage_settings
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
@@ -39,7 +41,22 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
             "primary_button_text": "#ffffff",
             "secondary_button_text": "#d5f1ff",
         },
+        "semantic": {
+            "surface_secondary": "#172431",
+            "component_surface": "#111d29",
+            "component_border": "#2b4358",
+            "component_accent": "#179ee7",
+            "text_primary": "#f4f9fd",
+            "text_secondary": "#9db2c4",
+        },
     },
+    "theme_storage": {
+        "theme_library_root": "",
+        "theme_user_root": "",
+        "theme_cache_root": "",
+        "theme_preview_root": "",
+    },
+    "theme_contrast_warnings_enabled": True,
     "live_preview_enabled": True,
     "live_preview_mode": "fast",
     "live_preview_interval": 1,
@@ -56,6 +73,8 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
     "live_preview_adaptive_suspend_on_overhead": False,
     "cfg_lab_enabled": False,
     "live_preview_cfg_visual_enabled": False,
+    "preferred_hires_upscaler_id": "",
+    "cfg_lab_user_presets": {},
     "diagnostics_mode": "failures_only",
     "diagnostic_decode_enabled": False,
     "live_preview_cleanup_enabled": True,
@@ -267,23 +286,7 @@ class WebUIStore:
 
     @classmethod
     def _normalize_theme_palette(cls, value: Any) -> dict[str, Any]:
-        stored = value if isinstance(value, dict) else {}
-        defaults = {
-            "accent": {"name": "Sky Blue", "color": "#179ee7"},
-            "surface": {"name": "Charcoal", "color": "#111d29"},
-            "typography": {
-                "font_family": "Inter",
-                "primary_button_text": "#ffffff",
-                "secondary_button_text": "#d5f1ff",
-            },
-        }
-        return {
-            key: {
-                **defaults[key],
-                **(stored.get(key) if isinstance(stored.get(key), dict) else {}),
-            }
-            for key in defaults
-        }
+        return normalize_legacy_theme_palette(value)
 
     @classmethod
     def _normalize_scale_layout_defaults(cls, value: Any) -> dict[str, dict[str, Any]]:
@@ -310,6 +313,7 @@ class WebUIStore:
         except (TypeError, ValueError):
             merged["live_preview_interval"] = DEFAULT_FORCED_LIVE_PREVIEW_INTERVAL
         merged["theme_palette"] = cls._normalize_theme_palette(merged.get("theme_palette"))
+        merged["theme_storage"] = normalize_theme_storage_settings(merged.get("theme_storage"))
         merged["ui_layout"] = cls._normalize_layout(merged.get("ui_layout"))
         merged["ui_scale_layout_defaults"] = cls._normalize_scale_layout_defaults(merged.get("ui_scale_layout_defaults"))
         merged["recent_outputs_browser"] = cls._normalize_recent_outputs_browser(merged.get("recent_outputs_browser"))
@@ -424,8 +428,11 @@ class WebUIStore:
         return self.load_application_settings()
 
     def save_application_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        incoming = dict(payload or {})
+        if "theme_palette" in incoming:
+            incoming["theme_palette"] = self._normalize_theme_palette(incoming.get("theme_palette"))
         stored = self._read(self.settings_dir / "application.json", {})
-        persisted = _deep_merge(stored if isinstance(stored, dict) else {}, dict(payload or {}))
+        persisted = _deep_merge(stored if isinstance(stored, dict) else {}, incoming)
         if isinstance(persisted, dict):
             persisted.pop("ui_layout_defaults", None)
             persisted.pop("external_vae_override_enabled", None)

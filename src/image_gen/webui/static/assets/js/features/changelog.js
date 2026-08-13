@@ -1,8 +1,8 @@
-import { api } from "../api.js?v=changelog1";
+import { api } from "../api.js?v=help-center1";
 import { productName } from "../branding.js?v=brand1";
 import { $ } from "../utils.js";
 import { setActionIcon } from "../components/action-icons.js?v=0.1.1";
-import { renderMarkdown } from "../components/markdown-reader.js?v=component-shell1";
+import { componentShellCapability } from "../components/component-shell.js?v=content-capabilities2";
 
 const DEFAULT_VISIBLE_ENTRIES = 3;
 const GITHUB_REPOSITORY_ROOT = "https://github.com/Kittensx/ImageGen";
@@ -14,6 +14,11 @@ let githubDirectoryUrl = "https://github.com/Kittensx/ImageGen/tree/main/changel
 function setText(selector, value) {
   const node = $(selector);
   if (node) node.textContent = String(value ?? "");
+}
+
+function markdownCapability() {
+  const component = document.querySelector('[data-workspace-component="home.developer-updates"]');
+  return componentShellCapability(component, "content.markdown");
 }
 
 function entryButton(entry, index) {
@@ -67,47 +72,29 @@ function renderEntries() {
   }
 }
 
-function setReaderBusy(busy) {
-  const reader = $("#homeChangelogReader");
-  if (reader) reader.setAttribute("aria-busy", String(Boolean(busy)));
-}
-
 async function openEntry(entryDate) {
-  const dialog = $("#homeChangelogReader");
-  const content = $("#homeChangelogMarkdown");
-  const source = $("#homeChangelogReaderSource");
-  if (!dialog || !content) return;
-
-  setText("#homeChangelogReaderDate", entryDate);
-  setText("#homeChangelogReaderTitle", "Loading changelog...");
-  content.replaceChildren();
-  const loading = document.createElement("p");
-  loading.className = "home-changelog-empty";
-  loading.textContent = "Loading release notes...";
-  content.append(loading);
-  if (source) source.hidden = true;
-  if (!dialog.open) dialog.showModal();
-  setReaderBusy(true);
-
-  try {
-    const payload = await api.changelogEntry(entryDate);
-    setText("#homeChangelogReaderDate", payload.date || entryDate);
-    setText("#homeChangelogReaderTitle", payload.title || `${productName()} update - ${entryDate}`);
-    renderMarkdown(content, payload.markdown || "", { repositoryRoot: GITHUB_REPOSITORY_ROOT, basePath: "changelog", entryDate: payload.date || entryDate });
-    if (source) {
-      source.href = payload.github_url || `${GITHUB_REPOSITORY_ROOT}/blob/main/changelog/${entryDate}.md`;
-      source.hidden = false;
-    }
-  } catch (error) {
-    setText("#homeChangelogReaderTitle", "Unable to load changelog");
-    content.replaceChildren();
-    const message = document.createElement("p");
-    message.className = "home-changelog-error";
-    message.textContent = String(error?.message || error || "Unable to load the selected changelog entry.");
-    content.append(message);
-  } finally {
-    setReaderBusy(false);
+  const markdown = markdownCapability();
+  if (!markdown) {
+    setText("#homeChangelogStatus", "The shared Markdown capability is unavailable.");
+    return;
   }
+  await markdown.openDocument({
+    title: `${productName()} update - ${entryDate}`,
+    sourceHref: `${GITHUB_REPOSITORY_ROOT}/blob/main/changelog/${entryDate}.md`,
+    loader: async () => {
+      const payload = await api.changelogEntry(entryDate);
+      return {
+        title: payload.title || `${productName()} update - ${entryDate}`,
+        sourceHref: payload.github_url || `${GITHUB_REPOSITORY_ROOT}/blob/main/changelog/${entryDate}.md`,
+        markdown: payload.markdown || "",
+        options: {
+          repositoryRoot: GITHUB_REPOSITORY_ROOT,
+          basePath: "changelog",
+          entryDate: payload.date || entryDate,
+        },
+      };
+    },
+  });
 }
 
 async function refreshCatalog() {
@@ -138,15 +125,5 @@ export function bindChangelog() {
     showingAll = !showingAll;
     renderEntries();
   });
-
-  $("#homeChangelogReaderClose")?.addEventListener("click", () => {
-    $("#homeChangelogReader")?.close();
-  });
-
-  $("#homeChangelogReader")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) event.currentTarget.close();
-  });
-
   refreshCatalog();
-  return { refresh: refreshCatalog };
 }

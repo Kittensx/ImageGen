@@ -8,7 +8,7 @@ let onJobQueued = () => {};
 
 const EDITABLE_FIELDS = [
   "positive_prompt", "negative_prompt", "seed", "width", "height", "steps",
-  "cfg_scale", "batch_size", "batch_count", "model_path", "sampler_name", "scheduler_name",
+  "cfg_scale", "batch_size", "batch_count", "model_path", "vae_path", "sd2_runtime_profile_override", "sd2_dedicated_generation", "sampler_name", "scheduler_name",
 ];
 
 function option(value, label = value) {

@@ -1,0 +1,30 @@
+.seed-field-block {
+  margin-bottom: 0;
+}
+
+.seed-advanced-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: -2px;
+}
+
+.seed-advanced-toggle-row .field-status {
+  flex: 1 1 180px;
+}
+
+.seed-advanced-toggle[aria-pressed="true"] {
+  border-color: var(--sky-300);
+  color: var(--sky-300);
+}
+
+.batch-seed-section {
+  margin-top: -1px;
+}
+
+.batch-seed-section[hidden],
+#batchSeedRangeFields[hidden],
+#seedNoDuplicatesRow[hidden] {
+  display: none !important;
+}

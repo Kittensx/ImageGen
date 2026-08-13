@@ -71,6 +71,13 @@
             : "Inter";
           const primaryButtonText = normalizeHex(parsed?.typography?.primary_button_text, "#ffffff");
           const secondaryButtonText = normalizeHex(parsed?.typography?.secondary_button_text, "#d5f1ff");
+          const semantic = parsed?.semantic && typeof parsed.semantic === "object" ? parsed.semantic : {};
+          const surfaceSecondary = normalizeHex(semantic.surface_secondary, mixHex(surface, "#ffffff", 0.08));
+          const componentSurface = normalizeHex(semantic.component_surface, surface);
+          const componentBorder = normalizeHex(semantic.component_border, mixHex(surface, "#ffffff", 0.22));
+          const componentAccent = normalizeHex(semantic.component_accent, accent);
+          const textPrimary = normalizeHex(semantic.text_primary, "#f4f9fd");
+          const textSecondary = normalizeHex(semantic.text_secondary, "#9db2c4");
           const root = doc.style;
           root.setProperty("--sky-50", mixHex(accent, "#ffffff", 0.92));
           root.setProperty("--sky-100", mixHex(accent, "#ffffff", 0.82));
@@ -79,12 +86,27 @@
           root.setProperty("--sky-400", mixHex(accent, "#ffffff", 0.18));
           root.setProperty("--sky-500", accent);
           root.setProperty("--sky-600", mixHex(accent, "#000000", 0.18));
+          root.setProperty("--theme-surface-primary", surface);
+          root.setProperty("--theme-surface-secondary", surfaceSecondary);
+          root.setProperty("--component-surface", componentSurface);
+          root.setProperty("--component-border", componentBorder);
+          root.setProperty("--component-accent", componentAccent);
           root.setProperty("--charcoal-950", mixHex(surface, "#000000", 0.48));
           root.setProperty("--charcoal-900", mixHex(surface, "#000000", 0.24));
-          root.setProperty("--charcoal-850", surface);
-          root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
-          root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
-          root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+          root.setProperty("--charcoal-850", componentSurface);
+          root.setProperty("--charcoal-800", surfaceSecondary);
+          root.setProperty("--charcoal-700", mixHex(surfaceSecondary, "#ffffff", 0.12));
+          root.setProperty("--line", componentBorder);
+          root.setProperty("--text", textPrimary);
+          root.setProperty("--muted", textSecondary);
+          root.setProperty("--text-primary", textPrimary);
+          root.setProperty("--text-secondary", textSecondary);
+          root.setProperty("--text-muted", textSecondary);
+          root.setProperty("--surface", surface);
+          root.setProperty("--surface-1", componentSurface);
+          root.setProperty("--surface-2", surfaceSecondary);
+          root.setProperty("--surface-3", mixHex(surfaceSecondary, "#ffffff", 0.10));
+          root.setProperty("--surface-raised", surfaceSecondary);
           root.setProperty("--font-ui", FONT_STACKS[fontFamily]);
           root.setProperty("--primary-button-text", primaryButtonText);
           root.setProperty("--secondary-button-text", secondaryButtonText);
@@ -95,22 +117,22 @@
       }
     })();
   </script>
-  <script src="/assets/js/theme-runtime.js?v=theme-prepaint1"></script>
+  <script src="/assets/js/theme-runtime.js?v=theme-manager-tm02"></script>
   <script>window.ImageGenThemeRuntime?.applyCached();</script>
   <title>REGION Builder</title>
-  <link rel="stylesheet" href="/assets/css/tokens.css">
-  <link rel="stylesheet" href="/assets/css/region-builder/base.css?v=0.1.66-rb3">
-  <link rel="stylesheet" href="/assets/css/region-builder/layout.css?v=0.1.66-rb3">
-  <link rel="stylesheet" href="/assets/css/region-builder/canvas.css?v=0.1.66-rb3">
-  <link rel="stylesheet" href="/assets/css/region-builder/controls.css?v=0.1.66-rb3">
-  <link rel="stylesheet" href="/assets/css/region-builder/sidebar.css?v=0.1.66-rb3">
-  <link rel="stylesheet" href="/assets/css/region-builder/table.css?v=0.1.66-rb3">
-  <link rel="stylesheet" href="/assets/css/region-builder/responsive.css?v=0.1.66-rb3">
+  <link rel="stylesheet" href="/assets/css/tokens.css?v=theme-manager-tm02">
+  <link rel="stylesheet" href="/assets/css/region-builder/base.css?v=0.1.67-rb4">
+  <link rel="stylesheet" href="/assets/css/region-builder/layout.css?v=0.1.67-rb4">
+  <link rel="stylesheet" href="/assets/css/region-builder/canvas.css?v=0.1.67-rb4">
+  <link rel="stylesheet" href="/assets/css/region-builder/controls.css?v=0.1.67-rb4">
+  <link rel="stylesheet" href="/assets/css/region-builder/sidebar.css?v=0.1.67-rb4">
+  <link rel="stylesheet" href="/assets/css/region-builder/table.css?v=0.1.67-rb4">
+  <link rel="stylesheet" href="/assets/css/region-builder/responsive.css?v=0.1.67-rb4">
   <link rel="stylesheet" href="/assets/css/ui-icons.css?v=civitai-connect1">
-  <link rel="stylesheet" href="/assets/css/site-sidebar.css?v=shared-sidebar-r2">
+  <link rel="stylesheet" href="/assets/css/site-sidebar.css?v=shared-sidebar-r3">
 </head>
 <body class="site-sidebar-page">
-  <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=shared-sidebar-r2"></div>
+  <div data-site-sidebar-fragment="/assets/views/site-sidebar.html?v=shared-sidebar-r3"></div>
   <div class="container">
 <div class="header">
 <h1><span data-product-name></span> REGION <small>SuperHybrid builder · native model-output backend</small></h1>
@@ -413,26 +435,26 @@
   </div>
   <div class="toast" id="toast"></div>
 
-  <script type="module" src="/assets/js/site-sidebar.js?v=shared-sidebar-r2"></script>
-  <script src="/assets/js/region-builder/boot-guard.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/state.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/utils.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/canvas-core.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/paint-history.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/fill-tool.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/canvas-view.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/regions.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/editor.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/render.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/presets.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/prompt-build.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/prompt-parser.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/prompt-import.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/guides.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/host.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/drag.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/host-events.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/features/input-events.js?v=0.1.66-rb3"></script>
-  <script src="/assets/js/region-builder/init.js?v=0.1.66-rb3"></script>
+  <script type="module" src="/assets/js/site-sidebar.js?v=shared-sidebar-r3"></script>
+  <script src="/assets/js/region-builder/boot-guard.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/state.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/utils.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/canvas-core.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/paint-history.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/fill-tool.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/canvas-view.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/regions.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/editor.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/render.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/presets.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/prompt-build.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/prompt-parser.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/prompt-import.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/guides.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/host.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/drag.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/host-events.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/features/input-events.js?v=0.1.67-rb4"></script>
+  <script src="/assets/js/region-builder/init.js?v=0.1.67-rb4"></script>
 </body>
 </html>

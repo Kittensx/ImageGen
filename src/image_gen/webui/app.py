@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 import uuid
 import zipfile
+
+import yaml
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -21,6 +24,19 @@ from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION
 from image_gen.program_metadata import PRODUCT_NAME, build_program_metadata
 from image_gen.runtime.hires_sizing import resolve_hires_dimensions
 from image_gen.systems.outpainting import plan_outpaint_canvas
+from image_gen.systems.asset_hub import (
+    ASSET_HUB_CONTRACT_VERSION,
+    ArchitectureCompatibilityPolicy,
+    AssetHubDownloadManager,
+    AssetHubInstaller,
+    AssetHubSecretStore,
+    AssetHubService,
+    CivitaiProvider,
+    DownloadRepository,
+    InstallRepository,
+    UpscalerFavoriteStore,
+    LocalPresenceResolver,
+)
 from image_gen.runtime_options import (
     RuntimeStartupOptions,
     build_runtime_startup_status,
@@ -35,6 +51,7 @@ from image_gen.webui.diagnostics import write_webui_failure_bundle
 from image_gen.webui.default_assets import resolve_default_assets
 from image_gen.webui.catalog import ASSET_CATALOG_CONTRACT_VERSION, WebUICatalog
 from image_gen.webui.changelog import ChangelogService
+from image_gen.webui.help_center import HELP_CENTER_CONTRACT_VERSION, HelpCenterService
 from image_gen.webui.upscaler_catalog import (
     UPSCALER_CATALOG_CONTRACT_VERSION,
     WebUIUpscalerCatalog,
@@ -50,15 +67,36 @@ from image_gen.webui.civitai_asset_metadata import (
 )
 from image_gen.webui.image_refs import decode_external_image_ref, is_within_root
 from image_gen.webui.jobs import GenerationJobManager
-from image_gen.webui.model_selection import WebUIModelSelectionState
+from image_gen.webui.model_selection import ModelSelectionUnavailableError, WebUIModelSelectionState
 from image_gen.webui.output_details import load_image_file_details, load_output_details
 from image_gen.webui.prompt_configuration import PromptConfigurationService
 from image_gen.webui.profile import ImageGenProfileService
 from image_gen.webui.replay import ReplayService
+from image_gen.webui.routes.asset_hub import build_asset_hub_router
+from image_gen.webui.routes.theme_manager import build_theme_manager_router
 from image_gen.webui.selection import WebUISelectionResolver
 from image_gen.webui.store import WebUIStore
+from image_gen.webui.theme import (
+    THEME_LIBRARY_SCHEMA_VERSION,
+    ThemePackageLibrary,
+    ThemeStorageConfigurationError,
+    ThemeStorageRoots,
+)
 from image_gen.webui.variation_matrix import VariationMatrixService
+from image_gen.webui.workspace import (
+    WORKSPACE_CONTRACT_VERSION,
+    WORKSPACE_SCHEMA,
+    WORKSPACE_SCHEMA_VERSION,
+    WorkspaceRenderer,
+    WorkspaceStore,
+    WorkspaceStoreError,
+    build_default_workspace_layouts,
+    build_default_workspace_registry,
+    review_workspace_import,
+    workspace_responsive_contract_payload,
+)
 from modules.project_context import ProjectContext
+from modules.registry.asset_registry import AssetRegistry
 from modules.prompt_parsers import (
     PROMPT_MERGE_CONTRACT_VERSION,
     PROMPT_ROUTE_CONTRACT_VERSION,
@@ -161,7 +199,72 @@ def create_app(
     prompt_configuration = PromptConfigurationService(store, parser_registry=prompt_parsers)
     bug_reports = BugReportService(context.project_root)
     changelog = ChangelogService(context.project_root)
+    help_center = HelpCenterService(context.project_root)
     static_root = Path(__file__).resolve().parent / "static"
+    workspace_registry = build_default_workspace_registry()
+    workspace_defaults = build_default_workspace_layouts()
+    workspace_store = WorkspaceStore(
+        context.data_root / "webui" / "workspaces",
+        workspace_registry,
+        workspace_defaults,
+    )
+    workspace_renderer = WorkspaceRenderer(workspace_registry)
+
+    theme_storage_warning = ""
+    try:
+        theme_roots = ThemeStorageRoots.resolve(
+            project_root=context.project_root,
+            settings=application_settings.get("theme_storage"),
+        )
+    except ThemeStorageConfigurationError as exc:
+        theme_storage_warning = str(exc)
+        theme_roots = ThemeStorageRoots.resolve(project_root=context.project_root, settings={})
+    theme_library = ThemePackageLibrary(
+        theme_roots,
+        legacy_palette_provider=lambda: store.load_application_settings().get("theme_palette", {}),
+    )
+
+    def _asset_hub_local_records():
+        for asset_kind in ("checkpoint", "lora", "vae", "textual_inversion"):
+            for record in catalog.asset_list(asset_kind):
+                yield record
+        for record in upscaler_catalog.payload().get("neural", []):
+            if isinstance(record, Mapping):
+                item = dict(record)
+                item.setdefault("asset_type", "upscaler")
+                yield item
+
+    asset_hub_secrets = AssetHubSecretStore()
+    civitai_provider = CivitaiProvider(
+        context.cache_root / "asset-hub" / "providers" / "civitai",
+        secret_provider=lambda: asset_hub_secrets.get("civitai"),
+    )
+    asset_hub = AssetHubService(
+        [civitai_provider],
+        policy=ArchitectureCompatibilityPolicy(),
+        presence=LocalPresenceResolver(_asset_hub_local_records),
+    )
+    asset_hub_database = context.data_root / "asset-hub" / "asset-hub.sqlite3"
+    asset_hub_download_repository = DownloadRepository(asset_hub_database)
+    asset_hub_downloads = AssetHubDownloadManager(
+        asset_hub.providers,
+        secret_store=asset_hub_secrets,
+        repository=asset_hub_download_repository,
+        temporary_root=context.temporary_root,
+        report_root=context.data_root / "asset-hub" / "reports" / "downloads",
+    )
+    asset_hub_install_repository = InstallRepository(asset_hub_database)
+    asset_hub_registry = AssetRegistry(str(context.registry_db_path))
+    asset_hub_upscaler_favorites = UpscalerFavoriteStore(context.cache_root)
+    asset_hub_installer = AssetHubInstaller(
+        context=context,
+        service=asset_hub,
+        downloads=asset_hub_downloads,
+        catalog=catalog,
+        upscaler_catalog=upscaler_catalog,
+        registry=asset_hub_registry,
+        repository=asset_hub_install_repository,
+    )
 
     def _configured_startup_model_path() -> str:
         settings = store.load_application_settings()
@@ -240,6 +343,27 @@ def create_app(
     app.state.profile = profile
     app.state.bug_reports = bug_reports
     app.state.changelog = changelog
+    app.state.help_center = help_center
+    app.state.workspace_registry = workspace_registry
+    app.state.workspace_store = workspace_store
+    app.state.workspace_renderer = workspace_renderer
+    app.state.asset_hub = asset_hub
+    app.state.asset_hub_secrets = asset_hub_secrets
+    app.state.asset_hub_downloads = asset_hub_downloads
+    app.state.asset_hub_installer = asset_hub_installer
+    app.state.asset_hub_registry = asset_hub_registry
+    app.state.asset_hub_upscaler_favorites = asset_hub_upscaler_favorites
+    app.include_router(build_asset_hub_router(
+        asset_hub,
+        secrets=asset_hub_secrets,
+        downloads=asset_hub_downloads,
+        installer=asset_hub_installer,
+        upscaler_catalog=upscaler_catalog,
+        upscaler_favorites=asset_hub_upscaler_favorites,
+    ))
+    app.state.theme_library = theme_library
+    app.state.theme_storage_warning = theme_storage_warning
+    app.include_router(build_theme_manager_router(theme_library))
     app.state.runtime_startup_options = resolved_runtime_startup.to_dict()
     app.state.server_instance_id = server_instance_id
     app.state.server_started_at_unix = server_started_at_unix
@@ -442,6 +566,41 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Unable to load changelog entry: {exc}") from exc
+
+    @app.get("/api/help")
+    async def help_catalog() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(help_center.catalog)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to load Help Center: {exc}") from exc
+
+    @app.get("/api/help/search")
+    async def help_search(q: str = "") -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(help_center.search, q)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/help/topic/{topic_id:path}")
+    async def help_topic(topic_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(help_center.topic, topic_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to load help topic: {exc}") from exc
+
+    @app.get("/api/help/media/{media_path:path}")
+    async def help_media(media_path: str) -> FileResponse:
+        try:
+            path = await asyncio.to_thread(help_center.media_path, media_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path)
 
     @app.get("/api/profile")
     async def imagegen_profile() -> dict[str, Any]:
@@ -672,6 +831,10 @@ def create_app(
         defaults = default_selection.payload
 
         settings = store.load_application_settings()
+        settings["theme_effective_palette"] = theme_library.resolve_effective_palette()
+        settings["theme_library_activation"] = theme_library.library_payload().get("activation", {})
+        if theme_storage_warning:
+            settings["theme_storage_warning"] = theme_storage_warning
         session = store.load_session() if settings.get("restore_last_session", True) else {}
         effective_source = {**defaults, **session}
         if session:
@@ -766,9 +929,61 @@ def create_app(
                     "/api/civitai/assets/{asset_type}/metadata",
                     "/api/civitai/assets/{asset_type}/{asset_id}/metadata",
                 ],
+                "asset_hub_contract_version": ASSET_HUB_CONTRACT_VERSION,
+                "asset_hub_routes": [
+                    "/api/asset-hub/providers",
+                    "/api/asset-hub/providers/civitai/status",
+                    "/api/asset-hub/search",
+                    "/api/asset-hub/models/civitai/{model_id}",
+                    "/api/asset-hub/versions/civitai/{version_id}",
+                    "/api/asset-hub/hash/civitai/{hash}",
+                    "/api/asset-hub/providers/civitai/secret",
+                    "/api/asset-hub/providers/civitai/secret/validate",
+                    "/api/asset-hub/download-plans",
+                    "/api/asset-hub/download-jobs",
+                    "/api/asset-hub/download-jobs/{job_id}",
+                    "/api/asset-hub/download-jobs/{job_id}/cancel",
+                    "/api/asset-hub/download-jobs/{job_id}/resume",
+                    "/api/asset-hub/download-jobs/{job_id}/events",
+                    "/api/asset-hub/install-plans",
+                    "/api/asset-hub/install-jobs",
+                    "/api/asset-hub/install-jobs/{job_id}",
+                    "/api/asset-hub/installed",
+                    "/api/asset-hub/installed/{install_id}",
+                    "/api/asset-hub/installed/{install_id}/refresh",
+                    "/api/asset-hub/upscalers/compatibility",
+                    "/api/asset-hub/upscalers/favorites",
+                ],
+                "theme_library_contract_version": THEME_LIBRARY_SCHEMA_VERSION,
+                "theme_library_routes": [
+                    "/api/themes/library",
+                    "/api/themes/effective",
+                    "/api/themes/import",
+                    "/api/themes/{package_id}/enable",
+                    "/api/themes/{package_id}/disable",
+                    "/api/themes/{package_id}",
+                ],
+                "help_center_contract_version": HELP_CENTER_CONTRACT_VERSION,
+                "help_center_routes": [
+                    "/api/help",
+                    "/api/help/search",
+                    "/api/help/topic/{topic_id}",
+                    "/api/help/media/{media_path}",
+                ],
                 "workspace_layout_routes": [
                     "/api/workspace/layout",
                     "/api/workspace/layout/reset",
+                ],
+                "workspace_foundation_contract_version": WORKSPACE_CONTRACT_VERSION,
+                "workspace_foundation_routes": [
+                    "/api/workspaces/definitions",
+                    "/api/workspaces/import/validate",
+                    "/api/workspaces/{page_id}",
+                    "/api/workspaces/{page_id}/active",
+                    "/api/workspaces/{page_id}/activate",
+                    "/api/workspaces/{page_id}/duplicate",
+                    "/api/workspaces/{page_id}/rename",
+                    "/api/workspaces/{page_id}/reset",
                 ],
                 "lora_asset_routes": [
                     "/api/assets/loras",
@@ -1030,9 +1245,9 @@ def create_app(
         return await asyncio.to_thread(catalog.refresh_asset_type, "checkpoint")
 
     @app.get("/api/assets/checkpoints/{asset_id}")
-    async def checkpoint_asset_details(asset_id: str) -> dict[str, Any]:
+    async def checkpoint_asset_details(asset_id: str, inspect: bool = True) -> dict[str, Any]:
         try:
-            return await asyncio.to_thread(catalog.checkpoint_details, asset_id)
+            return await asyncio.to_thread(catalog.checkpoint_details, asset_id, inspect_technical=inspect)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except FileNotFoundError as exc:
@@ -1161,9 +1376,9 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/assets/loras/{asset_id}")
-    async def lora_asset_details(asset_id: str) -> dict[str, Any]:
+    async def lora_asset_details(asset_id: str, inspect: bool = True) -> dict[str, Any]:
         try:
-            return await asyncio.to_thread(catalog.lora_details, asset_id)
+            return await asyncio.to_thread(catalog.lora_details, asset_id, inspect_technical=inspect)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except FileNotFoundError as exc:
@@ -1406,6 +1621,8 @@ def create_app(
             )
         try:
             selected = model_selection.activate(payload.model_path)
+        except ModelSelectionUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise _webui_failure(
                 "model_activation",
@@ -1893,9 +2110,167 @@ def create_app(
         saved = store.save_application_settings({"ui_layout": default_layout})
         return _workspace_layout_payload(saved)
 
+    def _workspace_definitions_payload() -> dict[str, Any]:
+        return {
+            "contractVersion": WORKSPACE_CONTRACT_VERSION,
+            "schema": WORKSPACE_SCHEMA,
+            "schemaVersion": WORKSPACE_SCHEMA_VERSION,
+            **workspace_registry.definitions_payload(),
+            "responsive": workspace_responsive_contract_payload(),
+            "shippedDefaults": [layout.to_dict() for layout in workspace_defaults.values()],
+        }
+
+    @app.get("/api/workspaces/definitions")
+    async def get_workspace_definitions() -> dict[str, Any]:
+        return _workspace_definitions_payload()
+
+    @app.post("/api/workspaces/import/validate")
+    async def validate_workspace_import(payload: dict[str, Any]) -> dict[str, Any]:
+        return review_workspace_import(payload, workspace_registry).to_dict()
+
+    @app.get("/api/workspaces/{page_id}")
+    async def list_page_workspaces(page_id: str) -> dict[str, Any]:
+        if workspace_registry.page(page_id) is None:
+            raise HTTPException(status_code=404, detail=f"Unknown workspace page '{page_id}'.")
+        return {
+            "pageId": page_id,
+            "workspaces": workspace_store.list(page_id),
+            "active": workspace_store.get_active(page_id).to_dict(),
+        }
+
+    @app.post("/api/workspaces/{page_id}")
+    async def save_page_workspace(page_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if workspace_registry.page(page_id) is None:
+            raise HTTPException(status_code=404, detail=f"Unknown workspace page '{page_id}'.")
+        requested = dict(payload)
+        requested_page = str(requested.get("pageId") or "").strip()
+        if requested_page and requested_page.casefold() != page_id.casefold():
+            raise HTTPException(status_code=400, detail="Workspace pageId does not match the requested page.")
+        requested["pageId"] = page_id
+        try:
+            saved = workspace_store.save(requested)
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"workspace": saved.to_dict()}
+
+    @app.get("/api/workspaces/{page_id}/active")
+    async def get_active_page_workspace(page_id: str) -> dict[str, Any]:
+        try:
+            return workspace_store.get_active(page_id).to_dict()
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/workspaces/{page_id}/activate")
+    async def activate_page_workspace(page_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        workspace_id = str(payload.get("workspaceId") or "").strip()
+        if not workspace_id:
+            raise HTTPException(status_code=400, detail="workspaceId is required.")
+        try:
+            return workspace_store.set_active(page_id, workspace_id).to_dict()
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/workspaces/{page_id}/duplicate")
+    async def duplicate_page_workspace(page_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        workspace_id = str(payload.get("workspaceId") or "").strip()
+        if not workspace_id:
+            raise HTTPException(status_code=400, detail="workspaceId is required.")
+        try:
+            duplicated = workspace_store.duplicate(workspace_id, str(payload.get("name") or ""))
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if duplicated.page_id.casefold() != page_id.casefold():
+            workspace_store.delete(duplicated.workspace_id)
+            raise HTTPException(status_code=400, detail="Source workspace does not belong to the requested page.")
+        return {"workspace": duplicated.to_dict()}
+
+    @app.post("/api/workspaces/{page_id}/rename")
+    async def rename_page_workspace(page_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        workspace_id = str(payload.get("workspaceId") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if not workspace_id or not name:
+            raise HTTPException(status_code=400, detail="workspaceId and name are required.")
+        existing = workspace_store.get(workspace_id)
+        if existing is None or existing.page_id.casefold() != page_id.casefold():
+            raise HTTPException(status_code=404, detail=f"Workspace '{workspace_id}' was not found on page '{page_id}'.")
+        try:
+            renamed = workspace_store.rename(workspace_id, name)
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"workspace": renamed.to_dict()}
+
+    @app.delete("/api/workspaces/{page_id}/{workspace_id}")
+    async def delete_page_workspace(page_id: str, workspace_id: str) -> dict[str, Any]:
+        existing = workspace_store.get(workspace_id)
+        if existing is None or existing.page_id.casefold() != page_id.casefold():
+            raise HTTPException(status_code=404, detail=f"Workspace '{workspace_id}' was not found on page '{page_id}'.")
+        try:
+            deleted = workspace_store.delete(workspace_id)
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"deleted": deleted, "active": workspace_store.get_active(page_id).to_dict()}
+
+    @app.post("/api/workspaces/{page_id}/reset")
+    async def reset_page_workspace(page_id: str) -> dict[str, Any]:
+        try:
+            return workspace_store.reset_active(page_id).to_dict()
+        except WorkspaceStoreError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    def _user_config_path() -> Path:
+        return (context.project_root / "user_config" / "user-config.yml").resolve()
+
+    def _read_user_config_document() -> dict[str, Any]:
+        path = _user_config_path()
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        parsed = yaml.safe_load(text) if text.strip() else {}
+        if parsed is None:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            raise ValueError("user-config.yml must contain a YAML mapping/object at the document root.")
+        return {
+            "path": str(path),
+            "text": text,
+            "parsed": parsed,
+            "exists": path.is_file(),
+            "restart_required": True,
+        }
+
+    @app.get("/api/user-config")
+    async def get_user_config() -> dict[str, Any]:
+        try:
+            return _read_user_config_document()
+        except (OSError, yaml.YAMLError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.put("/api/user-config")
+    async def put_user_config(payload: dict[str, Any]) -> dict[str, Any]:
+        text = str(payload.get("text") or "")
+        try:
+            parsed = yaml.safe_load(text) if text.strip() else {}
+        except yaml.YAMLError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
+        if parsed is None:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=400, detail="user-config.yml must contain a YAML mapping/object at the document root.")
+        path = _user_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path = path.with_suffix(path.suffix + ".bak")
+        if path.is_file():
+            shutil.copy2(path, backup_path)
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path.write_text(text, encoding="utf-8")
+        os.replace(temp_path, path)
+        result = _read_user_config_document()
+        result["backup_path"] = str(backup_path) if backup_path.is_file() else ""
+        return result
+
     @app.get("/api/settings")
     async def get_settings() -> dict[str, Any]:
         settings = store.load_application_settings()
+        settings["theme_effective_palette"] = theme_library.resolve_effective_palette()
+        settings["theme_library_activation"] = theme_library.library_payload().get("activation", {})
         settings["_runtime_startup_status"] = _runtime_startup_status()
         return settings
 
@@ -1908,9 +2283,13 @@ def create_app(
                 if not isinstance(overrides, dict):
                     raise ValueError("runtime_job_overrides must be a JSON object.")
                 resolve_runtime_startup_options(environment={}, settings=overrides)
+            saved = store.save_application_settings(payload)
+            if "theme_palette" in payload:
+                theme_library.deactivate_global_theme()
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        saved = store.save_application_settings(payload)
+        saved["theme_effective_palette"] = theme_library.resolve_effective_palette()
+        saved["theme_library_activation"] = theme_library.library_payload().get("activation", {})
         saved["_runtime_startup_status"] = _runtime_startup_status()
         return saved
 
@@ -2036,6 +2415,8 @@ def create_app(
             ) from exc
         try:
             authoritative_payload, selected_model = model_selection.enforce(prepared_payload)
+        except ModelSelectionUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise _webui_failure(
                 "job_submission_model_selection",
@@ -2100,6 +2481,36 @@ def create_app(
             )
         job = await jobs.cancel(job_id)
         return job.to_dict()
+
+    @app.post("/api/jobs/{job_id}/pause")
+    async def pause_job(job_id: str) -> dict[str, Any]:
+        try:
+            worker = await jobs.pause_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Generation job not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"jobs": jobs.list_jobs(), "worker": worker}
+
+    @app.post("/api/jobs/{job_id}/resume")
+    async def resume_job(job_id: str) -> dict[str, Any]:
+        try:
+            worker = await jobs.resume_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Generation job not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"jobs": jobs.list_jobs(), "worker": worker}
+
+    @app.post("/api/jobs/{job_id}/reorder")
+    async def reorder_job(job_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            worker = jobs.reorder_job(job_id, str((payload or {}).get("direction") or ""))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Generation job not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"jobs": jobs.list_jobs(), "worker": worker}
 
     @app.post("/api/jobs/{job_id}/skip")
     async def skip_job_image(job_id: str) -> dict[str, Any]:

@@ -27,10 +27,10 @@ _TOKEN_TTL_SECONDS = 15 * 60
 
 _INT_FIELDS = {"seed", "width", "height", "steps", "batch_size", "batch_count", "clip_skip", "hires_width", "hires_height", "hires_steps", "hires_expected_native_scale", "outpaint_shape_target_width", "outpaint_shape_target_height", "outpaint_shape_base_width", "outpaint_shape_base_height"}
 _FLOAT_FIELDS = {"cfg_scale", "cfg_rescale", "guidance_rescale", "hires_scale", "hires_axis_scale_width", "hires_axis_scale_height", "hires_uniform_scale", "hires_denoising_strength", "outpaint_shape_denoising_strength"}
-_BOOL_FIELDS = {"save_images", "save_txt", "save_json", "save_diagnostics_json", "tiling", "prompt_shadow_compare", "hires_enabled", "hires_aspect_ratio_changed", "hires_save_lowres", "outpaint_shape_expansion_enabled", "outpaint_shape_save_base"}
+_BOOL_FIELDS = {"save_images", "save_txt", "save_json", "save_diagnostics_json", "tiling", "prompt_shadow_compare", "hires_enabled", "hires_aspect_ratio_changed", "hires_save_lowres", "outpaint_shape_expansion_enabled", "outpaint_shape_save_base", "sd2_dedicated_generation"}
 _BOOL_FIELDS = _BOOL_FIELDS | {"hires_blurred_edge_compare_diagnostics"}
 _DICT_FIELDS = {"sampler_kwargs", "scheduler_kwargs", "prompt_parser_kwargs", "prompt_shortcut_profile_snapshot", "hires_prompt_parser_kwargs", "hires_shortcut_profile_snapshot", "prompt_preflight", "prompt_route_plan", "hires_prompt_route_plan", "hires_recorded_target_correction", "hires_recorded_correction_fingerprint", "hires_dimension_plan", "outpaint_shape_runtime_record", "parser_kwargs", "extras", "variation_matrix"}
-_REMAP_FIELDS = {"model_path", "vae_path", "sampler_name", "scheduler_name"}
+_REMAP_FIELDS = {"model_path", "vae_path", "sd2_runtime_profile_override", "sampler_name", "scheduler_name"}
 _ALIASES = {
     "prompt": "positive_prompt",
     "sampler": "sampler_name",
@@ -42,7 +42,7 @@ _ALIASES = {
 _REQUEST_FIELDS = {
     "positive_prompt", "negative_prompt", "seed", "width", "height", "steps",
     "cfg_scale", "batch_size", "batch_count", "sampler_name", "scheduler_name",
-    "model_path", "vae_path", "sampler_kwargs", "scheduler_kwargs", "cfg_rescale",
+    "model_path", "vae_path", "sd2_runtime_profile_override", "sd2_dedicated_generation", "sampler_kwargs", "scheduler_kwargs", "cfg_rescale",
     "compatibility_mode", "clip_skip", "tiling", "prompt_parser_name", "prompt_parser_kwargs",
     "prompt_shortcut_profile_name", "prompt_shortcut_profile_snapshot", "prompt_parser_preset_name",
     "base_prompt_parser_name", "base_shortcut_profile_name", "hires_prompt_parser_mode",

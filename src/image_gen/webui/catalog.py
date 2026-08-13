@@ -19,6 +19,8 @@ from image_gen.runtime.lora_inspector import (
     inspect_lora_file,
     lora_scan_cache_is_current,
 )
+from image_gen.runtime.adapters.compatibility import AdapterCompatibilityService
+from image_gen.runtime.adapters.contracts import AdapterInspectionRecord
 from image_gen.webui.civitai_asset_metadata import (
     CivitaiAssetMetadataService,
     CivitaiCredentialError,
@@ -77,6 +79,7 @@ class WebUICatalog:
         self._checkpoint_detail_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._lora_detail_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._checkpoint_inspector = CheckpointInspector()
+        self._adapter_compatibility = AdapterCompatibilityService()
         self._civitai_client = CivitaiAssetMetadataService(context)
         # Compatibility alias for older extensions/tests; the implementation is generic.
         self._civitai_lora_client = self._civitai_client
@@ -397,7 +400,7 @@ class WebUICatalog:
             raise FileNotFoundError(f"Asset file no longer exists: {path}")
         return dict(record)
 
-    def checkpoint_details(self, asset_id: str) -> dict[str, Any]:
+    def checkpoint_details(self, asset_id: str, *, inspect_technical: bool = True) -> dict[str, Any]:
         record = self._asset_record("checkpoint", asset_id)
         path = Path(record["path"]).resolve()
         stat = path.stat()
@@ -405,7 +408,7 @@ class WebUICatalog:
         technical = self._checkpoint_detail_cache.get(cache_key)
         if technical is None:
             technical = {}
-            if path.suffix.lower() == ".safetensors":
+            if inspect_technical and path.suffix.lower() == ".safetensors":
                 try:
                     report = self._checkpoint_inspector.inspect(str(path))
                     technical = {
@@ -420,7 +423,7 @@ class WebUICatalog:
                     }
                 except Exception as exc:
                     technical = {"inspection_error": f"{type(exc).__name__}: {exc}"}
-            self._checkpoint_detail_cache = {cache_key: dict(technical)}
+                self._checkpoint_detail_cache = {cache_key: dict(technical)}
         metadata = load_asset_metadata(path)
         preview = resolve_preview_path(path, metadata)
         preview_payload = preview_file_payload(preview)
@@ -507,6 +510,15 @@ class WebUICatalog:
             "activation_text_source": str(cache.get("activation_text_source") or ""),
             "network_dimension": cache.get("network_dimension"),
             "network_alpha": cache.get("network_alpha"),
+            "adapter_format": str(cache.get("adapter_format") or ""),
+            "adapter_extensions": [str(item) for item in (cache.get("adapter_extensions") or []) if str(item)],
+            "target_scopes": [str(item) for item in (cache.get("target_scopes") or []) if str(item)],
+            "target_counts": dict(cache.get("target_counts") or {}),
+            "runtime_support_state": str(cache.get("runtime_support_state") or ""),
+            "runtime_loadable": bool(cache.get("runtime_loadable", False)),
+            "support_reason": str(cache.get("support_reason") or ""),
+            "loader_id": str(cache.get("loader_id") or ""),
+            "adapter_inspection": dict(cache.get("adapter_inspection") or {}),
             "inspection_error": str(cache.get("inspection_error") or ""),
         }
 
@@ -518,12 +530,28 @@ class WebUICatalog:
             cache,
             require_compatibility_hash=True,
         )
-        if not valid:
+        signature = dict(cache.get("file_signature") or {})
+        current_signature = self._lora_scan_signature(path)
+        legacy_signature_current = bool(
+            cache.get("scan_status")
+            and int(signature.get("size_bytes") or 0) == int(current_signature.get("size_bytes") or 0)
+            and int(signature.get("modified_ns") or 0) == int(current_signature.get("modified_ns") or 0)
+        )
+        if not valid and not legacy_signature_current:
             return {
                 "detected_model_family": "",
                 "network_type": "Unknown",
                 "tensor_key_format": "Unknown",
                 "tensor_key_count": 0,
+                "adapter_format": "",
+                "adapter_extensions": [],
+                "target_scopes": [],
+                "target_counts": {},
+                "runtime_support_state": "",
+                "runtime_loadable": False,
+                "support_reason": "",
+                "loader_id": "",
+                "adapter_inspection": {},
                 "activation_text": str(data.get("activation_text") or ""),
                 "activation_text_source": "sidecar" if str(data.get("activation_text") or "").strip() else "",
                 "scan_status": "unscanned",
@@ -531,6 +559,43 @@ class WebUICatalog:
                 "inspection_error": "",
                 "scan_cached": False,
             }
+
+        adapter_inspection = dict(cache.get("adapter_inspection") or {})
+        adapter_format = str(cache.get("adapter_format") or adapter_inspection.get("adapter_format") or "")
+        if not adapter_format:
+            legacy_format = str(cache.get("tensor_key_format") or "").strip().lower()
+            adapter_format = {
+                "kohya": "standard_kohya_lora",
+                "diffusers peft": "standard_diffusers_peft_lora",
+                "lora up/down": "standard_lora_up_down",
+            }.get(legacy_format, "")
+        migration_pending = (
+            not bool(adapter_inspection)
+            or int(cache.get("schema_version") or 0) < LORA_SCAN_CACHE_SCHEMA_VERSION
+        )
+        support_state = str(cache.get("runtime_support_state") or "")
+        runtime_loadable = bool(cache.get("runtime_loadable", False))
+        support_reason = str(cache.get("support_reason") or "")
+        loader_id = str(cache.get("loader_id") or "")
+        if adapter_format and not support_state:
+            migrated_record = AdapterInspectionRecord.from_mapping({
+                "source_path": str(path),
+                "file_signature": cache.get("file_signature") or {},
+                "model_family": cache.get("detected_model_family") or "",
+                "adapter_format": adapter_format,
+                "network_type": cache.get("network_type") or "Unknown",
+                "tensor_key_count": cache.get("tensor_key_count") or 0,
+                "target_scopes": cache.get("target_scopes") or [],
+                "source_rank": cache.get("network_dimension"),
+                "source_alpha": cache.get("network_alpha"),
+                "inspection_warnings": ["Legacy LoRA scan cache is awaiting bounded LORA-01 target-scope refresh."],
+            })
+            decision = self._adapter_compatibility.evaluate(migrated_record, active_checkpoint_family="")
+            support_state = decision.overall_support_state
+            runtime_loadable = decision.runtime_loadable
+            support_reason = decision.blocking_reason
+            loader_id = decision.loader_id
+
         return {
             "detected_model_family": str(cache.get("detected_model_family") or ""),
             "network_type": str(cache.get("network_type") or "Unknown"),
@@ -538,6 +603,15 @@ class WebUICatalog:
             "tensor_key_count": int(cache.get("tensor_key_count") or 0),
             "network_dimension": cache.get("network_dimension"),
             "network_alpha": cache.get("network_alpha"),
+            "adapter_format": adapter_format,
+            "adapter_extensions": list(cache.get("adapter_extensions") or adapter_inspection.get("adapter_extensions") or []),
+            "target_scopes": list(cache.get("target_scopes") or adapter_inspection.get("target_scopes") or []),
+            "target_counts": dict(cache.get("target_counts") or adapter_inspection.get("target_counts") or {}),
+            "runtime_support_state": support_state,
+            "runtime_loadable": runtime_loadable,
+            "support_reason": support_reason,
+            "loader_id": loader_id,
+            "adapter_inspection": adapter_inspection,
             "activation_text": str(cache.get("activation_text") or ""),
             "activation_text_source": str(cache.get("activation_text_source") or ""),
             "sha256": str(cache.get("sha256") or ""),
@@ -548,7 +622,8 @@ class WebUICatalog:
             "inspection_error": str(cache.get("inspection_error") or ""),
             "scan_status": str(cache.get("scan_status") or "cached"),
             "scanned_at": str(cache.get("scanned_at") or ""),
-            "scan_cached": True,
+            "scan_cached": bool(valid and not migration_pending),
+            "scan_migration_pending": migration_pending,
         }
 
     def _inspect_lora_record(self, record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -574,6 +649,15 @@ class WebUICatalog:
             "activation_text_source": "",
             "network_dimension": None,
             "network_alpha": None,
+            "adapter_format": "",
+            "adapter_extensions": [],
+            "target_scopes": [],
+            "target_counts": {},
+            "runtime_support_state": "",
+            "runtime_loadable": False,
+            "support_reason": "",
+            "loader_id": "",
+            "adapter_inspection": {},
             "inspection_error": "",
         }
         scan_status = "scanned"
@@ -583,7 +667,12 @@ class WebUICatalog:
                 lora_analysis = inspect_lora_file(path, sidecar_metadata=metadata)
                 metadata_map = dict(lora_analysis.get("safetensors_metadata") or report.safetensors_metadata or {})
                 network_module = str(metadata_map.get("ss_network_module") or metadata_map.get("ss_network_type") or "").strip()
-                network_type = network_module or ("LoRA" if report.checkpoint_kind == "lora" else report.checkpoint_kind or "Unknown")
+                network_type = str(lora_analysis.get("network_type") or network_module or ("LoRA" if report.checkpoint_kind == "lora" else report.checkpoint_kind or "Unknown"))
+                inspection_record = AdapterInspectionRecord.from_mapping({
+                    **dict(lora_analysis.get("adapter_inspection") or {}),
+                    "sha256": report.sha256,
+                })
+                support = self._adapter_compatibility.evaluate(inspection_record, active_checkpoint_family="")
                 technical = {
                     "sha256": report.sha256,
                     "a1111_hash": str(lora_analysis.get("a1111_hash") or ""),
@@ -594,7 +683,17 @@ class WebUICatalog:
                     "tensor_key_format": str(lora_analysis.get("tensor_key_format") or "Unknown"),
                     "tensor_key_count": int(lora_analysis.get("tensor_key_count") or report.total_keys or 0),
                     "safetensors_metadata": metadata_map,
-                    "detected_model_family": str(lora_analysis.get("detected_model_family") or ""),
+                    "detected_model_family": inspection_record.model_family,
+                    "adapter_format": inspection_record.adapter_format,
+                    "adapter_extensions": list(inspection_record.adapter_extensions),
+                    "target_scopes": list(inspection_record.target_scopes),
+                    "target_counts": dict(inspection_record.target_counts),
+                    "runtime_support_state": support.overall_support_state,
+                    "runtime_loadable": support.runtime_loadable,
+                    "support_reason": support.blocking_reason,
+                    "support_warnings": list(support.warnings),
+                    "loader_id": support.loader_id,
+                    "adapter_inspection": inspection_record.to_dict(),
                     "activation_text": str(lora_analysis.get("activation_text") or metadata.get("activation_text") or ""),
                     "activation_text_source": str(lora_analysis.get("activation_text_source") or ""),
                     "network_dimension": metadata_map.get("ss_network_dim"),
@@ -602,7 +701,15 @@ class WebUICatalog:
                     "inspection_error": str(lora_analysis.get("inspection_error") or ""),
                 }
             except Exception as exc:
-                technical = {**technical, "inspection_error": f"{type(exc).__name__}: {exc}"}
+                message = f"{type(exc).__name__}: {exc}"
+                technical = {
+                    **technical,
+                    "adapter_format": "invalid",
+                    "runtime_support_state": "invalid",
+                    "runtime_loadable": False,
+                    "support_reason": "Adapter file could not be inspected as a valid Safetensors adapter.",
+                    "inspection_error": message,
+                }
                 scan_status = "error"
         else:
             scan_status = "unsupported"
@@ -618,6 +725,10 @@ class WebUICatalog:
             technical = {
                 **technical,
                 **compatibility_hash,
+                "adapter_format": "invalid",
+                "runtime_support_state": "unsupported",
+                "runtime_loadable": False,
+                "support_reason": "Technical adapter inspection currently supports .safetensors files only.",
                 "inspection_error": "Technical tensor inspection is currently available only for .safetensors LoRA files.",
             }
 
@@ -639,6 +750,15 @@ class WebUICatalog:
             "activation_text_source": technical.get("activation_text_source") or "",
             "network_dimension": technical.get("network_dimension"),
             "network_alpha": technical.get("network_alpha"),
+            "adapter_format": technical.get("adapter_format") or "",
+            "adapter_extensions": list(technical.get("adapter_extensions") or []),
+            "target_scopes": list(technical.get("target_scopes") or []),
+            "target_counts": dict(technical.get("target_counts") or {}),
+            "runtime_support_state": technical.get("runtime_support_state") or "",
+            "runtime_loadable": bool(technical.get("runtime_loadable", False)),
+            "support_reason": technical.get("support_reason") or "",
+            "loader_id": technical.get("loader_id") or "",
+            "adapter_inspection": dict(technical.get("adapter_inspection") or {}),
             "inspection_error": technical.get("inspection_error") or "",
         }
         save_asset_sidecar_fields(path, {"_lora_scan_cache": persisted_cache})
@@ -675,7 +795,7 @@ class WebUICatalog:
             payload, changed = self._inspect_lora_record(record)
             merged = self._merge_technical_record("lora", record["asset_id"], {
                 **payload,
-                "model_family": str(record.get("model_family") or payload.get("detected_model_family") or ""),
+                "model_family": str(payload.get("detected_model_family") or record.get("model_family") or ""),
                 "detected_model_family": str(payload.get("detected_model_family") or ""),
                 "activation_text": str(record.get("activation_text") or payload.get("activation_text") or ""),
             })
@@ -700,15 +820,18 @@ class WebUICatalog:
             },
         }
 
-    def lora_details(self, asset_id: str) -> dict[str, Any]:
+    def lora_details(self, asset_id: str, *, inspect_technical: bool = True) -> dict[str, Any]:
         record = self._asset_record("lora", asset_id)
         path = Path(record["path"]).resolve()
-        technical, _ = self._inspect_lora_record(record)
         metadata = synchronize_asset_companions(path, load_asset_metadata(path))
+        if inspect_technical:
+            technical, _ = self._inspect_lora_record(record)
+        else:
+            technical = self._lora_scan_cache_payload(path, metadata=metadata)
         preview = resolve_preview_path(path, metadata)
         preview_payload = preview_file_payload(preview)
         preview_revision = str(preview_payload.get("preview_revision") or "")
-        resolved_family = str(metadata.get("model_family") or record.get("model_family") or technical.get("detected_model_family") or "")
+        resolved_family = str(technical.get("detected_model_family") or metadata.get("model_family") or record.get("model_family") or "")
         merged = self._merge_technical_record("lora", asset_id, {
             **technical,
             "model_family": resolved_family,
@@ -740,9 +863,9 @@ class WebUICatalog:
 
     def _details_for_asset_type(self, asset_type: str, asset_id: str) -> dict[str, Any]:
         if asset_type == "checkpoint":
-            return self.checkpoint_details(asset_id)
+            return self.checkpoint_details(asset_id, inspect_technical=False)
         if asset_type == "lora":
-            return self.lora_details(asset_id)
+            return self.lora_details(asset_id, inspect_technical=False)
         if asset_type == "vae":
             return self.vae_details(asset_id)
         return self.asset_record(asset_type, asset_id)
@@ -985,9 +1108,9 @@ class WebUICatalog:
         self._replace_catalog_record(asset_type, refreshed)
         self._bump_catalog_revision(asset_type)
         if asset_type == "checkpoint":
-            return self.checkpoint_details(asset_id)
+            return self.checkpoint_details(asset_id, inspect_technical=False)
         if asset_type == "lora":
-            return self.lora_details(asset_id)
+            return self.lora_details(asset_id, inspect_technical=False)
         if asset_type == "vae":
             return self.vae_details(asset_id)
         return self._catalog_entry_payload(asset_type, refreshed)

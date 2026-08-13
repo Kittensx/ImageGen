@@ -1,4 +1,7 @@
+import { api } from "../api.js?v=asset-card-latency1";
+import { state } from "../state.js";
 import { $, notify } from "../utils.js";
+import { cfgEffectiveRangeLocks } from "./parameter-ranges.js?v=qol2";
 
 const GUIDANCE_FIELDS = {
   cfg_guidance_mode: "#cfgGuidanceMode",
@@ -88,6 +91,128 @@ export const CFG_PRESETS = {
     },
   },
 };
+
+function userPresets() {
+  const value = state.settings?.cfg_lab_user_presets;
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function presetRecord(key) {
+  if (String(key).startsWith("user:")) return userPresets()[String(key).slice(5)] || null;
+  return CFG_PRESETS[key] || null;
+}
+
+function renderCfgPresetOptions(preferred = "") {
+  const select = $("#cfgGuidancePreset");
+  if (!select) return;
+  const previous = preferred || select.value || "classic_flat";
+  select.replaceChildren();
+  const builtins = document.createElement("optgroup");
+  builtins.label = "Built-in";
+  Object.entries(CFG_PRESETS).forEach(([key, preset]) => {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = preset.label || key;
+    builtins.append(option);
+  });
+  select.append(builtins);
+  const entries = Object.entries(userPresets()).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Saved";
+    entries.forEach(([name, preset]) => {
+      const option = document.createElement("option");
+      option.value = `user:${name}`;
+      option.textContent = preset.label || name;
+      group.append(option);
+    });
+    select.append(group);
+  }
+  const exists = [...select.options].some((item) => item.value === previous);
+  select.value = exists ? previous : "classic_flat";
+  if ($("#deleteCfgPresetButton")) $("#deleteCfgPresetButton").disabled = !select.value.startsWith("user:");
+}
+
+function cfgRangeSubset(values = {}) {
+  const ranges = values._random_ranges || {};
+  return Object.fromEntries(Object.entries(ranges).filter(([path]) => path === "cfg_scale" || path === "cfg_rescale" || path.startsWith("sampler_kwargs.cfg_")));
+}
+
+function snapshotCfgPreset(collect) {
+  const values = collect();
+  const sampler = {};
+  Object.keys(GUIDANCE_FIELDS).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(values.sampler_kwargs || {}, key)) sampler[key] = values.sampler_kwargs[key];
+  });
+  ["cfg_effective_min_lock", "cfg_effective_max_lock"].forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(values.sampler_kwargs || {}, key)) sampler[key] = values.sampler_kwargs[key];
+  });
+  return {
+    schema_version: 1,
+    label: "",
+    cfg_scale: Number(values.cfg_scale),
+    cfg_rescale: Number(values.cfg_rescale || 0),
+    sampler_kwargs: sampler,
+    random_ranges: cfgRangeSubset(values),
+  };
+}
+
+async function saveCfgPreset(collect) {
+  const proposed = window.prompt("CFG Lab preset name:", "My CFG Preset");
+  const name = String(proposed || "").trim();
+  if (!name) return;
+  const snapshot = snapshotCfgPreset(collect);
+  snapshot.label = name;
+  const next = { ...userPresets(), [name]: snapshot };
+  const saved = await api.saveSettings({ cfg_lab_user_presets: next });
+  state.settings = { ...state.settings, ...saved };
+  renderCfgPresetOptions(`user:${name}`);
+  notify(`Saved CFG Lab preset: ${name}`);
+}
+
+function downloadCfgPreset() {
+  const key = $("#cfgGuidancePreset")?.value || "classic_flat";
+  const preset = presetRecord(key);
+  if (!preset) return;
+  const payload = { kind: "image_gen_cfg_lab_preset", schema_version: 1, preset };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${String(preset.label || key).replace(/[^A-Za-z0-9._-]+/g, "_")}.cfg-lab.json`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function importCfgPreset(file) {
+  const raw = JSON.parse(await file.text());
+  const preset = raw?.preset && typeof raw.preset === "object" ? raw.preset : raw;
+  if (!preset || typeof preset !== "object" || !Number.isFinite(Number(preset.cfg_scale))) throw new Error("The selected file is not a valid CFG Lab preset.");
+  const fallback = String(preset.label || file.name.replace(/\.cfg-lab\.json$/i, "").replace(/\.json$/i, "")).trim() || "Imported CFG Preset";
+  const proposed = window.prompt("Imported preset name:", fallback);
+  const name = String(proposed || "").trim();
+  if (!name) return;
+  const next = { ...userPresets(), [name]: { ...preset, label: name, schema_version: 1 } };
+  const saved = await api.saveSettings({ cfg_lab_user_presets: next });
+  state.settings = { ...state.settings, ...saved };
+  renderCfgPresetOptions(`user:${name}`);
+  notify(`Imported CFG Lab preset: ${name}`);
+}
+
+async function deleteCfgPreset() {
+  const key = $("#cfgGuidancePreset")?.value || "";
+  if (!key.startsWith("user:")) return;
+  const name = key.slice(5);
+  if (!window.confirm(`Delete CFG Lab preset "${name}"?`)) return;
+  const next = { ...userPresets() };
+  delete next[name];
+  const saved = await api.saveSettings({ cfg_lab_user_presets: next });
+  state.settings = { ...state.settings, ...saved };
+  renderCfgPresetOptions("classic_flat");
+  notify(`Deleted CFG Lab preset: ${name}`);
+}
 
 function isKesSampler() {
   return ["kes", "kes_sampler", "simple_kes_sampler"].includes(String($("#samplerName")?.value || "").toLowerCase());
@@ -258,15 +383,13 @@ function requestedPromptCfgSeries(steps) {
 
 export function readCfgLabValues() {
   const sampler_kwargs = {};
-  if (isKesSampler()) {
-    Object.entries(GUIDANCE_FIELDS).forEach(([name, selector]) => {
-      const input = $(selector);
-      if (!input) return;
-      if (input.type === "checkbox") sampler_kwargs[name] = Boolean(input.checked);
-      else if (input.type === "number" || input.type === "range") sampler_kwargs[name] = Number(input.value);
-      else sampler_kwargs[name] = input.value;
-    });
-  }
+  Object.entries(GUIDANCE_FIELDS).forEach(([name, selector]) => {
+    const input = $(selector);
+    if (!input) return;
+    if (input.type === "checkbox") sampler_kwargs[name] = Boolean(input.checked);
+    else if (input.type === "number" || input.type === "range") sampler_kwargs[name] = Number(input.value);
+    else sampler_kwargs[name] = input.value;
+  });
   return {
     cfg_rescale: numberValue("#cfgRescaleNumber", 0),
     sampler_kwargs,
@@ -319,13 +442,12 @@ function configuredModel() {
   const floorEnabled = Boolean($("#cfgEarlyFloorEnabled")?.checked);
   const floorValue = numberValue("#cfgEarlyFloorValueNumber", 6.2);
   const floorDuration = numberValue("#cfgEarlyFloorDurationNumber", 0.3);
-  const kes = isKesSampler();
   const points = promptInput.values.map((requested, stepIndex) => {
     const progress = steps <= 1 ? 0 : stepIndex / (steps - 1);
     const sigmaFraction = 1 - progress;
     let early = 0;
     let late = 0;
-    let active = kes && mode !== "legacy_flat";
+    let active = mode !== "legacy_flat";
     if (active && mode === "step_shaped") {
       early = curveWeight(1 - progress, curveType);
       late = curveWeight(progress, curveType);
@@ -339,16 +461,17 @@ function configuredModel() {
       active = false;
     }
     let effective = active ? requested + boostAmount * strength * early - taperAmount * strength * late : requested;
-    if (kes && floorEnabled && progress <= floorDuration) effective = Math.max(effective, floorValue);
+    if (floorEnabled && progress <= floorDuration) effective = Math.max(effective, floorValue);
+    const locks = cfgEffectiveRangeLocks();
+    if (locks.minimum !== null) effective = Math.max(effective, Number(locks.minimum));
+    if (locks.maximum !== null) effective = Math.min(effective, Number(locks.maximum));
     return { step_index: stepIndex, requested_cfg_scale: requested, effective_cfg_scale: Math.max(0, effective), cfg_source: promptInput.source };
   });
   const requestedMin = Math.min(...promptInput.values);
   const requestedMax = Math.max(...promptInput.values);
   const effective = points.map((point) => point.effective_cfg_scale);
   const rescale = numberValue("#cfgRescaleNumber", 0);
-  const transform = kes
-    ? `${mode.replaceAll("_", " ")}${mode === "legacy_flat" ? "" : ` · ${curveType}`}${rescale > 0 ? ` · rescale ${rescale.toFixed(2)}` : ""}`
-    : `pipeline direct schedule${rescale > 0 ? ` · rescale ${rescale.toFixed(2)}` : ""}`;
+  const transform = `${mode.replaceAll("_", " ")}${mode === "legacy_flat" ? "" : ` · ${curveType}`}${rescale > 0 ? ` · rescale ${rescale.toFixed(2)}` : ""}`;
   return {
     points,
     source: promptInput.source,
@@ -358,7 +481,7 @@ function configuredModel() {
       ? `${requestedMin.toFixed(2)} flat`
       : `${promptInput.values[0].toFixed(2)} → ${promptInput.values.at(-1).toFixed(2)} · ${promptInput.interpolation}`,
     transform,
-    owner: kes ? "KES sampler" : "Pipeline-owned guidance",
+    owner: "Shared CFG Lab guidance",
     replay: "Reconstruct from prompt · fingerprint on save",
     effectiveMin: Math.min(...effective),
     effectiveMax: Math.max(...effective),
@@ -479,28 +602,28 @@ export function renderCfgCurvePreview() {
 }
 
 function updateSamplerAvailability() {
-  const kes = isKesSampler();
   document.querySelectorAll(".cfg-kes-only").forEach((node) => {
-    node.classList.toggle("is-disabled", !kes);
-    node.querySelectorAll("input, select").forEach((input) => { input.disabled = !kes; });
+    node.classList.remove("is-disabled");
+    node.querySelectorAll("input, select").forEach((input) => { input.disabled = false; });
   });
   const policyField = $("#promptCfgBehavior")?.closest(".cfg-prompt-policy-field");
   const promptPolicyEnabled = isSuperHybridParser();
   if ($("#promptCfgBehavior")) $("#promptCfgBehavior").disabled = !promptPolicyEnabled;
   policyField?.classList.toggle("is-disabled", !promptPolicyEnabled);
   const status = $("#cfgLabSamplerStatus");
-  if (status) status.textContent = kes
-    ? "KES effective-guidance shaping is available. Completed outputs will record the actual CFG used at every step."
-    : "The selected sampler uses pipeline-owned guidance and consumes the resolved CFG schedule directly. Canonical CFG rescale remains available; KES shaping controls are disabled.";
+  if (status) status.textContent = "CFG Lab shaping is now standard across samplers. Completed outputs record the actual requested and effective CFG used at every step.";
 }
 
 function applyPreset(name, saveSession) {
-  const preset = CFG_PRESETS[name];
+  const preset = presetRecord(name);
   if (!preset) return;
   assignControl("#cfgScale", preset.cfg_scale);
   applyCfgLabValues(preset);
+  if (preset.random_ranges) {
+    window.dispatchEvent(new CustomEvent("image-gen-apply-parameter-ranges", { detail: preset.random_ranges }));
+  }
   saveSession?.();
-  notify(`Applied CFG preset: ${preset.label}`);
+  notify(`Applied CFG preset: ${preset.label || name}`);
 }
 
 function seedLockedBases(current) {
@@ -555,7 +678,21 @@ export function bindCfgLab({ collect = () => ({}), saveSession = () => {}, openV
   $("#promptParserName")?.addEventListener("change", () => { syncPromptCfgBehaviorFromOptions(); updateSamplerAvailability(); renderCfgCurvePreview(); });
   $("#promptCfgBehavior")?.addEventListener("change", () => { writePromptCfgBehavior(); renderCfgCurvePreview(); saveSession(); });
   document.addEventListener("prompt-parser-options-changed", () => { syncPromptCfgBehaviorFromOptions(); renderCfgCurvePreview(); });
+  renderCfgPresetOptions();
+  $("#cfgGuidancePreset")?.addEventListener("change", () => {
+    if ($("#deleteCfgPresetButton")) $("#deleteCfgPresetButton").disabled = !$("#cfgGuidancePreset").value.startsWith("user:");
+  });
   $("#applyCfgPresetButton")?.addEventListener("click", () => applyPreset($("#cfgGuidancePreset").value, saveSession));
+  $("#saveCfgPresetButton")?.addEventListener("click", () => saveCfgPreset(collect).catch((error) => notify(error.message, "error")));
+  $("#exportCfgPresetButton")?.addEventListener("click", downloadCfgPreset);
+  $("#deleteCfgPresetButton")?.addEventListener("click", () => deleteCfgPreset().catch((error) => notify(error.message, "error")));
+  $("#importCfgPresetButton")?.addEventListener("click", () => $("#importCfgPresetInput")?.click());
+  $("#importCfgPresetInput")?.addEventListener("change", async (event) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    try { await importCfgPreset(file); } catch (error) { notify(error.message, "error"); }
+  });
   $("#openCfgSweepButton")?.addEventListener("click", () => {
     const current = collect();
     const { seed, bases, lineage } = seedLockedBases(current);

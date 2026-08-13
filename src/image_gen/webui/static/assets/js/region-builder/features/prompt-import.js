@@ -26,6 +26,7 @@ function loadCanvasFromB64(b64, onLoaded) {
     canvas.width = w; canvas.height = h;
     ctx.drawImage(img, 0, 0, w, h);
     canvasImgData = ctx.getImageData(0, 0, w, h);
+    canvasMaskDirty = true;
     if (onLoaded) onLoaded();
   };
   img.onerror = function() {

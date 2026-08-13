@@ -1,7 +1,9 @@
 import { $, numberValue } from "../utils.js";
 import { readAdvancedValues } from "./advanced-editor.js";
-import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js";
+import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js?v=0.1.46-cfg-standard";
 import { normalizeHiresSizeMode, planHiresDimensions } from "./hires-dimensions.js";
+import { applyParameterRanges, cfgEffectiveRangeLocks, collectParameterRanges } from "../features/parameter-ranges.js?v=qol2";
+import { collectSeedValues, syncSeedControlsFromGenerationValues } from "../features/seed-controls.js?v=qol-seed-ui5";
 
 function normalizedHiresSizeMode(value, enabled = true) {
   return normalizeHiresSizeMode(value, enabled);
@@ -19,9 +21,14 @@ function jsonValue(selector, fallback = {}) {
 }
 
 export function collectGenerationValues(selectionMetadata = {}) {
-  const seed = numberValue($("#seed"), null);
+  const seedValues = collectSeedValues();
   const cfgLab = readCfgLabValues();
   const advancedSampler = readAdvancedValues($("#samplerAdvancedContent"));
+  const parameterRanges = collectParameterRanges();
+  const cfgLocks = cfgEffectiveRangeLocks();
+  const samplerKwargs = { ...advancedSampler, ...(cfgLab.sampler_kwargs || {}) };
+  if (cfgLocks.minimum !== null) samplerKwargs.cfg_effective_min_lock = cfgLocks.minimum;
+  if (cfgLocks.maximum !== null) samplerKwargs.cfg_effective_max_lock = cfgLocks.maximum;
   const hiresEnabled = Boolean($("#hiresEnabled")?.checked);
   const hiresPlan = planHiresDimensions({
     baseWidth: numberValue($("#width"), 640),
@@ -37,17 +44,24 @@ export function collectGenerationValues(selectionMetadata = {}) {
     negative_prompt: $("#negativePrompt").value,
     model_path: $("#modelPath").value,
     vae_path: $("#vaePath")?.value || null,
+    sd2_runtime_profile_override: $("#sd2RuntimeProfileOverride")?.value || null,
+    sd2_dedicated_generation: Boolean($("#sd2DedicatedGeneration")?.checked),
     width: numberValue($("#width"), 640),
     height: numberValue($("#height"), 960),
     steps: numberValue($("#steps"), 20),
     cfg_scale: numberValue($("#cfgScale"), 7),
     cfg_rescale: cfgLab.cfg_rescale,
-    seed,
+    seed: seedValues.seed,
     batch_size: numberValue($("#batchSize"), 1),
     batch_count: numberValue($("#batchCount"), 1),
+    batch_seed_mode: seedValues.batch_seed_mode,
+    seed_range_min: seedValues.seed_range_min,
+    seed_range_max: seedValues.seed_range_max,
+    seed_no_duplicates: seedValues.seed_no_duplicates,
+    _random_ranges: parameterRanges,
     sampler_name: $("#samplerName").value,
     scheduler_name: $("#schedulerName").value,
-    sampler_kwargs: { ...advancedSampler, ...(cfgLab.sampler_kwargs || {}) },
+    sampler_kwargs: samplerKwargs,
     scheduler_kwargs: readAdvancedValues($("#schedulerAdvancedContent")),
     prompt_parser_name: $("#promptParserName")?.value || "legacy",
     prompt_parser_kwargs: jsonValue("#promptParserKwargs"),
@@ -152,6 +166,7 @@ export function applyGenerationValues(values = {}) {
     negative_prompt: "#negativePrompt",
     model_path: "#modelPath",
     vae_path: "#vaePath",
+    sd2_runtime_profile_override: "#sd2RuntimeProfileOverride",
     width: "#width",
     height: "#height",
     steps: "#steps",
@@ -218,6 +233,7 @@ export function applyGenerationValues(values = {}) {
     if (!(name in normalizedValues)) return;
     const input = $(selector);
     if (!input) return;
+    if (name === "hires_upscaler" && (!normalizedValues.hires_enabled || !String(normalizedValues[name] || "").trim())) return;
     input.value = normalizedValues[name] ?? "";
     if (name === "output_prefix") {
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -244,13 +260,16 @@ export function applyGenerationValues(values = {}) {
     $("#hiresEnabled").checked = Boolean(values.hires_enabled);
     $("#hiresEnabled").dispatchEvent(new Event("change", { bubbles: true }));
   }
-  if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = values.hires_save_lowres !== false;
+  if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = Boolean(values.hires_save_lowres);
   if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(values.hires_correction_fingerprint_enabled);
   if ($("#hiresSaveUpscaledPreDenoise")) $("#hiresSaveUpscaledPreDenoise").checked = Boolean(values.hires_save_upscaled_pre_denoise);
   if ($("#hiresSaveVaeRoundtrip")) $("#hiresSaveVaeRoundtrip").checked = Boolean(values.hires_save_vae_roundtrip);
-  if ($("#saveTxt")) $("#saveTxt").checked = values.save_txt !== false;
+  if ($("#sd2DedicatedGeneration")) $("#sd2DedicatedGeneration").checked = Boolean(values.sd2_dedicated_generation);
+  if ($("#saveTxt")) $("#saveTxt").checked = Boolean(values.save_txt);
   if ($("#saveJson")) $("#saveJson").checked = values.save_json !== false;
   if ($("#saveDiagnosticsJson")) $("#saveDiagnosticsJson").checked = Boolean(values.save_diagnostics_json);
+  syncSeedControlsFromGenerationValues(values);
+  applyParameterRanges(values._random_ranges || {});
   if ($("#promptParserKwargs")) $("#promptParserKwargs").value = JSON.stringify(values.prompt_parser_kwargs || {});
   if ($("#promptShadowCompare")) $("#promptShadowCompare").checked = Boolean(values.prompt_shadow_compare);
   if ($("#promptShortcutProfileSnapshot")) $("#promptShortcutProfileSnapshot").value = JSON.stringify(values.prompt_shortcut_profile_snapshot || {});

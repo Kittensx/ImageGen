@@ -90,7 +90,9 @@ function setLoading(loading) {
   state.variationMatrix.loading = loading;
   ["#variationPreflightButton", "#variationSubmitButton", "#variationExportButton"].forEach((selector) => {
     const button = $(selector);
-    if (button) button.disabled = loading || (selector !== "#variationPreflightButton" && !state.variationMatrix.preflight?.valid);
+    if (!button) return;
+    if (selector === "#variationExportButton") button.disabled = loading || !state.variationMatrix.preflight?.valid;
+    else button.disabled = loading;
   });
 }
 
@@ -270,7 +272,8 @@ function renderPreflight(data) {
     body.append(row);
   }
   $("#variationPreviewSection").hidden = false;
-  $("#variationSubmitButton").disabled = !data.valid;
+  $("#variationSubmitButton").disabled = false;
+  $("#variationSubmitButton").textContent = data.total_job_count > 0 ? `Queue ${data.total_job_count} Job${data.total_job_count === 1 ? "" : "s"}` : "Queue Jobs";
   $("#variationExportButton").disabled = !(data.jobs || []).some((item) => item.valid);
 }
 
@@ -306,11 +309,17 @@ async function runPreflight() {
 }
 
 async function submitVariations() {
-  const token = state.variationMatrix.preflight?.preflight_token;
-  if (!token) return;
   setLoading(true);
   try {
-    const response = await api.submitVariations(token);
+    // Queue is intentionally one-click. Backend preflight remains authoritative,
+    // but the user does not have to manufacture a separate "validated job" first.
+    const preflight = await api.variationPreflight(collectPlan());
+    renderPreflight(preflight);
+    if (!preflight.valid || !preflight.preflight_token) {
+      setError((preflight.errors || []).join("\n") || "The variation plan contains invalid jobs.");
+      return;
+    }
+    const response = await api.submitVariations(preflight.preflight_token);
     for (const job of response.submitted || []) onJobQueued(job);
     notify(`${response.submitted_count} variation job${response.submitted_count === 1 ? "" : "s"} queued${response.rejected_count ? `; ${response.rejected_count} rejected` : ""}.`);
     closeVariationMatrix();
@@ -366,8 +375,9 @@ export function openVariationMatrix(options = {}) {
   renderBaseSummary();
   $("#variationPreviewSection").hidden = true;
   $("#variationMessages").hidden = true;
-  $("#variationPreflightSummary").textContent = "Preview the plan to validate every expanded request.";
-  $("#variationSubmitButton").disabled = true;
+  $("#variationPreflightSummary").textContent = "Preview checks every expanded request. Queue also validates automatically before submission.";
+  $("#variationSubmitButton").disabled = false;
+  $("#variationSubmitButton").textContent = "Queue Jobs";
   $("#variationExportButton").disabled = true;
   estimateCount();
   if (!dialog.open) dialog.showModal();

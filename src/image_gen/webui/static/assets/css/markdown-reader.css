@@ -1,0 +1,120 @@
+/* Shared Markdown capability: used by Changelog, Help Center, and future workspace components. */
+.component-markdown-reader {
+  width: min(980px, calc(100vw - 36px));
+  max-width: 980px;
+  max-height: min(88vh, 920px);
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--sky-400) 34%, var(--line));
+  border-radius: var(--radius-large);
+  background: var(--charcoal-900);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+}
+
+.component-markdown-reader::backdrop,
+.help-center-dialog::backdrop {
+  background: rgba(4, 11, 18, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.component-markdown-reader__shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: min(88vh, 920px);
+}
+
+.component-markdown-reader__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.component-markdown-reader__header h3 { margin: 2px 0 0; }
+.component-markdown-reader__header small { color: var(--muted); }
+.component-markdown-reader__actions { display: flex; gap: 6px; }
+
+.shared-markdown-content {
+  overflow: auto;
+  padding: 20px 24px 28px;
+  color: color-mix(in srgb, var(--text) 94%, white 6%);
+  font-size: 0.79rem;
+  line-height: 1.65;
+  outline: none;
+}
+
+.shared-markdown-content h1,
+.shared-markdown-content h2,
+.shared-markdown-content h3,
+.shared-markdown-content h4,
+.shared-markdown-content h5,
+.shared-markdown-content h6 {
+  margin: 1.5em 0 0.55em;
+  color: var(--text);
+  line-height: 1.25;
+  scroll-margin-top: 16px;
+}
+
+.shared-markdown-content h1 { font-size: 1.34rem; }
+.shared-markdown-content h2 {
+  font-size: 1.22rem;
+  padding-bottom: 0.32em;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+.shared-markdown-content h3 { font-size: 1.02rem; }
+.shared-markdown-content h4 { font-size: 0.9rem; }
+
+.shared-markdown-content p,
+.shared-markdown-content blockquote,
+.shared-markdown-content ul,
+.shared-markdown-content ol,
+.shared-markdown-content pre { margin: 0 0 1em; }
+
+.shared-markdown-content ul,
+.shared-markdown-content ol { padding-left: 1.6em; }
+.shared-markdown-content li + li { margin-top: 0.3em; }
+.shared-markdown-content blockquote {
+  padding: 9px 12px;
+  border-left: 3px solid var(--sky-500);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: color-mix(in srgb, var(--sky-900) 12%, var(--charcoal-850));
+  color: var(--muted);
+}
+.shared-markdown-content pre {
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-950, #10151c) 92%, black 8%);
+}
+.shared-markdown-content code {
+  padding: 0.12em 0.34em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--charcoal-950, #10151c) 85%, var(--sky-900) 15%);
+  color: var(--sky-200);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+.shared-markdown-content pre code { padding: 0; background: transparent; color: inherit; }
+.shared-markdown-content a { color: var(--sky-300); }
+.shared-markdown-content hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+}
+.shared-markdown-content .shared-markdown-media { margin: 16px 0 20px; }
+
+.component-shell-field--video .component-shell-media-video {
+  display: block;
+  width: 100%;
+  max-height: var(--component-shell-image-max-height, 640px);
+  border-radius: calc(var(--radius) - 2px);
+  background: #000;
+}
+
+@media (max-width: 720px) {
+  .shared-markdown-content { padding: 16px; }
+  .component-markdown-reader__header { align-items: flex-start; }
+}

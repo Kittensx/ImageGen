@@ -36,6 +36,98 @@ function fillCanvasFromRects() {
     ctx.fillRect(x1, y1, Math.max(1, x2-x1), Math.max(1, y2-y1));
   });
   canvasImgData = ctx.getImageData(0, 0, w, h);
+  canvasMaskDirty = false;
+}
+
+function hasCanvasMaskData() {
+  return Boolean(canvasImgData && canvasImgData.data && canvasImgData.width > 0 && canvasImgData.height > 0);
+}
+
+function restoreCanvasFromImageData() {
+  if (!hasCanvasMaskData()) return false;
+  const canvas = document.getElementById('regionCanvas');
+  const ctx = getCanvasCtx();
+  const {w,h} = getRes();
+  if (!canvas || !ctx) return false;
+  if (canvasImgData.width !== w || canvasImgData.height !== h) return false;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.putImageData(canvasImgData, 0, 0);
+  return true;
+}
+
+function syncRegionsFromCanvasMask() {
+  if (!hasCanvasMaskData() || !regions.length) return { updated: 0, paintedRegions: 0, skippedSharedColorRegions: 0 };
+  const {w,h} = getRes();
+  const data = canvasImgData.data;
+  const colorToBounds = new Map();
+  const colorToRegionIndexes = new Map();
+  const swatchToKey = {};
+  const alphaThreshold = 24;
+
+  regions.forEach((region, index) => {
+    const key = String(region.c || '');
+    if (!colorToRegionIndexes.has(key)) colorToRegionIndexes.set(key, []);
+    colorToRegionIndexes.get(key).push(index);
+    swatchToKey[SWATCH[region.c]] = key;
+  });
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const pixelIndex = (y * w + x) * 4;
+      const alpha = data[pixelIndex + 3];
+      if (alpha < alphaThreshold) continue;
+      const key = rgbToSwatchKey(data[pixelIndex], data[pixelIndex + 1], data[pixelIndex + 2], swatchToKey);
+      if (!key) continue;
+      let bounds = colorToBounds.get(key);
+      if (!bounds) {
+        bounds = { minX: x, maxX: x, minY: y, maxY: y };
+        colorToBounds.set(key, bounds);
+      } else {
+        if (x < bounds.minX) bounds.minX = x;
+        if (x > bounds.maxX) bounds.maxX = x;
+        if (y < bounds.minY) bounds.minY = y;
+        if (y > bounds.maxY) bounds.maxY = y;
+      }
+    }
+  }
+
+  let updated = 0;
+  let paintedRegions = 0;
+  let skippedSharedColorRegions = 0;
+  colorToRegionIndexes.forEach((indexes, key) => {
+    const bounds = colorToBounds.get(key);
+    if (!bounds) return;
+    paintedRegions += indexes.length;
+    if (indexes.length !== 1) {
+      skippedSharedColorRegions += indexes.length;
+      return;
+    }
+    const region = regions[indexes[0]];
+    if (!region) return;
+    region.x1 = bounds.minX / w;
+    region.x2 = (bounds.maxX + 1) / w;
+    region.y1 = bounds.minY / h;
+    region.y2 = (bounds.maxY + 1) / h;
+    clampRegion(region);
+    updated += 1;
+  });
+  return { updated, paintedRegions, skippedSharedColorRegions };
+}
+
+function rgbToSwatchKey(r, g, b, swatchToKey) {
+  const tolerance = 36;
+  let bestKey = '';
+  let bestDistance = Number.POSITIVE_INFINITY;
+  Object.entries(swatchToKey).forEach(([hex, key]) => {
+    const rgb = hexToRgb(hex);
+    const distance = Math.abs(rgb.r - r) + Math.abs(rgb.g - g) + Math.abs(rgb.b - b);
+    if (distance < bestDistance && distance <= tolerance) {
+      bestDistance = distance;
+      bestKey = key;
+    }
+  });
+  return bestKey;
 }
 
 function updateInteractionButtons() {
@@ -60,6 +152,8 @@ function updateInteractionButtons() {
 function setInteractionMode(mode, opts = {}) {
   const { toastMessage = true } = opts;
   const next = mode === 'pan' ? 'pan' : (mode === 'paint' ? 'paint' : 'select');
+  const previousMode = interactionMode;
+  const wasPaintMode = paintMode;
   const changed = interactionMode !== next;
   interactionMode = next;
   paintMode = interactionMode === 'paint';
@@ -78,17 +172,29 @@ function setInteractionMode(mode, opts = {}) {
     const wrap = document.getElementById('canvasWrap');
     if (wrap) wrap.classList.remove('panning');
   }
+
+  let maskSyncSummary = null;
+  if (wasPaintMode && !paintMode && canvasMaskDirty) {
+    maskSyncSummary = syncRegionsFromCanvasMask();
+  }
+
   updateInteractionButtons();
   if (paintMode) {
-    if (canvasImgData) pushUndo();
-    fillCanvasFromRects();
+    const restoredMask = canvasMaskDirty && restoreCanvasFromImageData();
+    if (!restoredMask) fillCanvasFromRects();
     if (regions.length) selectRegion(Math.max(0, sel));
+    else render();
   } else {
+    render();
     rebuild();
+    updateEditor();
+    if (maskSyncSummary && maskSyncSummary.skippedSharedColorRegions > 0 && toastMessage) {
+      toast(`Painted mask kept; ${maskSyncSummary.skippedSharedColorRegions} shared-color region${maskSyncSummary.skippedSharedColorRegions === 1 ? '' : 's'} kept their previous bounds`);
+    }
   }
   if (changed && toastMessage) {
     const label = interactionMode === 'select' ? 'Mouse mode' : interactionMode === 'pan' ? 'Pan mode' : 'Paint mode';
-    toast(`${label} active`);
+    toast(previousMode === 'paint' && interactionMode !== 'paint' ? `${label} active · painted mask preserved` : `${label} active`);
   }
 }
 
@@ -146,6 +252,7 @@ function startDraw(e) {
   ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
   ctx.fill();
   canvasImgData = ctx.getImageData(0, 0, w, h);
+  canvasMaskDirty = true;
 }
 
 function draw(e) {

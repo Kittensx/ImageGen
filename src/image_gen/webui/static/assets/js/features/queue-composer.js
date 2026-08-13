@@ -3,7 +3,7 @@ import { state } from "../state.js";
 import { $, shortText, notify } from "../utils.js";
 
 const CORE_OVERRIDE_FIELDS = [
-  "model_path", "vae_path", "width", "height", "steps", "cfg_scale",
+  "model_path", "vae_path", "sd2_runtime_profile_override", "sd2_dedicated_generation", "width", "height", "steps", "cfg_scale",
   "sampler_name", "scheduler_name", "batch_count",
 ];
 

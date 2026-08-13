@@ -10,6 +10,73 @@ function nextDefaultRect(k) {
   return { x1, x2: x1 + w, y1, y2: y1 + h };
 }
 
+
+function rectOverlapArea(a, b) {
+  const width = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1));
+  const height = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
+  return width * height;
+}
+
+function rectContains(outer, inner) {
+  const epsilon = 0.000001;
+  return outer.x1 <= inner.x1 + epsilon
+    && outer.y1 <= inner.y1 + epsilon
+    && outer.x2 >= inner.x2 - epsilon
+    && outer.y2 >= inner.y2 - epsilon;
+}
+
+function preferEmptyPlacement(rect) {
+  if (!regions.length) return rect;
+  const width = Math.max(0.01, Math.min(1, rect.x2 - rect.x1));
+  const height = Math.max(0.01, Math.min(1, rect.y2 - rect.y1));
+  const maxX = Math.max(0, 1 - width);
+  const maxY = Math.max(0, 1 - height);
+  const preferredX = Math.max(0, Math.min(maxX, rect.x1));
+  const preferredY = Math.max(0, Math.min(maxY, rect.y1));
+  const candidates = [{ x1: preferredX, y1: preferredY }];
+  const step = 0.04;
+  for (let y = 0; y <= maxY + 0.000001; y += step) {
+    for (let x = 0; x <= maxX + 0.000001; x += step) {
+      candidates.push({ x1: Math.min(maxX, x), y1: Math.min(maxY, y) });
+    }
+  }
+  if (maxX > 0) candidates.push({ x1: maxX, y1: preferredY });
+  if (maxY > 0) candidates.push({ x1: preferredX, y1: maxY });
+  if (maxX > 0 && maxY > 0) candidates.push({ x1: maxX, y1: maxY });
+
+  let best = null;
+  for (const candidate of candidates) {
+    const box = {
+      x1: candidate.x1,
+      x2: candidate.x1 + width,
+      y1: candidate.y1,
+      y2: candidate.y1 + height,
+    };
+    const overlap = regions.reduce((sum, region) => sum + rectOverlapArea(box, region), 0);
+    const distance = ((box.x1 - preferredX) ** 2) + ((box.y1 - preferredY) ** 2);
+    const score = { box, overlap, distance };
+    if (!best
+      || score.overlap < best.overlap - 0.0000001
+      || (Math.abs(score.overlap - best.overlap) <= 0.0000001 && score.distance < best.distance)) {
+      best = score;
+      if (overlap <= 0.0000001 && distance <= 0.0000001) break;
+    }
+  }
+  return best?.box || rect;
+}
+
+function relatedRegionEntries(index) {
+  const selected = regions[index];
+  if (!selected) return [];
+  return regions.map((region, regionIndex) => {
+    if (regionIndex === index) return { index: regionIndex, relation: 'selected' };
+    if (rectContains(selected, region)) return { index: regionIndex, relation: 'inside selected' };
+    if (rectContains(region, selected)) return { index: regionIndex, relation: 'contains selected' };
+    if (rectOverlapArea(selected, region) > 0.000001) return { index: regionIndex, relation: 'overlaps' };
+    return null;
+  }).filter(Boolean);
+}
+
 function addRegion(text,x1,x2,y1,y2,w) {
   if (x1==null) {
     const L = regions.length;
@@ -20,6 +87,8 @@ function addRegion(text,x1,x2,y1,y2,w) {
       x1=box.x1; x2=box.x2; y1=box.y1; y2=box.y2;
     }
   }
+  const preferred = preferEmptyPlacement({ x1:+x1, x2:+x2, y1:+y1, y2:+y2 });
+  x1 = preferred.x1; x2 = preferred.x2; y1 = preferred.y1; y2 = preferred.y2;
   const r = { id:id(), text:text||'', x1:+x1, x2:+x2, y1:+y1, y2:+y2, w:+(w||1), curve:'linear', c:COLORS[colorIdx%COLORS.length] };
   colorIdx++;
   regions.push(r);
@@ -130,6 +199,7 @@ function clearAll() {
   const ctx = getCanvasCtx();
   if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
   canvasImgData = null;
+  canvasMaskDirty = false;
   document.getElementById('canvasStore').value = '';
   render();
   rebuild();

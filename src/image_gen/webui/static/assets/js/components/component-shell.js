@@ -1,11 +1,12 @@
 import { initActionBar, refreshActionBar } from "./action-bar.js?v=responsive-action-bar1";
 import { setActionIcon } from "./action-icons.js?v=0.1.1";
-import { openMarkdownDocument } from "./markdown-reader.js?v=component-shell1";
+import "./capability-bootstrap.js?v=content-capabilities2";
+import { componentCapability, requireComponentCapabilities } from "./capabilities.js?v=content-capabilities2";
 
 const fieldRenderers = new Map();
 const shellInstances = new WeakMap();
 const VALID_STATES = new Set(["expanded", "summary", "collapsed", "side"]);
-const FEATURED_VARIANTS = new Set(["featured"]);
+const FEATURE_VARIANTS = new Set(["feature"]);
 
 function element(tag, className = "") {
   const node = document.createElement(tag);
@@ -24,118 +25,18 @@ function renderTextField(value) {
   return paragraph;
 }
 
-const IMAGE_FITS = new Set(["contain", "cover", "fill", "scale-down", "none"]);
-const IMAGE_CONTRAST_MODES = new Set(["none", "soft", "outline", "plate"]);
-const IMAGE_POSITIONS = new Set([
-  "center", "top", "bottom", "left", "right",
-  "top left", "top right", "bottom left", "bottom right",
-]);
-
-function boundedPixels(value, fallback, minimum, maximum) {
-  const requested = Number(value);
-  const candidate = Number.isFinite(requested) ? requested : Number(fallback);
-  return Math.max(minimum, Math.min(maximum, Number.isFinite(candidate) ? candidate : minimum));
-}
-
-function configureMediaFrame(frame, value = {}) {
-  const fit = String(value.fit || "contain").trim().toLowerCase();
-  const position = String(value.position || "center").trim().toLowerCase();
-  const requestedContrast = value.contrastAssist === true ? "soft" : String(value.contrastAssist || "none").trim().toLowerCase();
-  const contrast = IMAGE_CONTRAST_MODES.has(requestedContrast) ? requestedContrast : "none";
-  const padding = boundedPixels(value.padding, 8, 0, 64);
-  const minHeight = boundedPixels(value.minHeight, 120, 48, 1200);
-  const maxHeight = boundedPixels(value.maxHeight, 420, minHeight, 1600);
-  const preferredHeight = boundedPixels(value.height, Math.min(220, maxHeight), minHeight, maxHeight);
-
-  frame.classList.add("component-shell-media-frame");
-  frame.style.setProperty("--component-shell-image-fit", IMAGE_FITS.has(fit) ? fit : "contain");
-  frame.style.setProperty("--component-shell-image-position", IMAGE_POSITIONS.has(position) ? position : "center");
-  frame.style.setProperty("--component-shell-image-padding", `${padding}px`);
-  frame.style.setProperty("--component-shell-image-min-height", `${minHeight}px`);
-  frame.style.setProperty("--component-shell-image-height", `${preferredHeight}px`);
-  frame.style.setProperty("--component-shell-image-max-height", `${maxHeight}px`);
-  frame.dataset.componentImageFit = IMAGE_FITS.has(fit) ? fit : "contain";
-  frame.dataset.componentImageContrast = contrast;
-  return frame;
-}
-
-function safeMediaHref(value) {
-  const href = String(value || "").trim();
-  if (!href) return "";
-  if (/^https?:\/\//i.test(href)) return href;
-  if (href.startsWith("/") || href.startsWith("./") || href.startsWith("../") || href.startsWith("#")) return href;
-  return "";
-}
-
-function imageLinkTarget(value = {}, href = "") {
-  const explicit = String(value.target || "").trim();
-  if (explicit) return explicit;
-  const isExternal = value.external === true
-    || (value.external !== false && /^https?:\/\//i.test(href));
-  return isExternal ? "_blank" : "";
-}
-
-function wrapMediaLink(media, value = {}) {
-  const href = safeMediaHref(value.href);
-  if (!href || !media) return media;
-  const link = document.createElement("a");
-  link.className = "component-shell-media-link";
-  link.href = href;
-  const label = String(value.linkLabel || value.alt || value.title || "Open image link").trim() || "Open image link";
-  link.setAttribute("aria-label", label);
-  if (value.title || value.linkLabel) link.title = String(value.title || value.linkLabel);
-  const target = imageLinkTarget(value, href);
-  if (target) link.target = target;
-  if (target === "_blank") link.rel = "noopener noreferrer";
-  link.append(media);
-  return link;
+function mediaCapability() {
+  const capability = componentCapability("content.media");
+  if (!capability) throw new Error("The shared content.media capability is unavailable.");
+  return capability;
 }
 
 function enhanceDeclarativeMediaLinks(root) {
-  root?.querySelectorAll?.("[data-component-media-href]").forEach((frame) => {
-    if (frame.querySelector(":scope > .component-shell-media-link")) return;
-    const media = frame.querySelector(":scope > .component-shell-media-image");
-    if (!media) return;
-    const wrapped = wrapMediaLink(media, {
-      href: frame.dataset.componentMediaHref,
-      linkLabel: frame.dataset.componentMediaLinkLabel || media.alt || "Open image link",
-      target: frame.dataset.componentMediaTarget || "",
-      external: frame.dataset.componentMediaExternal === "false" ? false : undefined,
-    });
-    if (wrapped !== media) frame.append(wrapped);
-  });
+  return mediaCapability().enhanceDeclarativeLinks(root);
 }
 
 function renderImageField(value = {}) {
-  const figure = configureMediaFrame(
-    element("figure", "component-shell-field component-shell-field--image"),
-    value,
-  );
-  const src = String(value.src || "").trim();
-  if (src) {
-    const image = document.createElement("img");
-    image.className = "component-shell-media-image";
-    image.src = src;
-    image.alt = String(value.alt || "");
-    image.loading = value.loading === "eager" ? "eager" : "lazy";
-    image.decoding = "async";
-    figure.append(wrapMediaLink(image, value));
-  } else {
-    const placeholder = element("div", "component-shell-image-placeholder component-shell-media-image");
-    placeholder.setAttribute("role", "img");
-    placeholder.setAttribute("aria-label", String(value.alt || value.placeholder || "Image placeholder"));
-    const icon = element("span", "ui-icon");
-    icon.dataset.icon = String(value.icon || "info");
-    icon.setAttribute("aria-hidden", "true");
-    placeholder.append(icon);
-    figure.append(placeholder);
-  }
-  if (value.caption) {
-    const caption = document.createElement("figcaption");
-    caption.textContent = String(value.caption);
-    figure.append(caption);
-  }
-  return figure;
+  return mediaCapability().renderImage(value);
 }
 
 function renderLinksField(value = [], context = {}) {
@@ -154,7 +55,9 @@ function renderLinksField(value = [], context = {}) {
           context.openMarkdown(item, context);
           return;
         }
-        openMarkdownDocument({
+        const markdown = context.capabilities?.["content.markdown"] || componentCapability("content.markdown");
+        if (!markdown) throw new Error("The shared content.markdown capability is unavailable.");
+        markdown.openDocument({
           title: item.title || item.label || "Markdown document",
           markdown: item.markdown ?? null,
           href: item.markdownHref || item.href || "",
@@ -340,27 +243,33 @@ function ensureVariantBadge(identity) {
 
 function normalizeVariant(descriptor, requested) {
   const raw = String(requested || descriptor.defaultVariant || "standard").trim().toLocaleLowerCase();
-  const variant = raw === "feature" ? "feature" : raw;
+  const variant = raw === "featured" ? "feature" : raw;
   const supported = new Set((descriptor.supportedVariants || [descriptor.defaultVariant || "standard"]).map((item) => String(item).toLocaleLowerCase()));
   return supported.has(variant) ? variant : String(descriptor.defaultVariant || "standard").toLocaleLowerCase();
 }
 
-function setVariant(instance, requested) {
+function setVariant(instance, requested, { persist = true, emit = true } = {}) {
   const variant = normalizeVariant(instance.descriptor, requested);
   instance.variant = variant;
-  instance.root.dataset.componentVariant = variant;
+  if (persist) {
+    instance.baseVariant = variant;
+    instance.root.dataset.componentVariant = variant;
+  }
+  instance.root.dataset.componentEffectiveVariant = variant;
   for (const className of [...instance.root.classList]) {
     if (className.startsWith("component-shell--variant-")) instance.root.classList.remove(className);
   }
   instance.root.classList.add(`component-shell--variant-${variant}`);
-  const featured = FEATURED_VARIANTS.has(variant);
-  instance.variantBadge.hidden = !featured;
-  instance.variantBadge.textContent = featured ? String(instance.descriptor.shell?.featuredLabel || "Featured") : "";
-  instance.root.setAttribute("aria-roledescription", featured ? "featured component" : "component");
-  instance.root.dispatchEvent(new CustomEvent("component-shell-variant-change", {
-    bubbles: true,
-    detail: { componentId: instance.descriptor.componentId, variant },
-  }));
+  const feature = FEATURE_VARIANTS.has(variant);
+  instance.variantBadge.hidden = !feature;
+  instance.variantBadge.textContent = feature ? String(instance.descriptor.shell?.featureLabel || instance.descriptor.shell?.featuredLabel || "Feature") : "";
+  instance.root.setAttribute("aria-roledescription", feature ? "feature component" : "component");
+  if (emit) {
+    instance.root.dispatchEvent(new CustomEvent("component-shell-variant-change", {
+      bubbles: true,
+      detail: { componentId: instance.descriptor.componentId, variant, persist },
+    }));
+  }
   return variant;
 }
 
@@ -419,6 +328,8 @@ export function initComponentShell(root, descriptor, options = {}) {
     root.append(body);
   }
   body.classList.add("component-shell__body");
+  const capabilities = requireComponentCapabilities(descriptor.requiredCapabilities || []);
+  root.dataset.componentCapabilities = Object.keys(capabilities).join(" ");
   enhanceDeclarativeMediaLinks(body);
 
   const summaryToggle = summary
@@ -429,7 +340,7 @@ export function initComponentShell(root, descriptor, options = {}) {
   if (summaryToggle) actions.append(summaryToggle);
   actions.append(collapse, side);
   const actionBar = initActionBar(actions);
-  const instance = { root, descriptor, header, actions, body, summary, summaryToggle, collapse, side, actionBar, variantBadge, state: "expanded", variant: "standard" };
+  const instance = { root, descriptor, header, actions, body, summary, summaryToggle, collapse, side, actionBar, variantBadge, capabilities, state: "expanded", variant: "standard", baseVariant: "standard" };
   shellInstances.set(root, instance);
 
   summaryToggle?.addEventListener("click", () => setState(instance, instance.state === "summary" ? "expanded" : "summary"));
@@ -454,10 +365,25 @@ export function setComponentShellState(root, state) {
 
 export function setComponentShellVariant(root, variant) {
   const instance = shellInstances.get(root);
-  return instance ? setVariant(instance, variant) : null;
+  return instance ? setVariant(instance, variant, { persist: true, emit: true }) : null;
+}
+
+export function setComponentShellResponsiveVariant(root, variant) {
+  const instance = shellInstances.get(root);
+  return instance ? setVariant(instance, variant, { persist: false, emit: false }) : null;
+}
+
+export function componentShellCapability(root, capabilityId) {
+  const instance = shellInstances.get(root);
+  return instance?.capabilities?.[String(capabilityId || "").trim().toLowerCase()] || null;
 }
 
 export function componentShellSnapshot(root) {
   const instance = shellInstances.get(root);
-  return instance ? { componentId: instance.descriptor.componentId, state: instance.state, variant: instance.variant } : null;
+  return instance ? {
+    componentId: instance.descriptor.componentId,
+    state: instance.state,
+    variant: instance.baseVariant,
+    effectiveVariant: instance.variant,
+  } : null;
 }

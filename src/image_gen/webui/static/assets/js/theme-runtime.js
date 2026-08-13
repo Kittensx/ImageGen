@@ -10,6 +10,14 @@
       primary_button_text: "#ffffff",
       secondary_button_text: "#d5f1ff",
     }),
+    semantic: Object.freeze({
+      surface_secondary: "#172431",
+      component_surface: "#111d29",
+      component_border: "#2b4358",
+      component_accent: "#179ee7",
+      text_primary: "#f4f9fd",
+      text_secondary: "#9db2c4",
+    }),
   });
   const FONT_FAMILY_STACKS = Object.freeze({
     "Inter": 'Inter, "Segoe UI", Arial, sans-serif',
@@ -38,6 +46,7 @@
       accent: { ...DEFAULT_THEME_PALETTE.accent, ...(value && value.accent ? value.accent : {}) },
       surface: { ...DEFAULT_THEME_PALETTE.surface, ...(value && value.surface ? value.surface : {}) },
       typography: { ...DEFAULT_THEME_PALETTE.typography, ...(value && value.typography ? value.typography : {}) },
+      semantic: { ...DEFAULT_THEME_PALETTE.semantic, ...(value && value.semantic ? value.semantic : {}) },
     };
   }
 
@@ -66,6 +75,19 @@
         output.typography.secondary_button_text,
       );
     }
+
+    const semantic = source.semantic && typeof source.semantic === "object" ? source.semantic : {};
+    const derivedSemantic = {
+      surface_secondary: mixHex(output.surface.color, "#ffffff", 0.08),
+      component_surface: output.surface.color,
+      component_border: mixHex(output.surface.color, "#ffffff", 0.22),
+      component_accent: output.accent.color,
+      text_primary: DEFAULT_THEME_PALETTE.semantic.text_primary,
+      text_secondary: DEFAULT_THEME_PALETTE.semantic.text_secondary,
+    };
+    Object.keys(derivedSemantic).forEach((key) => {
+      output.semantic[key] = normalizeHex(semantic[key], derivedSemantic[key]);
+    });
     return output;
   }
 
@@ -110,12 +132,27 @@
     root.setProperty("--sky-500", accent);
     root.setProperty("--sky-600", mixHex(accent, "#000000", 0.18));
 
+    root.setProperty("--theme-surface-primary", surface);
+    root.setProperty("--theme-surface-secondary", palette.semantic.surface_secondary);
+    root.setProperty("--component-surface", palette.semantic.component_surface);
+    root.setProperty("--component-border", palette.semantic.component_border);
+    root.setProperty("--component-accent", palette.semantic.component_accent);
     root.setProperty("--charcoal-950", mixHex(surface, "#000000", 0.48));
     root.setProperty("--charcoal-900", mixHex(surface, "#000000", 0.24));
-    root.setProperty("--charcoal-850", surface);
-    root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
-    root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
-    root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+    root.setProperty("--charcoal-850", palette.semantic.component_surface);
+    root.setProperty("--charcoal-800", palette.semantic.surface_secondary);
+    root.setProperty("--charcoal-700", mixHex(palette.semantic.surface_secondary, "#ffffff", 0.12));
+    root.setProperty("--line", palette.semantic.component_border);
+    root.setProperty("--text", palette.semantic.text_primary);
+    root.setProperty("--muted", palette.semantic.text_secondary);
+    root.setProperty("--text-primary", palette.semantic.text_primary);
+    root.setProperty("--text-secondary", palette.semantic.text_secondary);
+    root.setProperty("--text-muted", palette.semantic.text_secondary);
+    root.setProperty("--surface", surface);
+    root.setProperty("--surface-1", palette.semantic.component_surface);
+    root.setProperty("--surface-2", palette.semantic.surface_secondary);
+    root.setProperty("--surface-3", mixHex(palette.semantic.surface_secondary, "#ffffff", 0.10));
+    root.setProperty("--surface-raised", palette.semantic.surface_secondary);
 
     root.setProperty("--font-ui", FONT_FAMILY_STACKS[palette.typography.font_family]);
     root.setProperty("--primary-button-text", palette.typography.primary_button_text);

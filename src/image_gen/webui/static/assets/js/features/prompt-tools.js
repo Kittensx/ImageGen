@@ -501,7 +501,7 @@ function translationPayload(values = {}) {
     generation_width: Number(values.generation_width ?? values.width ?? $("#width")?.value ?? 512),
     generation_height: Number(values.generation_height ?? values.height ?? $("#height")?.value ?? 512),
     batch_size: values.batch_size ?? Number($("#batchSize")?.value || 1),
-    seed: values.seed ?? ($("#seed")?.value === "" ? null : Number($("#seed")?.value)),
+    seed: values.seed ?? ($("#seed")?.value === "" ? null : String($("#seed")?.value || "").trim()),
     prompt_parser_name: parserName,
     base_prompt_parser_name: parserName,
     prompt_parser_kwargs: values.prompt_parser_kwargs || safeParseJson($("#promptParserKwargs")?.value, {}),
@@ -2248,7 +2248,7 @@ export function initializePromptTools(current = {}) {
   if ($("#hiresPlannerParityDiagnostics")) $("#hiresPlannerParityDiagnostics").checked = false;
   if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(current.hires_correction_fingerprint_enabled);
   if ($("#hiresBlurredEdgeCompareDiagnostics")) $("#hiresBlurredEdgeCompareDiagnostics").checked = Boolean(current.hires_blurred_edge_compare_diagnostics);
-  if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = current.hires_save_lowres !== false;
+  if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = Boolean(current.hires_save_lowres);
   updateHiresSizeControls();
   renderBaseParserSettings();
   updateHiresRouting();
@@ -2395,6 +2395,6 @@ export function refreshPromptConfigurationCatalogs(payload = {}) {
     hires_cfg_scale: String($("#hiresCfgScale")?.value || "").trim() === "" ? null : Number($("#hiresCfgScale")?.value),
     hires_cfg_rescale: String($("#hiresCfgRescale")?.value || "").trim() === "" ? null : Number($("#hiresCfgRescale")?.value),
     hires_upscaler: $("#hiresUpscaler")?.value || "",
-    hires_save_lowres: $("#hiresSaveLowres")?.checked !== false,
+    hires_save_lowres: Boolean($("#hiresSaveLowres")?.checked),
   });
 }

@@ -44,6 +44,28 @@ function renderDiagnostics() {
   node.textContent = values.length ? values.join("\n") : "No unsupported upscaler files were reported.";
 }
 
+
+function clearHiresUpscalerError() {
+  const select = $("#hiresUpscaler");
+  select?.classList.remove("field-error-focus");
+  const recovery = $("#hiresUpscalerRecovery");
+  if (recovery) recovery.hidden = true;
+}
+
+function focusHiresUpscalerError(message = "") {
+  const select = $("#hiresUpscaler");
+  if (!select) return;
+  select.classList.add("field-error-focus");
+  select.scrollIntoView({ behavior: "smooth", block: "center" });
+  select.focus({ preventScroll: true });
+  const recovery = $("#hiresUpscalerRecovery");
+  if (recovery) recovery.hidden = false;
+  const copy = $("#hiresUpscalerRecoveryMessage");
+  if (copy) {
+    copy.textContent = message || "Install or move a supported upscaler into a configured asset folder, then refresh discovery. If your asset path is custom, update user-config.yml.";
+  }
+}
+
 function renderStatus() {
   const status = $("#hiresUpscalerStatus");
   if (!status) return;
@@ -69,6 +91,7 @@ function renderStatus() {
   const civitai = lookup?.model_name
     ? ` · CivitAI: ${lookup.model_name}${lookup.creator ? ` by ${lookup.creator}` : ""}`
     : "";
+  clearHiresUpscalerError();
   status.textContent = `${item.display_name} · ${item.architecture} · native x${item.native_scale} · ${friendlyAvailability(item)}${civitai}`;
   status.className = item.selectable ? "field-status ready" : "field-status error";
   const loadStatus = String(item.load_status || "").toLowerCase();
@@ -240,14 +263,32 @@ function renderOptions(preferred = "") {
 
 export function initializeHiresUpscalers(payload = {}, current = {}) {
   state.upscalers = payload || {};
-  const recorded = current.hires_upscaler_id || current.hires_upscaler || "";
+  const replayed = current.hires_enabled ? (current.hires_upscaler_id || current.hires_upscaler || "") : "";
+  const preferred = replayed || state.settings?.preferred_hires_upscaler_id || $("#hiresUpscaler")?.value || "";
   if ($("#hiresStrategy")) $("#hiresStrategy").value = "pixel_neural";
-  renderOptions(recorded);
+  renderOptions(preferred);
 }
 
 export function bindHiresUpscalers(saveSessionSoon = null) {
-  $("#hiresUpscaler")?.addEventListener("change", () => {
+  window.addEventListener("image-gen-hires-upscaler-error", (event) => {
+    focusHiresUpscalerError(String(event.detail?.message || ""));
+  });
+  $("#hiresRecoveryRefreshButton")?.addEventListener("click", () => $("#refreshUpscalersButton")?.click());
+  $("#hiresRecoveryConfigButton")?.addEventListener("click", () => {
+    window.dispatchEvent(new CustomEvent("image-gen-open-user-config"));
+  });
+  $("#hiresUpscaler")?.addEventListener("change", async () => {
+    clearHiresUpscalerError();
     renderStatus();
+    const preferred = String($("#hiresUpscaler")?.value || "").trim();
+    if (preferred && preferred !== String(state.settings?.preferred_hires_upscaler_id || "")) {
+      try {
+        const saved = await api.saveSettings({ preferred_hires_upscaler_id: preferred });
+        state.settings = { ...state.settings, ...saved };
+      } catch (error) {
+        notify(`Could not save preferred hires upscaler: ${error.message}`, "warning");
+      }
+    }
     window.dispatchEvent(new CustomEvent("image-gen-hires-upscaler-change"));
     saveSessionSoon?.();
   });

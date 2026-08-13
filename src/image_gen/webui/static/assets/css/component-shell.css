@@ -52,21 +52,23 @@
   display: none !important;
 }
 
-/* Featured is a semantic shell variant, not a Home-only card style. Any
-   registered workspace component can opt in without changing its feature code. */
+/* Feature is a semantic shell variant, not a Home-only card style. The old
+   "featured" class remains a CSS alias only for stale cached markup. */
+.component-shell--variant-feature,
 .component-shell--variant-featured {
   position: relative;
   isolation: isolate;
-  border-color: color-mix(in srgb, var(--sky-300) 58%, var(--line)) !important;
+  border-color: color-mix(in srgb, var(--component-accent) 58%, var(--component-border)) !important;
   background:
-    radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--sky-500) 22%, transparent), transparent 34%),
-    linear-gradient(145deg, color-mix(in srgb, var(--charcoal-800) 82%, var(--sky-800) 18%), var(--charcoal-900)) !important;
+    radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--component-accent) 22%, transparent), transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--component-surface) 82%, var(--component-accent) 18%), var(--charcoal-900)) !important;
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--sky-400) 18%, transparent),
     0 18px 42px color-mix(in srgb, #000 42%, transparent),
     0 0 28px color-mix(in srgb, var(--sky-500) 13%, transparent) !important;
 }
 
+.component-shell--variant-feature::before,
 .component-shell--variant-featured::before {
   content: "";
   position: absolute;
@@ -74,24 +76,64 @@
   inset: 0 auto 0 0;
   width: 4px;
   border-radius: var(--radius-large) 0 0 var(--radius-large);
-  background: linear-gradient(180deg, var(--sky-300), var(--sky-600));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--component-accent) 72%, white), var(--component-accent));
 }
 
+.component-shell--variant-feature .component-shell__icon,
 .component-shell--variant-featured .component-shell__icon {
   color: var(--sky-200);
 }
 
+.component-shell--variant-feature .component-shell__title,
 .component-shell--variant-featured .component-shell__title {
   font-size: 0.86rem;
   font-weight: 800;
 }
 
+.component-shell--variant-feature.component-shell--summary,
+.component-shell--variant-feature.component-shell--collapsed,
+.component-shell--variant-feature.component-shell--side,
 .component-shell--variant-featured.component-shell--summary,
 .component-shell--variant-featured.component-shell--collapsed,
 .component-shell--variant-featured.component-shell--side {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--sky-400) 16%, transparent),
     0 10px 24px color-mix(in srgb, #000 34%, transparent) !important;
+}
+
+/* Horizontal is a real shell presentation variant rather than an inert token.
+   It places shell identity/actions beside the component body while there is room. */
+.component-shell--variant-horizontal:not(.component-shell--summary):not(.component-shell--collapsed):not(.component-shell--side) {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.28fr) minmax(0, 1fr);
+  column-gap: clamp(14px, 2vw, 26px);
+  align-items: start;
+}
+
+.component-shell--variant-horizontal:not(.component-shell--summary):not(.component-shell--collapsed):not(.component-shell--side) > .component-shell__header {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  margin-bottom: 0;
+  padding-right: 12px;
+  border-right: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.component-shell--variant-horizontal:not(.component-shell--summary):not(.component-shell--collapsed):not(.component-shell--side) > .component-shell__body {
+  min-width: 0;
+}
+
+@container (max-width: 760px) {
+  .component-shell--variant-horizontal:not(.component-shell--summary):not(.component-shell--collapsed):not(.component-shell--side) {
+    display: block;
+  }
+
+  .component-shell--variant-horizontal:not(.component-shell--summary):not(.component-shell--collapsed):not(.component-shell--side) > .component-shell__header {
+    position: static;
+    margin-bottom: 12px;
+    padding-right: 0;
+    border-right: 0;
+  }
 }
 
 .component-shell__actions {
@@ -414,47 +456,3 @@
   }
 }
 
-.component-markdown-reader {
-  width: min(980px, calc(100vw - 36px));
-  max-width: 980px;
-  max-height: min(88vh, 920px);
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--sky-400) 34%, var(--line));
-  border-radius: var(--radius-large);
-  background: var(--charcoal-900);
-  color: var(--text);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
-}
-
-.component-markdown-reader::backdrop {
-  background: rgba(4, 11, 18, 0.72);
-  backdrop-filter: blur(2px);
-}
-
-.component-markdown-reader__shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  max-height: min(88vh, 920px);
-}
-
-.component-markdown-reader__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
-}
-
-.component-markdown-reader__header h3 {
-  margin: 2px 0 0;
-}
-
-.component-markdown-reader__header small {
-  color: var(--muted);
-}
-
-.component-markdown-reader__actions {
-  display: flex;
-  gap: 6px;
-}

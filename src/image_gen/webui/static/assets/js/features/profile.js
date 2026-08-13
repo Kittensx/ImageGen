@@ -84,7 +84,7 @@ function renderDiscord(profile) {
   const capabilities = profile?.discord_capabilities || {};
   const activity = profile?.discord_activity_preview || {};
 
-  setText("#homeProfileDiscordState", discord.linked ? (discord.display_name || "Discord linked") : "Not connected");
+  setText("#homeProfileDiscordState", discord.linked ? "Discord linked" : "Not connected");
   setText(
     "#homeProfileDiscordServerState",
     discord.linked
@@ -153,18 +153,11 @@ function renderDiscord(profile) {
   }
 }
 
-function profileGreetingName(profile) {
-  const discord = profile?.discord || {};
-  if (!discord.linked) return "";
-  return String(discord.display_name || discord.username || "").trim().slice(0, 80);
-}
-
-function renderWelcomeGreeting(profile) {
+function renderWelcomeGreeting() {
   const greeting = $("#homeWelcomeGreeting");
   if (!greeting) return;
-  const name = profileGreetingName(profile);
-  greeting.hidden = !name;
-  greeting.textContent = name ? `Hello, ${name}.` : "";
+  greeting.hidden = true;
+  greeting.textContent = "";
 }
 
 function renderProfile(profile) {
@@ -262,8 +255,7 @@ async function toggleDiscordConnection() {
     if (linked) {
       notify(`Discord disconnected from this ${productName()} profile.`);
     } else {
-      const name = profile?.discord?.display_name || profile?.discord?.username || "Discord account";
-      notify(`${name} connected to ${productName()}.`);
+      notify(`Discord account connected to ${productName()}.`);
     }
   } catch (error) {
     notify(`Unable to ${linked ? "disconnect" : "connect"} Discord: ${error.message}`, "error");

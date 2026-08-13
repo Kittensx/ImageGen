@@ -15,6 +15,7 @@ let eraserMode = false;
 let isDrawing = false;
 let canvasCtx = null;
 let canvasImgData = null;
+let canvasMaskDirty = false;
 let undoStack = [];
 let redoStack = [];
 const MAX_UNDO = 50;

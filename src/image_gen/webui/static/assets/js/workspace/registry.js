@@ -1,6 +1,16 @@
+import {
+  WORKSPACE_WIDTH_CLASSES,
+  bindWorkspaceWidthObserver,
+  responsiveGridSpan,
+  responsivePresentationSpan,
+  resolveResponsiveVariant,
+} from "./responsive.js?v=workspace-responsive2";
+
 const components = new Map();
 const pages = new Map();
 const LAYOUT_STORAGE_PREFIX = "image-gen.workspace-layout.v1.";
+const responsiveOverrides = new WeakMap();
+const responsiveControllers = new WeakMap();
 
 function normalizedId(value, label = "component ID") {
   const id = String(value || "").trim();
@@ -14,27 +24,80 @@ function normalizedSpan(value, fallback = 12) {
   return Math.max(1, Math.min(12, Math.round(span)));
 }
 
+function canonicalVariant(value, fallback = "standard") {
+  const token = String(value || fallback).trim().toLowerCase();
+  return token === "featured" ? "feature" : (token || fallback);
+}
+
+function canonicalResponsiveVariants(value) {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value).map(([widthClass, variant]) => [
+    String(widthClass).trim().toLowerCase(),
+    canonicalVariant(variant),
+  ]));
+}
+
+function clearWorkspaceLayoutPrepaint(pageId) {
+  const normalizedPageId = String(pageId || "").toLowerCase();
+  const style = document.getElementById(`workspaceLayoutPrepaint-${normalizedPageId}`);
+  style?.remove();
+  document.querySelectorAll?.(`[data-workspace-page="${CSS.escape(normalizedPageId)}"] > [data-workspace-component]`).forEach((node) => {
+    node.style.removeProperty("order");
+  });
+  if (normalizedPageId === "home") {
+    window.__IMAGE_GEN_HOME_LAYOUT_PREPAINT_OBSERVER__?.disconnect?.();
+    delete window.__IMAGE_GEN_HOME_LAYOUT_PREPAINT_OBSERVER__;
+  }
+  if (document.documentElement.dataset.workspaceLayoutPrepaint === normalizedPageId) {
+    delete document.documentElement.dataset.workspaceLayoutPrepaint;
+  }
+}
+
 export function registerWorkspaceComponent(descriptor) {
   const source = descriptor && typeof descriptor === "object" ? descriptor : {};
   const componentId = normalizedId(source.componentId);
   const key = componentId.toLocaleLowerCase();
   if (components.has(key)) throw new Error(`Workspace component '${componentId}' is already registered.`);
+  const distribution = String(source.distribution || "bundled").trim().toLocaleLowerCase();
+  if (!new Set(["bundled", "external"]).has(distribution)) {
+    throw new Error(`Workspace component '${componentId}' has unsupported distribution '${distribution}'.`);
+  }
+  const install = source.install && typeof source.install === "object" ? Object.freeze({ ...source.install }) : null;
+  if (distribution === "external" && (!install?.registry || !install?.packageRef)) {
+    throw new Error(`External workspace component '${componentId}' requires canonical install metadata.`);
+  }
   const registered = Object.freeze({
     componentId,
     packageId: String(source.packageId || "image_gen.core"),
     title: String(source.title || componentId),
     icon: String(source.icon || "info"),
+    description: String(source.description || ""),
     category: String(source.category || "general"),
+    distribution,
+    install,
+    links: Object.freeze({ ...(source.links || {}) }),
     allowedPages: Object.freeze([...(source.allowedPages || [])].map(String)),
-    defaultVariant: String(source.defaultVariant || "standard"),
-    supportedVariants: Object.freeze([...(source.supportedVariants || [source.defaultVariant || "standard"])].map(String)),
+    requiredCapabilities: Object.freeze([...(source.requiredCapabilities || [])].map(String)),
+    defaultVariant: canonicalVariant(source.defaultVariant || "standard"),
+    supportedVariants: Object.freeze([...new Set([...(source.supportedVariants || [source.defaultVariant || "standard"])].map((value) => canonicalVariant(value)))]),
     defaultGridSpan: normalizedSpan(source.defaultGridSpan),
     defaultVisible: source.defaultVisible !== false,
     minGridSpan: normalizedSpan(source.minGridSpan || 1),
     maxGridSpan: normalizedSpan(source.maxGridSpan || 12),
     shell: Object.freeze({ ...(source.shell || {}) }),
-    settingsSchema: source.settingsSchema || null,
+    settingsSchema: source.settingsSchema || { type: "object", properties: {}, additionalProperties: false },
+    responsive: Object.freeze(canonicalResponsiveVariants(source.responsive)),
+    minUsefulWidth: Number.isFinite(Number(source.minUsefulWidth)) ? Math.max(1, Math.round(Number(source.minUsefulWidth))) : null,
+    minUsefulHeight: Number.isFinite(Number(source.minUsefulHeight)) ? Math.max(1, Math.round(Number(source.minUsefulHeight))) : null,
   });
+  for (const [widthClass, variant] of Object.entries(registered.responsive)) {
+    if (!WORKSPACE_WIDTH_CLASSES.includes(String(widthClass).toLowerCase())) {
+      throw new Error(`Workspace component '${componentId}' has unknown responsive width class '${widthClass}'.`);
+    }
+    if (!registered.supportedVariants.includes(String(variant))) {
+      throw new Error(`Workspace component '${componentId}' responsive variant '${variant}' is not supported.`);
+    }
+  }
   components.set(key, registered);
   return registered;
 }
@@ -54,8 +117,12 @@ export function registerWorkspacePage(descriptor) {
   const registered = Object.freeze({
     pageId,
     title: String(source.title || pageId),
+    layoutSchemaVersion: Number(source.layoutSchemaVersion || 1),
     allowedComponents,
     requiredComponents,
+    defaultWorkspaceId: String(source.defaultWorkspaceId || `imagegen.${pageId}.default`),
+    maximumInstances: Object.freeze({ ...(source.maximumInstances || {}) }),
+    requiredCapabilities: Object.freeze([...(source.requiredCapabilities || [])].map(String)),
     defaultWorkspace: Object.freeze([...(source.defaultWorkspace || [])].map((entry) => Object.freeze({ ...entry }))),
   });
   pages.set(key, registered);
@@ -138,8 +205,9 @@ function prepareWorkspaceDom(root, page, preference = null) {
       const span = Math.max(descriptor.minGridSpan, Math.min(descriptor.maxGridSpan, normalizedSpan(entry.span, descriptor.defaultGridSpan)));
       node.dataset.componentSpan = String(span);
       node.style.setProperty("--workspace-component-span", String(span));
-      if (entry.variant) node.dataset.componentVariant = String(entry.variant);
+      if (entry.variant) node.dataset.componentVariant = canonicalVariant(entry.variant);
       if (entry.shellState) node.dataset.componentShellState = String(entry.shellState);
+      responsiveOverrides.set(node, canonicalResponsiveVariants(entry.responsive));
       const visible = required.has(id) ? true : entry.visible !== false;
       node.dataset.workspaceComponentVisible = String(visible);
       node.hidden = !visible;
@@ -151,7 +219,43 @@ function prepareWorkspaceDom(root, page, preference = null) {
   ordered.forEach((node) => root.append(node));
 }
 
-export function mountWorkspacePage(scope, pageId, { initComponent = null } = {}) {
+function applyWorkspaceResponsiveState(root, pageId, widthClass, applyResponsiveVariant = null) {
+  const direct = [...root.children].filter((node) => node.matches?.("[data-workspace-component]"));
+  direct.forEach((node) => {
+    const componentId = String(node.dataset.workspaceComponent || "").trim();
+    const descriptor = workspaceComponent(componentId);
+    if (!descriptor) return;
+    const baseSpan = normalizedSpan(node.dataset.componentSpan, descriptor.defaultGridSpan);
+    const responsiveSpan = responsiveGridSpan(baseSpan, widthClass, descriptor);
+    const shellState = String(node.dataset.componentShellState || "expanded");
+    const effectiveSpan = responsivePresentationSpan(responsiveSpan, widthClass, shellState, descriptor);
+    const baseVariant = canonicalVariant(node.dataset.componentVariant || descriptor.defaultVariant || "standard");
+    const resolved = resolveResponsiveVariant(descriptor, widthClass, baseVariant, responsiveOverrides.get(node) || {});
+    node.dataset.workspaceEffectiveSpan = String(effectiveSpan);
+    node.dataset.workspaceResponsiveVariant = resolved.variant;
+    node.dataset.workspaceResponsiveResolution = resolved.resolution;
+    node.style.setProperty("--workspace-responsive-span", String(effectiveSpan));
+    applyResponsiveVariant?.(node, resolved.variant, {
+      pageId,
+      widthClass,
+      baseVariant,
+      effectiveSpan,
+      responsiveSpan,
+      shellState,
+      resolution: resolved.resolution,
+    });
+  });
+}
+
+export function refreshWorkspaceResponsiveState(scope, pageId) {
+  const root = scope?.matches?.(`[data-workspace-page="${CSS.escape(pageId)}"]`)
+    ? scope
+    : scope?.querySelector?.(`[data-workspace-page="${CSS.escape(pageId)}"]`);
+  const controller = root ? responsiveControllers.get(root) : null;
+  return controller?.refresh?.() || null;
+}
+
+export function mountWorkspacePage(scope, pageId, { initComponent = null, applyResponsiveVariant = null } = {}) {
   const root = scope?.matches?.("[data-workspace-page]") ? scope : scope?.querySelector?.(`[data-workspace-page="${CSS.escape(pageId)}"]`);
   const page = workspacePage(pageId);
   if (!root || !page) return { page, root, mounted: [], errors: [] };
@@ -159,6 +263,7 @@ export function mountWorkspacePage(scope, pageId, { initComponent = null } = {})
   const mounted = [];
   const errors = [];
   prepareWorkspaceDom(root, page, readWorkspaceLayoutPreference(pageId));
+  clearWorkspaceLayoutPrepaint(pageId);
   const direct = [...root.children].filter((node) => node.matches?.("[data-workspace-component]"));
 
   direct.forEach((node, order) => {
@@ -197,7 +302,27 @@ export function mountWorkspacePage(scope, pageId, { initComponent = null } = {})
     }
   }
   root.dataset.workspaceRegistryMounted = "true";
-  return { page, root, mounted, errors };
+  const widthObserver = bindWorkspaceWidthObserver(root, {
+    onChange: ({ widthClass }) => applyWorkspaceResponsiveState(root, pageId, widthClass, applyResponsiveVariant),
+  });
+  const controller = {
+    refresh: () => {
+      const state = widthObserver?.refresh?.() || { widthClass: root.dataset.workspaceWidthClass || "wide" };
+      applyWorkspaceResponsiveState(root, pageId, state.widthClass, applyResponsiveVariant);
+      return state;
+    },
+    disconnect: () => widthObserver?.disconnect?.(),
+  };
+  responsiveControllers.set(root, controller);
+  controller.refresh();
+  root.addEventListener("component-shell-variant-change", (event) => {
+    if (event.detail?.persist === false) return;
+    controller.refresh();
+  });
+  root.addEventListener("component-shell-state-change", () => {
+    controller.refresh();
+  });
+  return { page, root, mounted, errors, responsive: controller };
 }
 
 export function workspaceLayoutSnapshot(scope, pageId) {
@@ -209,8 +334,9 @@ export function workspaceLayoutSnapshot(scope, pageId) {
     components: ordered.map((node, order) => ({
       componentId: String(node.dataset.workspaceComponent || ""),
       order,
-      variant: String(node.dataset.componentVariant || "standard"),
+      variant: canonicalVariant(node.dataset.componentVariant || "standard"),
       span: normalizedSpan(node.dataset.componentSpan),
+      responsive: { ...(responsiveOverrides.get(node) || {}) },
       shellState: String(node.dataset.componentShellState || "expanded"),
       visible: node.dataset.workspaceComponentVisible !== "false" && !node.hidden,
     })),
@@ -259,6 +385,8 @@ export function setWorkspaceComponentSpan(scope, pageId, componentId, span) {
   const next = Math.max(descriptor.minGridSpan, Math.min(descriptor.maxGridSpan, normalizedSpan(span, descriptor.defaultGridSpan)));
   root.dataset.componentSpan = String(next);
   root.style.setProperty("--workspace-component-span", String(next));
+  const workspaceRoot = root.closest?.("[data-workspace-page]");
+  responsiveControllers.get(workspaceRoot)?.refresh?.();
   return next;
 }
 

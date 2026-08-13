@@ -304,6 +304,26 @@ class BugReportService:
         review_note = "Diagnostic evidence is current enough for normal review."
         if (
             kind == "webui"
+            and operation.casefold() in {"model_activation", "job_submission_model_selection"}
+            and any(
+                marker in error_message.casefold()
+                for marker in (
+                    "selected checkpoint could not be resolved",
+                    "selected checkpoint is not available",
+                    "choose a checkpoint model",
+                    "no checkpoint is installed or selected",
+                    "checkpoint selected in the browser is no longer available",
+                )
+            )
+        ):
+            classification = "model_not_configured"
+            reportable = False
+            review_note = (
+                "No usable checkpoint is currently installed/selected. This is an expected setup state, "
+                "not an ImageGen defect and should not be reported to GitHub."
+            )
+        elif (
+            kind == "webui"
             and error_type.casefold() == "valueerror"
             and operation.casefold() in {"scheduler_prequeue_validation", "job_submission_validation"}
         ):
@@ -922,6 +942,10 @@ class BugReportService:
             ),
             reverse=True,
         )
+        # Expected setup states such as an empty checkpoint library are not bugs.
+        # Keep any historical record in the private ledger for deduplication, but
+        # do not surface it in Bug Reports or count it toward profile statistics.
+        reports = [item for item in reports if item.get("classification") != "model_not_configured"]
         confirmed = [item for item in reports if item.get("confirmed_reported")]
         resolved = [
             item for item in confirmed

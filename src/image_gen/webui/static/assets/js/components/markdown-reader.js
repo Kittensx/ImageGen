@@ -1,17 +1,65 @@
+import { componentCapability, registerComponentCapability } from "./capabilities.js?v=content-capabilities2";
+
 const DEFAULT_REPOSITORY_ROOT = "https://github.com/Kittensx/ImageGen";
 let sharedDialog = null;
 
-export function safeMarkdownHref(rawHref, { repositoryRoot = DEFAULT_REPOSITORY_ROOT, basePath = "", entryDate = "" } = {}) {
+export function safeMarkdownHref(rawHref, { repositoryRoot = DEFAULT_REPOSITORY_ROOT, basePath = "", entryDate = "", preserveRelative = false } = {}) {
   const value = String(rawHref || "").trim();
   if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
+  if (/^https:\/\//i.test(value)) return value;
   if (value.startsWith("#")) return value;
   const normalized = value.replaceAll("\\", "/");
+  if (preserveRelative && (normalized.startsWith("../") || normalized.startsWith("./") || normalized.endsWith(".md"))) return normalized;
   if (normalized.startsWith("../")) return `${repositoryRoot}/blob/main/${normalized.replace(/^\.\.\//, "")}`;
   if (normalized.startsWith("./")) return `${repositoryRoot}/blob/main/${basePath ? `${basePath.replace(/\/$/, "")}/` : ""}${normalized.slice(2)}`;
   if (normalized.endsWith(".md")) return `${repositoryRoot}/blob/main/${basePath ? `${basePath.replace(/\/$/, "")}/` : ""}${normalized}`;
   if (entryDate) return `${repositoryRoot}/blob/main/${basePath ? `${basePath.replace(/\/$/, "")}/` : ""}${entryDate}.md`;
   return "";
+}
+
+function headingSlug(value, used) {
+  const base = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[`*_~]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "section";
+  let slug = base;
+  let suffix = 2;
+  while (used.has(slug)) slug = `${base}-${suffix++}`;
+  used.add(slug);
+  return slug;
+}
+
+function markdownLink(parent, label, rawHref, options = {}) {
+  const href = safeMarkdownHref(rawHref, options);
+  if (!href) {
+    parent.append(document.createTextNode(label));
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = href;
+  link.textContent = label;
+  link.dataset.markdownHref = String(rawHref || "");
+  if (href.startsWith("#")) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = parent.closest("[data-markdown-reader-content], .shared-markdown-content")?.querySelector(href);
+      target?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+      options.onAnchor?.(href.slice(1));
+    });
+  } else if (typeof options.onNavigate === "function" && !/^https:\/\//i.test(rawHref)) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      options.onNavigate(String(rawHref || ""));
+    });
+  } else {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  }
+  parent.append(link);
 }
 
 function appendInline(parent, value, options = {}) {
@@ -32,18 +80,7 @@ function appendInline(parent, value, options = {}) {
       parent.append(strong);
     } else if (token.startsWith("[") && token.includes("](")) {
       const split = token.indexOf("](");
-      const label = token.slice(1, split);
-      const href = safeMarkdownHref(token.slice(split + 2, -1), options);
-      if (href) {
-        const link = document.createElement("a");
-        link.href = href;
-        link.target = href.startsWith("#") ? "" : "_blank";
-        if (link.target) link.rel = "noopener noreferrer";
-        link.textContent = label;
-        parent.append(link);
-      } else {
-        parent.append(document.createTextNode(label));
-      }
+      markdownLink(parent, token.slice(1, split), token.slice(split + 2, -1), options);
     } else if (token.startsWith("*") && token.endsWith("*")) {
       const emphasis = document.createElement("em");
       emphasis.textContent = token.slice(1, -1);
@@ -64,15 +101,37 @@ function appendParagraph(container, lines, options) {
   lines.length = 0;
 }
 
+function appendStandaloneImage(container, rawLine, options = {}) {
+  const match = rawLine.match(/^\s*!\[([^\]]*)\]\(([^)\s]+)(?:\s+["']([^"']*)["'])?\)\s*$/);
+  if (!match) return false;
+  const media = componentCapability("content.media");
+  if (!media) return false;
+  const rawSrc = match[2];
+  const resolved = typeof options.resolveMedia === "function" ? options.resolveMedia(rawSrc) : rawSrc;
+  const node = media.renderImage({
+    src: resolved,
+    alt: match[1],
+    caption: match[3] || "",
+    allowExternal: options.allowExternalMedia === true,
+    maxHeight: options.mediaMaxHeight || 640,
+    height: options.mediaHeight || 320,
+  });
+  node.classList.add("shared-markdown-media");
+  container.append(node);
+  return true;
+}
+
 export function renderMarkdown(container, markdown, options = {}) {
   if (!container) return;
   container.replaceChildren();
+  container.classList.add("shared-markdown-content");
   const lines = String(markdown || "").replaceAll("\r\n", "\n").split("\n");
   const paragraph = [];
   let codeBlock = null;
   let list = null;
   let listType = "";
-  let skippedFirstHeading = Boolean(options.keepFirstHeading === false);
+  let skippedFirstHeading = false;
+  const usedHeadingIds = new Set();
   const closeList = () => { list = null; listType = ""; };
 
   for (const rawLine of lines) {
@@ -99,6 +158,11 @@ export function renderMarkdown(container, markdown, options = {}) {
       closeList();
       continue;
     }
+    if (appendStandaloneImage(container, rawLine, options)) {
+      appendParagraph(container, paragraph, options);
+      closeList();
+      continue;
+    }
     const headingMatch = rawLine.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
     if (headingMatch) {
       appendParagraph(container, paragraph, options);
@@ -107,8 +171,10 @@ export function renderMarkdown(container, markdown, options = {}) {
         skippedFirstHeading = true;
         continue;
       }
+      const cleanHeading = headingMatch[2].replace(/\s+#+\s*$/, "");
       const heading = document.createElement(`h${Math.min(6, headingMatch[1].length)}`);
-      appendInline(heading, headingMatch[2].replace(/\s+#+\s*$/, ""), options);
+      heading.id = headingSlug(cleanHeading, usedHeadingIds);
+      appendInline(heading, cleanHeading, options);
       container.append(heading);
       continue;
     }
@@ -147,6 +213,8 @@ export function renderMarkdown(container, markdown, options = {}) {
   }
   appendParagraph(container, paragraph, options);
   if (codeBlock) container.append(codeBlock);
+  const initialAnchor = String(options.initialAnchor || "").replace(/^#/, "");
+  if (initialAnchor) queueMicrotask(() => container.querySelector(`#${CSS.escape(initialAnchor)}`)?.scrollIntoView?.({ block: "start" }));
 }
 
 function ensureSharedDialog() {
@@ -162,7 +230,7 @@ function ensureSharedDialog() {
           <button class="ui-action-button ui-icon-control" type="button" data-markdown-reader-close aria-label="Close Markdown reader" title="Close Markdown reader"><span class="ui-icon" data-icon="close" aria-hidden="true"></span></button>
         </div>
       </header>
-      <article class="home-markdown-reader" data-markdown-reader-content tabindex="0"></article>
+      <article class="shared-markdown-content" data-markdown-reader-content tabindex="0"></article>
     </div>`;
   dialog.querySelector("[data-markdown-reader-close]")?.addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
@@ -182,17 +250,34 @@ export async function openMarkdownDocument({ title = "Document", markdown = null
   if (sourceHref) source.href = String(sourceHref);
   if (!dialog.open) dialog.showModal();
   try {
-    let text = markdown;
-    if (text == null && typeof loader === "function") text = await loader();
-    if (text == null && href) {
+    let loaded = markdown;
+    if (loaded == null && typeof loader === "function") loaded = await loader();
+    if (loaded == null && href) {
       const response = await fetch(href, { headers: { Accept: "text/markdown,text/plain;q=0.9" } });
       if (!response.ok) throw new Error(`Markdown request failed (${response.status}).`);
-      text = await response.text();
+      loaded = await response.text();
     }
-    renderMarkdown(content, text || "", options);
+    if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+      if (loaded.title) titleNode.textContent = String(loaded.title);
+      if (loaded.sourceHref !== undefined) {
+        source.hidden = !loaded.sourceHref;
+        if (loaded.sourceHref) source.href = String(loaded.sourceHref);
+      }
+      options = { ...options, ...(loaded.options || {}) };
+      loaded = loaded.markdown ?? "";
+    }
+    renderMarkdown(content, loaded || "", options);
     content.focus({ preventScroll: true });
   } catch (error) {
     content.textContent = `Unable to load Markdown document: ${error?.message || error}`;
   }
   return dialog;
 }
+
+export const CONTENT_MARKDOWN_CAPABILITY = registerComponentCapability("content.markdown", {
+  version: 1,
+  description: "Safe shared Markdown rendering and document browsing for workspace components.",
+  safeHref: safeMarkdownHref,
+  render: renderMarkdown,
+  openDocument: openMarkdownDocument,
+});

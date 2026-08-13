@@ -1,4 +1,4 @@
-import { api } from "../api.js?v=civitai-connect1";
+import { api } from "../api.js?v=asset-card-latency1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 
@@ -154,6 +154,8 @@ export function bindCheckpointWorkspace({
   let models = Array.isArray(state.models) ? [...state.models] : [];
   let selectedId = "";
   let selectedDetails = null;
+  let detailsRequestSerial = 0;
+  const detailCache = new Map();
   let search = "";
   let activeFilter = "all";
   let sortMode = "recent";
@@ -263,24 +265,38 @@ export function bindCheckpointWorkspace({
     $("#checkpointSetStartupButton").disabled = !active;
   };
 
+  const updateSelectedCardState = () => {
+    document.querySelectorAll("#checkpointCardGrid .checkpoint-card").forEach((card) => {
+      card.classList.toggle("is-selected", card.dataset.assetId === selectedId);
+    });
+  };
+
   const openDetails = async (model) => {
+    const requestId = ++detailsRequestSerial;
     selectedId = model.asset_id;
     state.selectedCheckpointAssetId = selectedId;
-    renderCards();
+    selectedDetails = effectiveModel(detailCache.get(model.asset_id) || model);
+    updateSelectedCardState();
     $("#checkpointDetailEmpty").classList.add("is-hidden");
     $("#checkpointDetailContent").classList.remove("is-hidden");
     detailsPanel?.classList.add("is-open");
-    $("#checkpointDetailStatus").textContent = "Inspecting checkpoint metadata…";
+    renderDetails();
+    $("#checkpointDetailStatus").textContent = detailCache.has(model.asset_id)
+      ? "Showing cached checkpoint metadata."
+      : "Loading saved checkpoint metadata…";
     try {
-      selectedDetails = await api.checkpointDetails(model.asset_id);
-      selectedDetails = mergeCatalogModel(selectedDetails) || selectedDetails;
-      renderCards();
+      const response = await api.checkpointDetails(model.asset_id, { inspect: false });
+      const merged = mergeCatalogModel(response) || response;
+      detailCache.set(model.asset_id, merged);
+      if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
+      selectedDetails = effectiveModel(merged);
       renderCurrentModel();
       renderDetails();
     } catch (error) {
-      selectedDetails = effectiveModel({ ...model, metadata: {}, inspection_error: error.message });
+      if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
+      selectedDetails = effectiveModel({ ...selectedDetails, inspection_error: error.message });
       renderDetails();
-      $("#checkpointDetailStatus").textContent = `Unable to inspect checkpoint: ${error.message}`;
+      $("#checkpointDetailStatus").textContent = `Unable to load checkpoint metadata: ${error.message}`;
     }
   };
 
@@ -310,7 +326,10 @@ export function bindCheckpointWorkspace({
       models = models.map((item) => item.asset_id === model.asset_id ? { ...item, ...updated } : item);
       state.models = [...models];
       state.checkpointCatalog = [...models];
-      if (selectedDetails?.asset_id === model.asset_id) selectedDetails = effectiveModel(updated);
+      if (selectedDetails?.asset_id === model.asset_id) {
+        selectedDetails = effectiveModel(updated);
+        detailCache.set(model.asset_id, selectedDetails);
+      }
       renderCards();
       renderCurrentModel();
       renderDetails();
@@ -408,7 +427,10 @@ export function bindCheckpointWorkspace({
     details.addEventListener("click", () => openDetails(model));
     actions.append(load, startup, details);
     card.append(previewWrap, body, actions);
-    card.addEventListener("dblclick", () => openDetails(model));
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button,a,input,textarea,select,label")) return;
+      openDetails(model);
+    });
     return card;
   };
 
@@ -487,6 +509,7 @@ export function bindCheckpointWorkspace({
   };
 
   const clearDetails = () => {
+    detailsRequestSerial += 1;
     selectedId = "";
     selectedDetails = null;
     state.selectedCheckpointAssetId = "";
@@ -604,6 +627,34 @@ export function bindCheckpointWorkspace({
     if (model) await setPinnedDefault(model, true);
   });
   $("#checkpointLoadNowButton")?.addEventListener("click", () => selectedDetails && activate(selectedDetails));
+  $("#checkpointInspectTechnicalButton")?.addEventListener("click", async () => {
+    if (!selectedDetails) return;
+    const assetId = selectedDetails.asset_id;
+    const requestId = ++detailsRequestSerial;
+    const button = $("#checkpointInspectTechnicalButton");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Inspecting…";
+    }
+    $("#checkpointDetailStatus").textContent = "Inspecting technical metadata and hashing the checkpoint. Large files may take a moment…";
+    try {
+      const response = await api.checkpointDetails(assetId, { inspect: true });
+      const merged = mergeCatalogModel(response) || response;
+      detailCache.set(assetId, merged);
+      if (requestId !== detailsRequestSerial || selectedId !== assetId) return;
+      selectedDetails = effectiveModel(merged);
+      renderDetails();
+    } catch (error) {
+      if (requestId === detailsRequestSerial && selectedId === assetId) {
+        $("#checkpointDetailStatus").textContent = `Unable to inspect checkpoint: ${error.message}`;
+      }
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Inspect Technical Metadata";
+      }
+    }
+  });
   $("#checkpointFetchCivitaiDetailButton")?.addEventListener("click", async () => {
     if (!selectedDetails) return;
     const button = $("#checkpointFetchCivitaiDetailButton");
@@ -658,6 +709,7 @@ export function bindCheckpointWorkspace({
         favorite: selectedDetails.favorite === true,
       });
       selectedDetails = mergeCatalogModel(updated) || updated;
+      detailCache.set(selectedDetails.asset_id, selectedDetails);
       refreshGenerationModelSelect?.();
       renderCards();
       renderDetails();

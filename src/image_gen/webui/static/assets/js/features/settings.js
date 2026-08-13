@@ -1,4 +1,4 @@
-import { api } from "../api.js";
+import { api } from "../api.js?v=theme-manager-tm02";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 import { nearestColorName } from "../color-names.js";
@@ -43,6 +43,14 @@ const DEFAULT_THEME_PALETTE = Object.freeze({
     primary_button_text: "#ffffff",
     secondary_button_text: "#d5f1ff",
   }),
+  semantic: Object.freeze({
+    surface_secondary: "#172431",
+    component_surface: "#111d29",
+    component_border: "#2b4358",
+    component_accent: "#179ee7",
+    text_primary: "#f4f9fd",
+    text_secondary: "#9db2c4",
+  }),
 });
 
 function clonePalette(palette) {
@@ -50,6 +58,7 @@ function clonePalette(palette) {
     accent: { ...DEFAULT_THEME_PALETTE.accent, ...(palette?.accent || {}) },
     surface: { ...DEFAULT_THEME_PALETTE.surface, ...(palette?.surface || {}) },
     typography: { ...DEFAULT_THEME_PALETTE.typography, ...(palette?.typography || {}) },
+    semantic: { ...DEFAULT_THEME_PALETTE.semantic, ...(palette?.semantic || {}) },
   };
 }
 
@@ -87,6 +96,18 @@ function normalizePalette(value = {}) {
       output.typography.secondary_button_text,
     );
   }
+  const semantic = value?.semantic && typeof value.semantic === "object" ? value.semantic : {};
+  const derivedSemantic = {
+    surface_secondary: mixHex(output.surface.color, "#ffffff", 0.08),
+    component_surface: output.surface.color,
+    component_border: mixHex(output.surface.color, "#ffffff", 0.22),
+    component_accent: output.accent.color,
+    text_primary: DEFAULT_THEME_PALETTE.semantic.text_primary,
+    text_secondary: DEFAULT_THEME_PALETTE.semantic.text_secondary,
+  };
+  Object.keys(derivedSemantic).forEach((key) => {
+    output.semantic[key] = normalizeHex(semantic[key], derivedSemantic[key]);
+  });
   return output;
 }
 
@@ -146,12 +167,27 @@ function applyThemeVariables(palette) {
   root.setProperty("--sky-500", accent);
   root.setProperty("--sky-600", mixHex(accent, "#000000", 0.18));
 
+  root.setProperty("--theme-surface-primary", surface);
+  root.setProperty("--theme-surface-secondary", palette.semantic.surface_secondary);
+  root.setProperty("--component-surface", palette.semantic.component_surface);
+  root.setProperty("--component-border", palette.semantic.component_border);
+  root.setProperty("--component-accent", palette.semantic.component_accent);
   root.setProperty("--charcoal-950", mixHex(surface, "#000000", 0.48));
   root.setProperty("--charcoal-900", mixHex(surface, "#000000", 0.24));
-  root.setProperty("--charcoal-850", surface);
-  root.setProperty("--charcoal-800", mixHex(surface, "#ffffff", 0.08));
-  root.setProperty("--charcoal-700", mixHex(surface, "#ffffff", 0.20));
-  root.setProperty("--line", mixHex(surface, "#ffffff", 0.22));
+  root.setProperty("--charcoal-850", palette.semantic.component_surface);
+  root.setProperty("--charcoal-800", palette.semantic.surface_secondary);
+  root.setProperty("--charcoal-700", mixHex(palette.semantic.surface_secondary, "#ffffff", 0.12));
+  root.setProperty("--line", palette.semantic.component_border);
+  root.setProperty("--text", palette.semantic.text_primary);
+  root.setProperty("--muted", palette.semantic.text_secondary);
+  root.setProperty("--text-primary", palette.semantic.text_primary);
+  root.setProperty("--text-secondary", palette.semantic.text_secondary);
+  root.setProperty("--text-muted", palette.semantic.text_secondary);
+  root.setProperty("--surface", surface);
+  root.setProperty("--surface-1", palette.semantic.component_surface);
+  root.setProperty("--surface-2", palette.semantic.surface_secondary);
+  root.setProperty("--surface-3", mixHex(palette.semantic.surface_secondary, "#ffffff", 0.10));
+  root.setProperty("--surface-raised", palette.semantic.surface_secondary);
 
   root.setProperty("--font-ui", FONT_FAMILY_STACKS[palette.typography.font_family]);
   root.setProperty("--primary-button-text", palette.typography.primary_button_text);
@@ -224,6 +260,17 @@ function setThemeEditorValues(palette) {
   if ($("#themePrimaryButtonTextHex")) $("#themePrimaryButtonTextHex").value = palette.typography.primary_button_text;
   if ($("#themeSecondaryButtonTextColor")) $("#themeSecondaryButtonTextColor").value = palette.typography.secondary_button_text;
   if ($("#themeSecondaryButtonTextHex")) $("#themeSecondaryButtonTextHex").value = palette.typography.secondary_button_text;
+  const semanticControls = {
+    surface_secondary: ["themeSurfaceSecondaryColor", "themeSurfaceSecondaryHex"],
+    component_surface: ["themeComponentSurfaceColor", "themeComponentSurfaceHex"],
+    component_border: ["themeComponentBorderColor", "themeComponentBorderHex"],
+    component_accent: ["themeComponentAccentColor", "themeComponentAccentHex"],
+    text_primary: ["themeTextPrimaryColor", "themeTextPrimaryHex"],
+    text_secondary: ["themeTextSecondaryColor", "themeTextSecondaryHex"],
+  };
+  Object.entries(semanticControls).forEach(([key, ids]) => {
+    ids.forEach((id) => { if ($(`#${id}`)) $(`#${id}`).value = palette.semantic[key]; });
+  });
 }
 
 function readThemeEditorValues(fallback) {
@@ -250,39 +297,201 @@ function readThemeEditorValues(fallback) {
       palette.typography.secondary_button_text,
     ),
   };
+  const semanticControls = {
+    surface_secondary: ["themeSurfaceSecondaryHex", "themeSurfaceSecondaryColor"],
+    component_surface: ["themeComponentSurfaceHex", "themeComponentSurfaceColor"],
+    component_border: ["themeComponentBorderHex", "themeComponentBorderColor"],
+    component_accent: ["themeComponentAccentHex", "themeComponentAccentColor"],
+    text_primary: ["themeTextPrimaryHex", "themeTextPrimaryColor"],
+    text_secondary: ["themeTextSecondaryHex", "themeTextSecondaryColor"],
+  };
+  palette.semantic = { ...palette.semantic };
+  Object.entries(semanticControls).forEach(([key, ids]) => {
+    palette.semantic[key] = normalizeHex($(`#${ids[0]}`)?.value || $(`#${ids[1]}`)?.value, palette.semantic[key]);
+  });
   return palette;
+}
+
+function validateThemeContrast(palette) {
+  const readability = [
+    ["Primary text", palette.semantic.text_primary, "primary surface", palette.surface.color, 4.5],
+    ["Primary text", palette.semantic.text_primary, "secondary surface", palette.semantic.surface_secondary, 4.5],
+    ["Primary text", palette.semantic.text_primary, "component surface", palette.semantic.component_surface, 4.5],
+    ["Secondary/muted text", palette.semantic.text_secondary, "primary surface", palette.surface.color, 4.5],
+    ["Secondary/muted text", palette.semantic.text_secondary, "secondary surface", palette.semantic.surface_secondary, 4.5],
+    ["Secondary/muted text", palette.semantic.text_secondary, "component surface", palette.semantic.component_surface, 4.5],
+  ];
+  const advisory = [
+    ["Component border", palette.semantic.component_border, "component surface", palette.semantic.component_surface, 3.0],
+    ["Component accent", palette.semantic.component_accent, "component surface", palette.semantic.component_surface, 3.0],
+    ["Accent", palette.accent.color, "primary surface", palette.surface.color, 3.0],
+    ["Primary button text", palette.typography.primary_button_text, "accent", palette.accent.color, 3.0],
+    ["Secondary button text", palette.typography.secondary_button_text, "secondary surface", palette.semantic.surface_secondary, 3.0],
+  ];
+  const textWarnings = [];
+  const advisoryWarnings = [];
+  const checks = [];
+  const evaluate = (entry, category) => {
+    const [label, foreground, backgroundLabel, background, minimum] = entry;
+    const ratio = contrastRatio(foreground, background);
+    const identical = String(foreground).toLowerCase() === String(background).toLowerCase();
+    const valid = !identical && ratio >= minimum;
+    let message = `${label} vs ${backgroundLabel}: ${ratio.toFixed(2)}:1 (recommended ${minimum.toFixed(1)}:1).`;
+    if (identical) message = `${label} and ${backgroundLabel} use the same color and may be unreadable.`;
+    checks.push({ label, backgroundLabel, ratio, minimum, valid, category, message });
+    if (!valid) (category === "readability" ? textWarnings : advisoryWarnings).push(message);
+  };
+  readability.forEach((entry) => evaluate(entry, "readability"));
+  advisory.forEach((entry) => evaluate(entry, "advisory"));
+  return { valid: true, textWarnings, advisoryWarnings, warnings: [...textWarnings, ...advisoryWarnings], checks };
 }
 
 function updateThemeWarning(palette) {
   const warning = $("#themePaletteWarning");
-  if (!warning) return;
-  const messages = [];
+  const report = $("#themeContrastReport");
+  const result = validateThemeContrast(palette);
+  const messages = [...result.warnings];
   if (relativeLuminance(palette.surface.color) > 0.22) {
-    messages.push("The selected dark surface color is fairly bright and may reduce text contrast.");
+    messages.push("The primary surface is fairly bright; inspect all controls in the live preview before saving.");
   }
   if (relativeLuminance(palette.accent.color) < 0.035) {
-    messages.push("The selected accent color is very dark and may make highlighted controls difficult to distinguish.");
+    messages.push("The accent is very dark and may make highlighted controls difficult to distinguish.");
   }
-  const primaryButtonBackground = palette.accent.color;
-  const secondaryButtonBackground = mixHex(palette.surface.color, "#ffffff", 0.08);
-  if (contrastRatio(palette.typography.primary_button_text, primaryButtonBackground) < 3) {
-    messages.push("Primary button font color has low contrast against the current accent color.");
+  if (warning) {
+    warning.textContent = messages.join(" ");
+    warning.classList.toggle("is-hidden", messages.length === 0);
+    warning.classList.remove("is-error");
   }
-  if (contrastRatio(palette.typography.secondary_button_text, secondaryButtonBackground) < 3) {
-    messages.push("Secondary button font color has low contrast against the current surface color.");
+  if (report) {
+    report.replaceChildren();
+    const heading = document.createElement("strong");
+    heading.textContent = result.textWarnings.length ? "Low contrast warning" : "Text contrast looks readable";
+    report.appendChild(heading);
+    const summary = document.createElement("span");
+    summary.textContent = result.textWarnings.length
+      ? ` ${result.textWarnings[0]} Saving is allowed, but the text may be difficult or impossible to read.`
+      : " Primary and secondary text meet the recommended 4.5:1 contrast target on all theme surfaces.";
+    report.appendChild(summary);
+    report.classList.remove("is-invalid");
+    report.classList.toggle("is-warning", result.textWarnings.length > 0);
+    report.classList.toggle("is-valid", result.textWarnings.length === 0);
   }
-  warning.textContent = messages.join(" ");
-  warning.classList.toggle("is-hidden", messages.length === 0);
+  const saveButton = $("#saveThemePaletteButton");
+  if (saveButton) {
+    saveButton.disabled = false;
+    saveButton.title = result.textWarnings.length
+      ? "Save is allowed; low-contrast colors may make text unreadable."
+      : "Save the current theme";
+  }
+  return result;
+}
+
+function confirmLowContrastIfNeeded(contrast, warningsEnabled, actionLabel = "apply this theme") {
+  if (!warningsEnabled || !contrast?.textWarnings?.length) return true;
+  const first = contrast.textWarnings[0];
+  const more = contrast.textWarnings.length > 1 ? `\n\nThere are ${contrast.textWarnings.length} text contrast warnings.` : "";
+  return window.confirm(`This theme may make text unreadable.\n\n${first}${more}\n\nAre you sure you want to ${actionLabel}?`);
 }
 
 function bindThemePalette(settings) {
   const dialog = $("#themePaletteDialog");
   if (!dialog) return;
 
-  let savedPalette = applyThemePalette(settings.theme_palette || DEFAULT_THEME_PALETTE, { persist: true });
+  let savedPalette = applyThemePalette(settings.theme_effective_palette || settings.theme_palette || DEFAULT_THEME_PALETTE, { persist: true });
   let workingPalette = clonePalette(savedPalette);
   let savedDuringOpen = false;
+  let contrastWarningsEnabled = settings.theme_contrast_warnings_enabled !== false;
   const manualNameEdits = { accent: false, surface: false };
+  const warningPreference = $("#themeContrastWarningsEnabled");
+  if (warningPreference) warningPreference.checked = contrastWarningsEnabled;
+
+  const renderThemeLibrary = (payload) => {
+    const list = $("#themeLocalPackageList");
+    const status = $("#themeLocalPackageStatus");
+    if (!list) return;
+    list.replaceChildren();
+    const packages = Array.isArray(payload?.packages) ? payload.packages : [];
+    packages.forEach((record) => {
+      const row = document.createElement("article");
+      row.className = "theme-package-row";
+      const copy = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = String(record.name || record.packageId || "Theme package");
+      const meta = document.createElement("small");
+      const synthetic = record.packageId === "imagegen.local.legacy-palette";
+      const packageContrastWarnings = Array.isArray(record.contrastWarnings) ? record.contrastWarnings : [];
+      meta.textContent = synthetic
+        ? "Built-in custom palette fallback"
+        : `${record.installedVersion || ""} · ${record.type || "theme"} · ${record.verificationState || "unverified"}${packageContrastWarnings.length ? " · low-contrast warning" : ""}`;
+      copy.append(title, meta);
+      const actions = document.createElement("div");
+      actions.className = "theme-package-actions";
+      const enabled = record.enabledState === true;
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = enabled ? "secondary-button" : "primary-button";
+      toggle.textContent = enabled ? "Active" : "Use";
+      toggle.disabled = enabled;
+      toggle.addEventListener("click", async () => {
+        try {
+          const packageContrastWarnings = Array.isArray(record.contrastWarnings) ? record.contrastWarnings : [];
+          if (contrastWarningsEnabled && packageContrastWarnings.length) {
+            const accepted = window.confirm(`This theme package may make text unreadable.\n\n${packageContrastWarnings[0]}\n\nAre you sure you want to apply this theme?`);
+            if (!accepted) return;
+          }
+          toggle.disabled = true;
+          const result = await api.enableThemePackage(record.packageId);
+          savedPalette = applyThemePalette(result.effectivePalette || savedPalette, { persist: true });
+          workingPalette = clonePalette(savedPalette);
+          setThemeEditorValues(workingPalette);
+          updateThemeWarning(workingPalette);
+          renderThemeLibrary(result.library);
+          notify(`Theme ${record.name || record.packageId} activated.`);
+        } catch (error) {
+          notify(error.message, "error");
+          toggle.disabled = false;
+        }
+      });
+      actions.appendChild(toggle);
+      if (!synthetic) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "secondary-button";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", async () => {
+          try {
+            remove.disabled = true;
+            const result = await api.removeThemePackage(record.packageId);
+            savedPalette = applyThemePalette(result.effectivePalette || savedPalette, { persist: true });
+            workingPalette = clonePalette(savedPalette);
+            setThemeEditorValues(workingPalette);
+            updateThemeWarning(workingPalette);
+            renderThemeLibrary(result.library);
+            notify(`Theme package ${record.name || record.packageId} removed.`);
+          } catch (error) {
+            notify(error.message, "error");
+            remove.disabled = false;
+          }
+        });
+        actions.appendChild(remove);
+      }
+      row.append(copy, actions);
+      list.appendChild(row);
+    });
+    if (status) {
+      const root = payload?.storage?.theme_library_root || payload?.storage?.themeLibraryRoot || "external theme library";
+      status.textContent = `${packages.length} appearance source${packages.length === 1 ? "" : "s"} · ${root}`;
+    }
+  };
+
+  const refreshThemeLibrary = async () => {
+    try {
+      renderThemeLibrary(await api.themeLibrary());
+    } catch (error) {
+      const status = $("#themeLocalPackageStatus");
+      if (status) status.textContent = `Local theme library unavailable: ${error.message}`;
+    }
+  };
 
   const updateSuggestedNameHint = (kind, suggestedName = null) => {
     const prefix = kind === "accent" ? "accentTheme" : "surfaceTheme";
@@ -323,6 +532,7 @@ function bindThemePalette(settings) {
     updateSuggestedNameHint("surface");
     applyThemePalette(workingPalette);
     updateThemeWarning(workingPalette);
+    void refreshThemeLibrary();
     if (!dialog.open) dialog.showModal();
     window.setTimeout(() => {
       const section = kind === "surface" ? $("#surfaceThemeSection") : $("#accentThemeSection");
@@ -398,6 +608,68 @@ function bindThemePalette(settings) {
   bindButtonTextColor("themePrimaryButtonTextColor", "themePrimaryButtonTextHex", "primary_button_text");
   bindButtonTextColor("themeSecondaryButtonTextColor", "themeSecondaryButtonTextHex", "secondary_button_text");
 
+  const bindSemanticColor = (colorId, hexId, semanticKey) => {
+    const colorInput = $(`#${colorId}`);
+    const hexInput = $(`#${hexId}`);
+    colorInput?.addEventListener("input", () => {
+      if (hexInput) hexInput.value = colorInput.value;
+      previewEditor();
+    });
+    hexInput?.addEventListener("input", () => {
+      const normalized = normalizeHex(hexInput.value, "");
+      if (!normalized) return;
+      if (colorInput) colorInput.value = normalized;
+      previewEditor();
+    });
+    hexInput?.addEventListener("blur", () => {
+      const normalized = normalizeHex(hexInput.value, workingPalette.semantic[semanticKey]);
+      hexInput.value = normalized;
+      if (colorInput) colorInput.value = normalized;
+      previewEditor();
+    });
+  };
+  bindSemanticColor("themeSurfaceSecondaryColor", "themeSurfaceSecondaryHex", "surface_secondary");
+  bindSemanticColor("themeComponentSurfaceColor", "themeComponentSurfaceHex", "component_surface");
+  bindSemanticColor("themeComponentBorderColor", "themeComponentBorderHex", "component_border");
+  bindSemanticColor("themeComponentAccentColor", "themeComponentAccentHex", "component_accent");
+  bindSemanticColor("themeTextPrimaryColor", "themeTextPrimaryHex", "text_primary");
+  bindSemanticColor("themeTextSecondaryColor", "themeTextSecondaryHex", "text_secondary");
+
+  warningPreference?.addEventListener("change", async () => {
+    contrastWarningsEnabled = Boolean(warningPreference.checked);
+    settings.theme_contrast_warnings_enabled = contrastWarningsEnabled;
+    try {
+      await api.saveSettings({ theme_contrast_warnings_enabled: contrastWarningsEnabled });
+      notify(contrastWarningsEnabled ? "Low-contrast theme warnings enabled." : "Low-contrast theme warnings disabled.");
+    } catch (error) {
+      contrastWarningsEnabled = !contrastWarningsEnabled;
+      warningPreference.checked = contrastWarningsEnabled;
+      settings.theme_contrast_warnings_enabled = contrastWarningsEnabled;
+      notify(error.message, "error");
+    }
+  });
+
+  $("#themeLocalPackageImportButton")?.addEventListener("click", async () => {
+    const input = $("#themeLocalPackageFile");
+    const file = input?.files?.[0];
+    if (!file) {
+      notify("Choose a local theme package first.", "warning");
+      return;
+    }
+    const button = $("#themeLocalPackageImportButton");
+    try {
+      if (button) button.disabled = true;
+      const result = await api.importThemePackage(file);
+      renderThemeLibrary(result.library);
+      if (input) input.value = "";
+      notify(`Imported ${result.installed?.name || "theme package"}. It remains disabled until you choose Use.`);
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+
   dialog.querySelectorAll(".theme-swatch").forEach((button) => {
     button.addEventListener("click", () => {
       const section = button.closest("[data-theme-kind]");
@@ -434,10 +706,15 @@ function bindThemePalette(settings) {
   $("#saveThemePaletteButton")?.addEventListener("click", async () => {
     const button = $("#saveThemePaletteButton");
     try {
-      if (button) button.disabled = true;
       workingPalette = readThemeEditorValues(workingPalette);
-      const saved = await api.saveSettings({ theme_palette: workingPalette });
-      savedPalette = applyThemePalette(saved.theme_palette || workingPalette, { persist: true });
+      const contrast = updateThemeWarning(workingPalette);
+      if (!confirmLowContrastIfNeeded(contrast, contrastWarningsEnabled, "save this theme")) return;
+      if (button) button.disabled = true;
+      const saved = await api.saveSettings({
+        theme_palette: workingPalette,
+        theme_contrast_warnings_enabled: contrastWarningsEnabled,
+      });
+      savedPalette = applyThemePalette(saved.theme_effective_palette || saved.theme_palette || workingPalette, { persist: true });
       settings.theme_palette = clonePalette(savedPalette);
       workingPalette = clonePalette(savedPalette);
       savedDuringOpen = true;
@@ -446,7 +723,7 @@ function bindThemePalette(settings) {
     } catch (error) {
       notify(error.message, "error");
     } finally {
-      if (button) button.disabled = false;
+      updateThemeWarning(workingPalette);
     }
   });
 

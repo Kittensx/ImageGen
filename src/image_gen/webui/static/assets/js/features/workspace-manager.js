@@ -1,5 +1,5 @@
 import { setActionIcon } from "../components/action-icons.js?v=0.1.1";
-import { setComponentShellState, setComponentShellVariant } from "../components/component-shell.js?v=workspace-manager1";
+import { setComponentShellState, setComponentShellVariant } from "../components/component-shell.js?v=content-capabilities2";
 import {
   clearWorkspaceLayoutPreference,
   compatibleWorkspaceComponents,
@@ -8,9 +8,18 @@ import {
   setWorkspaceComponentOrder,
   setWorkspaceComponentSpan,
   setWorkspaceComponentVisibility,
+  workspaceComponent,
   workspaceLayoutSnapshot,
   workspacePage,
-} from "../workspace/registry.js?v=workspace-manager1";
+} from "../workspace/registry.js?v=workspace-responsive2";
+import {
+  WORKSPACE_REPRESENTATIVE_WIDTHS,
+  WORKSPACE_WIDTH_CLASSES,
+  bindWorkspaceWidthObserver,
+  responsiveWorkspacePlacements,
+} from "../workspace/responsive.js?v=workspace-responsive2";
+
+let previewWidthClass = "wide";
 
 function byId(id) {
   return document.getElementById(id);
@@ -21,6 +30,39 @@ function option(value, label = value) {
   node.value = String(value);
   node.textContent = String(label);
   return node;
+}
+
+function titleToken(value) {
+  const token = String(value || "").trim();
+  if (!token) return "";
+  return token.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function previewPlan(pageId, layout = null) {
+  const widthClass = WORKSPACE_WIDTH_CLASSES.includes(previewWidthClass) ? previewWidthClass : "wide";
+  const representativeWidth = WORKSPACE_REPRESENTATIVE_WIDTHS[widthClass];
+  const sourceLayout = layout || workspaceLayoutSnapshot(document, pageId);
+  const placements = responsiveWorkspacePlacements(sourceLayout, workspaceComponent, widthClass);
+  return {
+    widthClass,
+    widthLabel: titleToken(widthClass),
+    representativeWidth,
+    placements,
+    byId: new Map(placements.map((placement) => [placement.componentId, placement])),
+  };
+}
+
+function previewHint(kind, plan, placement) {
+  const hint = document.createElement("small");
+  hint.className = "workspace-manager-preview-value";
+  if (!placement) {
+    hint.textContent = `${plan.widthLabel} preview: unavailable`;
+    return hint;
+  }
+  if (kind === "span") hint.textContent = `${plan.widthLabel} preview: ${placement.effectiveSpan}/12`;
+  else if (kind === "variant") hint.textContent = `${plan.widthLabel} preview: ${titleToken(placement.effectiveVariant)}`;
+  else hint.textContent = `${plan.widthLabel} preview: ${titleToken(placement.shellState || "expanded")}`;
+  return hint;
 }
 
 function componentNode(pageId, componentId) {
@@ -57,6 +99,38 @@ function stateOptions(hasSummary, current) {
   return select;
 }
 
+function renderResponsivePreview(pageId, plan = null) {
+  const canvas = byId("workspaceManagerPreviewCanvas");
+  const label = byId("workspaceManagerPreviewLabel");
+  if (!canvas || !label) return;
+  const page = workspacePage(pageId);
+  canvas.replaceChildren();
+  if (!page) {
+    label.textContent = "No workspace selected";
+    canvas.style.removeProperty("width");
+    return;
+  }
+  const activePlan = plan || previewPlan(pageId);
+  label.textContent = `${activePlan.widthLabel} - ${activePlan.representativeWidth}px workspace`;
+  canvas.dataset.previewWidthClass = activePlan.widthClass;
+  canvas.style.width = `${activePlan.representativeWidth}px`;
+  activePlan.placements.forEach((placement) => {
+    const descriptor = workspaceComponent(placement.componentId);
+    const card = document.createElement("div");
+    card.className = `workspace-manager-preview-card${placement.visible === false ? " is-hidden-component" : ""}`;
+    card.style.gridColumn = `span ${placement.effectiveSpan}`;
+    card.dataset.previewComponent = placement.componentId;
+    card.dataset.previewVariant = placement.effectiveVariant;
+    card.dataset.previewShellState = placement.shellState || "expanded";
+    const title = document.createElement("strong");
+    title.textContent = descriptor?.title || placement.componentId;
+    const meta = document.createElement("small");
+    meta.textContent = `${placement.effectiveSpan}/12 · ${titleToken(placement.effectiveVariant)} · ${titleToken(placement.shellState || "expanded")}`;
+    card.append(title, meta);
+    canvas.append(card);
+  });
+}
+
 function renderManager(pageId) {
   const list = byId("workspaceManagerComponentList");
   const summary = byId("workspaceManagerSummary");
@@ -65,11 +139,14 @@ function renderManager(pageId) {
   list.replaceChildren();
   if (!page) {
     summary.textContent = "No registered workspace is selected.";
+    renderResponsivePreview("");
     return;
   }
 
   const registered = compatibleWorkspaceComponents(pageId);
   const layout = workspaceLayoutSnapshot(document, pageId);
+  const activePreview = previewPlan(pageId, layout);
+  const previewById = activePreview.byId;
   const layoutById = new Map(layout.components.map((item) => [item.componentId, item]));
   const ordered = [...registered].sort((left, right) => {
     const leftOrder = layoutById.get(left.componentId)?.order ?? Number.MAX_SAFE_INTEGER;
@@ -77,13 +154,14 @@ function renderManager(pageId) {
     return leftOrder - rightOrder || left.title.localeCompare(right.title);
   });
   const required = new Set(page.requiredComponents);
-  summary.textContent = `${page.title}: ${registered.length} compatible registered component${registered.length === 1 ? "" : "s"}. Changes are saved locally for this workspace.`;
+  summary.textContent = `${page.title}: ${registered.length} compatible registered component${registered.length === 1 ? "" : "s"}. Base values are saved; the ${activePreview.widthLabel} preview values show the responsive result without overwriting the base layout.`;
 
   if (!ordered.length) {
     const empty = document.createElement("div");
     empty.className = "workspace-manager-empty";
     empty.textContent = "This workspace does not have registered shell components yet.";
     list.append(empty);
+    renderResponsivePreview(pageId);
     return;
   }
 
@@ -97,6 +175,7 @@ function renderManager(pageId) {
       visible: descriptor.defaultVisible,
     };
     const node = componentNode(pageId, descriptor.componentId);
+    const previewPlacement = previewById.get(descriptor.componentId);
     const visible = placement.visible !== false && !node?.hidden;
     const row = document.createElement("article");
     row.className = `workspace-manager-row${visible ? "" : " is-hidden-component"}`;
@@ -141,7 +220,7 @@ function renderManager(pageId) {
 
     const spanField = document.createElement("label");
     spanField.className = "workspace-manager-field workspace-manager-field--span";
-    spanField.append(document.createTextNode("Width"));
+    spanField.append(document.createTextNode("Base width"));
     const span = document.createElement("select");
     span.setAttribute("aria-label", `${descriptor.title} width`);
     for (let value = descriptor.minGridSpan; value <= descriptor.maxGridSpan; value += 1) {
@@ -153,21 +232,21 @@ function renderManager(pageId) {
       persist(pageId);
       renderManager(pageId);
     });
-    spanField.append(span);
+    spanField.append(span, previewHint("span", activePreview, previewPlacement));
 
     const variantField = document.createElement("label");
     variantField.className = "workspace-manager-field";
-    variantField.append(document.createTextNode("Style"));
+    variantField.append(document.createTextNode("Base style"));
     const variant = document.createElement("select");
     variant.setAttribute("aria-label", `${descriptor.title} style`);
-    descriptor.supportedVariants.forEach((value) => variant.append(option(value, value.replace(/(^.|-.)/g, (match) => match.replace("-", " ").toUpperCase()))));
+    descriptor.supportedVariants.forEach((value) => variant.append(option(value, titleToken(value))));
     variant.value = placement.variant || descriptor.defaultVariant;
     variant.addEventListener("change", () => {
       if (node) setComponentShellVariant(node, variant.value);
       persist(pageId);
       renderManager(pageId);
     });
-    variantField.append(variant);
+    variantField.append(variant, previewHint("variant", activePreview, previewPlacement));
 
     const stateField = document.createElement("label");
     stateField.className = "workspace-manager-field";
@@ -179,7 +258,7 @@ function renderManager(pageId) {
       persist(pageId);
       renderManager(pageId);
     });
-    stateField.append(shellState);
+    stateField.append(shellState, previewHint("state", activePreview, previewPlacement));
 
     const actions = document.createElement("div");
     actions.className = "workspace-manager-row-actions";
@@ -207,6 +286,7 @@ function renderManager(pageId) {
     row.append(identity, move, spanField, variantField, stateField, actions);
     list.append(row);
   });
+  renderResponsivePreview(pageId, activePreview);
 }
 
 export function bindWorkspaceManager() {
@@ -222,6 +302,20 @@ export function bindWorkspaceManager() {
   }
   pageSelect.value = pages[0].pageId;
   pageSelect.addEventListener("change", () => renderManager(pageSelect.value));
+  document.querySelectorAll("[data-workspace-preview-class]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const requested = String(button.dataset.workspacePreviewClass || "").toLowerCase();
+      if (!WORKSPACE_WIDTH_CLASSES.includes(requested)) return;
+      previewWidthClass = requested;
+      document.querySelectorAll("[data-workspace-preview-class]").forEach((item) => {
+        const active = item === button;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-pressed", String(active));
+      });
+      renderManager(pageSelect.value);
+    });
+  });
+  bindWorkspaceWidthObserver(byId("workspaceManagerWorkspace"));
   byId("workspaceManagerOpenPage")?.addEventListener("click", () => requestWorkspace(pageSelect.value));
   byId("workspaceManagerReset")?.addEventListener("click", () => {
     const pageId = pageSelect.value;

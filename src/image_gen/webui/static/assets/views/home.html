@@ -1,6 +1,6 @@
 <main class="home-workspace" id="homeWorkspace" data-active-workspace="home" aria-label="Home" data-product-aria-template="{product} Home">
   <div class="home-component-grid" id="homeComponentGrid" data-workspace-page="home">
-    <section class="home-component home-hero" data-workspace-component="home.welcome" data-component-shell data-component-variant="featured" data-component-span="12">
+    <section class="home-component home-hero" data-workspace-component="home.welcome" data-component-shell data-component-variant="feature" data-component-span="12">
       <header class="component-shell__header" data-component-shell-header>
         <div class="component-shell__identity" data-component-shell-identity>
           <span class="ui-icon component-shell__icon" data-icon="home" aria-hidden="true"></span>
@@ -258,25 +258,39 @@
         <div class="home-changelog-footer"><span class="home-changelog-status" id="homeChangelogStatus">Checking for developer updates...</span></div>
       </div>
 
-      <dialog class="home-changelog-reader" id="homeChangelogReader" aria-labelledby="homeChangelogReaderTitle">
-        <div class="home-changelog-reader-shell">
-          <header class="home-changelog-reader-header">
-            <div>
-              <span class="home-eyebrow" id="homeChangelogReaderDate">Changelog</span>
-              <h3 id="homeChangelogReaderTitle" data-product-name-template="{product} update">Application update</h3>
-            </div>
-            <div class="home-changelog-reader-actions ui-action-bar" data-action-bar data-action-bar-overflow-label="Changelog reader actions">
-              <a class="ui-action-button ui-icon-control" id="homeChangelogReaderSource" href="https://github.com/Kittensx/ImageGen/tree/main/changelog" target="_blank" rel="noopener noreferrer" aria-label="View changelog source" title="View changelog source" hidden>
-                <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
-              </a>
-              <button class="ui-action-button ui-icon-control" id="homeChangelogReaderClose" type="button" aria-label="Close changelog reader" title="Close changelog reader">
-                <span class="ui-icon" data-icon="close" aria-hidden="true"></span>
-              </button>
-            </div>
-          </header>
-          <article class="home-markdown-reader" id="homeChangelogMarkdown" tabindex="0"></article>
+
+    </section>
+
+    <section class="home-component home-help-center" data-workspace-component="home.help-center" data-component-shell data-home-section="help-center" data-component-variant="horizontal" data-component-span="12">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="info" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Help Center</strong>
         </div>
-      </dialog>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Help Center actions">
+          <button class="ui-action-button ui-icon-control" id="homeHelpOpenButton" type="button" aria-label="Open Help Center" title="Open Help Center" data-action-priority="90">
+            <span class="ui-icon" data-icon="external-link" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+      <div class="component-shell__body" data-component-shell-body>
+        <div class="home-component-heading">
+          <div><span class="home-eyebrow">Documentation &amp; guidance</span><h3>Help Center</h3></div>
+        </div>
+        <p class="home-component-copy">Search public IMAGE_GEN help, browse topics by category, and open related guides without leaving the WebUI.</p>
+        <div class="help-search-field home-help-search-field">
+          <label for="homeHelpSearch">Search help</label>
+          <input id="homeHelpSearch" type="search" autocomplete="off" placeholder="Type at least 3 letters…" aria-controls="homeHelpSearchResults">
+          <div class="help-search-dropdown" id="homeHelpSearchResults" role="listbox" hidden></div>
+        </div>
+        <div class="home-help-center-grid">
+          <section class="home-help-tree-card"><h4>Browse topics</h4><nav class="help-topic-tree help-topic-tree--compact" id="homeHelpTopicTree" aria-label="Help topics"></nav></section>
+          <section class="home-help-suggested-card"><h4>Suggested topics</h4><div class="home-help-suggested-topics" id="homeHelpSuggestedTopics"></div></section>
+        </div>
+        <div class="home-changelog-footer"><span class="home-changelog-status" id="homeHelpStatus">Help files are loaded from the public help_documentation folder only.</span></div>
+      </div>
+
+
     </section>
   </div>
 </main>
