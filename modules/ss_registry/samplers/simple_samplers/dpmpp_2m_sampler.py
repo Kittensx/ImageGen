@@ -5,6 +5,8 @@ from typing import Any, Optional
 import torch
 
 from image_gen.systems.guidance import (
+    EffectiveGuidanceController,
+    EffectiveGuidanceProfile,
     prompt_cfg_payload_from_request,
     requested_cfg_scale_for_step,
 )
@@ -412,6 +414,19 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
             schedule=schedule,
             sigmas=sigmas,
         )
+        sampler_kwargs = dict(getattr(request, "sampler_kwargs", {}) or {})
+        guidance_profile = EffectiveGuidanceProfile.from_settings(
+            requested_cfg_scale=float(cfg_scale),
+            get_setting=lambda name, default: sampler_kwargs.get(name, default),
+            sampler_local_rescale_cfg=False,
+            sampler_local_rescale_factor=1.0,
+        )
+        guidance_controller = EffectiveGuidanceController(guidance_profile)
+        sigma_max = sigmas[0] if sigmas.numel() else torch.tensor(0.0, device=x.device)
+        sigma_min = sigmas[-1] if sigmas.numel() else torch.tensor(0.0, device=x.device)
+        guidance_shaping_active_any = False
+        guidance_shaping_auto_applied_any = False
+        cfg_early_floor_applied_any = False
 
         for i in range(sigmas.numel() - 1):
             sigma = sigmas[i]
@@ -432,15 +447,38 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 resolver = conditioning_extra.get("resolver")
                 stepwise_conditioning_used = resolver is not None
 
-            step_cfg_scale, prompt_cfg_step = requested_cfg_scale_for_step(
+            step_requested_cfg_scale, prompt_cfg_step = requested_cfg_scale_for_step(
                 request, step_index=i, total_steps=effective_steps
+            )
+            step_effective_cfg_scale, guidance_step = guidance_controller.compute(
+                step_index=i,
+                total_steps=effective_steps,
+                sigma=sigma,
+                sigma_max=sigma_max,
+                sigma_min=sigma_min,
+                requested_cfg_scale=step_requested_cfg_scale,
+            )
+            guidance_step.update(prompt_cfg_step)
+            guidance_shaping_active_any = guidance_shaping_active_any or bool(
+                guidance_step.get("guidance_shaping_active")
+            )
+            guidance_shaping_auto_applied_any = guidance_shaping_auto_applied_any or bool(
+                guidance_step.get("guidance_shaping_auto_applied")
+            )
+            cfg_early_floor_applied_any = cfg_early_floor_applied_any or bool(
+                guidance_step.get("cfg_early_floor_applied")
             )
             cfg_effective_per_step.append({
                 "step_index": int(i),
-                "requested_cfg_scale": float(step_cfg_scale),
-                "effective_cfg_scale": float(step_cfg_scale),
+                "sigma": float(sigma.item()) if hasattr(sigma, "item") else float(sigma),
+                "timestep": float(timestep.item()) if hasattr(timestep, "item") else float(timestep),
+                "requested_cfg_scale": float(step_requested_cfg_scale),
+                "effective_cfg_scale": float(step_effective_cfg_scale),
+                "effective_cfg_scale_pre_rescale": float(
+                    guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale)
+                ),
                 "ui_cfg_scale": float(cfg_scale),
-                **prompt_cfg_step,
+                **guidance_step,
             })
 
             active_regions = (
@@ -466,7 +504,7 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         timestep,
                         cond,
                         uncond,
-                        step_cfg_scale,
+                        step_effective_cfg_scale,
                         active_regions,
                         regional_resolver.overlap_policy,
                     )
@@ -477,7 +515,7 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         timestep,
                         cond,
                         uncond,
-                        step_cfg_scale,
+                        step_effective_cfg_scale,
                     )
                 if denoised.dtype != torch.float32:
                     raise TypeError(
@@ -494,7 +532,7 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         timestep,
                         cond,
                         uncond,
-                        step_cfg_scale,
+                        step_effective_cfg_scale,
                         active_regions,
                         regional_resolver.overlap_policy,
                     )
@@ -505,7 +543,7 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         timestep,
                         cond,
                         uncond,
-                        step_cfg_scale,
+                        step_effective_cfg_scale,
                     )
                 sigma_value = torch.as_tensor(
                     sigma, device=x.device, dtype=torch.float32
@@ -582,9 +620,9 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                     "guidance_math_version", "phase11g_shared_guidance_v1"
                 ),
                 "cfg_rescale": denoising_contract.get("cfg_rescale", 0.0),
-                "requested_cfg_scale": float(step_cfg_scale),
-                "effective_cfg_scale": float(step_cfg_scale),
-                **prompt_cfg_step,
+                "requested_cfg_scale": float(step_requested_cfg_scale),
+                "effective_cfg_scale": float(step_effective_cfg_scale),
+                **guidance_step,
                 "cfg_rescale_applied": bool(denoising_contract.get("cfg_rescale_applied", False)),
                 "legacy_clamp_guidance": bool(denoising_contract.get("legacy_clamp_guidance", False)),
                 **history,
@@ -700,7 +738,7 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 latent_after=x,
                 noise_pred=None,
                 guided_noise=None,
-                cfg_scale=step_cfg_scale,
+                cfg_scale=step_effective_cfg_scale,
                 extra=trace_extra,
                 predicted_x0_snapshot=preview_predicted_x0.to(dtype=model_input_dtype),
             )
@@ -804,6 +842,41 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 "prompt_cfg_schedule": prompt_cfg_payload_from_request(request),
                 "prompt_cfg_applied": any(bool(item.get("prompt_cfg_applied")) for item in cfg_effective_per_step),
                 "cfg_effective_per_step": cfg_effective_per_step,
+                "cfg_step_series": {
+                    "schema_version": 1,
+                    "coordinate": "completed_denoising_step",
+                    "source": "sampler_recorded",
+                    "supports_future_step_overrides": True,
+                    "points": [
+                        {
+                            "step_index": int(item.get("step_index", index)),
+                            "requested_cfg_scale": float(item.get("requested_cfg_scale", cfg_scale)),
+                            "effective_cfg_scale": float(item.get("effective_cfg_scale", cfg_scale)),
+                            "sigma": item.get("sigma"),
+                            "timestep": item.get("timestep"),
+                            "guidance_mode": item.get("cfg_guidance_mode", guidance_profile.cfg_guidance_mode),
+                            "cfg_rescale": float(getattr(request, "cfg_rescale", 0.0) or 0.0),
+                            "cfg_rescale_applied": bool(float(getattr(request, "cfg_rescale", 0.0) or 0.0) > 0.0),
+                            "override_source": (
+                                item.get("cfg_source", "superhybrid_prompt")
+                                if bool(item.get("prompt_cfg_applied", False))
+                                else item.get("override_source", "base_request")
+                            ),
+                            "ui_cfg_scale": item.get("ui_cfg_scale", cfg_scale),
+                            "prompt_cfg_applied": bool(item.get("prompt_cfg_applied", False)),
+                            "transition_id": item.get("transition_id"),
+                        }
+                        for index, item in enumerate(cfg_effective_per_step)
+                    ],
+                },
+                "cfg_effective_range": {
+                    "min": min((float(item["effective_cfg_scale"]) for item in cfg_effective_per_step), default=float(cfg_scale)),
+                    "max": max((float(item["effective_cfg_scale"]) for item in cfg_effective_per_step), default=float(cfg_scale)),
+                },
+                "guidance_mode": guidance_profile.cfg_guidance_mode,
+                "guidance_shaping_active": guidance_shaping_active_any,
+                "guidance_shaping_auto_applied": guidance_shaping_auto_applied_any,
+                "cfg_early_floor_applied": cfg_early_floor_applied_any,
                 "regional_guidance_used": bool(regional_guidance_active_any),
                 "regional_backend": "image_gen_model_output" if regional_guidance_active_any else "none",
                 "regional_runtime": regional_runtime,

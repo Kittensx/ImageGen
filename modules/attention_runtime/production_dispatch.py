@@ -74,6 +74,31 @@ def _model_head_dimensions(signature: dict[str, Any]) -> list[int]:
     )
 
 
+def _mslk_supported_head_dimensions(splitk_module: Any, profile: dict[str, Any]) -> dict[str, list[int]]:
+    native_dims: list[int] = []
+    profile_dims = sorted(
+        int(v)
+        for v in profile.get("validated_head_dimensions", [])
+        if isinstance(v, int) and not isinstance(v, bool)
+    )
+    get_supported = getattr(splitk_module, "get_supported_head_dims", None)
+    if callable(get_supported):
+        try:
+            native_dims = sorted(
+                int(v)
+                for v in get_supported()
+                if isinstance(v, int) and not isinstance(v, bool)
+            )
+        except Exception:
+            native_dims = []
+    combined = sorted(set(native_dims) | set(profile_dims))
+    return {
+        "operator": native_dims,
+        "profile": profile_dims,
+        "effective": combined,
+    }
+
+
 def verified_production_dispatch_decision(
     model_signature: dict[str, Any],
     *,
@@ -85,8 +110,11 @@ def verified_production_dispatch_decision(
     profile = triton_splitk.get_production_validation_diagnostics()
     release_identity = verify_release_stack()
     required_dims = _model_head_dimensions(model_signature)
-    validated_dims = sorted(int(v) for v in profile.get("validated_head_dimensions", []))
-    missing_dims = sorted(set(required_dims) - set(validated_dims))
+    supported_dims = _mslk_supported_head_dimensions(triton_splitk, profile)
+    operator_dims = supported_dims["operator"]
+    validated_dims = supported_dims["profile"]
+    effective_dims = supported_dims["effective"]
+    missing_dims = sorted(set(required_dims) - set(effective_dims))
     reasons: list[str] = []
     if not release_identity.get("runtime_compatible"):
         details = "; ".join(
@@ -105,7 +133,7 @@ def verified_production_dispatch_decision(
         )
     if missing_dims:
         reasons.append(
-            "The model requires head dimensions absent from the validated profile: "
+            "The model requires head dimensions absent from the qualified MSLK operator support set: "
             + ", ".join(str(v) for v in missing_dims)
         )
     if profile.get("provider") not in {None, _REQUIRED_PROVIDER}:
@@ -125,6 +153,8 @@ def verified_production_dispatch_decision(
         "processor": "ImageGenMSLKXFormersAttnProcessor",
         "required_head_dimensions": required_dims,
         "validated_head_dimensions": validated_dims,
+        "operator_supported_head_dimensions": operator_dims,
+        "effective_supported_head_dimensions": effective_dims,
         "missing_head_dimensions": missing_dims,
         "validation_dtype": validation_dtype,
         "profile": profile,
@@ -182,6 +212,8 @@ def capability_production_dispatch_decision(
         "processor": "ImageGenMSLKXFormersAttnProcessor",
         "required_head_dimensions": _model_head_dimensions(model_signature),
         "validated_head_dimensions": [],
+        "operator_supported_head_dimensions": [],
+        "effective_supported_head_dimensions": [],
         "missing_head_dimensions": [],
         "validation_dtype": validation_dtype,
         "cuda_available": cuda_available,

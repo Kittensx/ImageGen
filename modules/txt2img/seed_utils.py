@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 from collections.abc import Iterator
 
@@ -8,6 +9,32 @@ import torch
 
 MAX_SEED = 2**31 - 1
 SEED_SPACE = MAX_SEED + 1
+
+
+_SEED_RANGE_RE = re.compile(
+    r"^\s*(?:-1\s*,\s*)?\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]\s*$"
+)
+
+
+def parse_seed_range_expression(seed: object) -> tuple[int, int] | None:
+    """Parse the WebUI-compatible finite random-seed range syntax.
+
+    Accepted forms are ``[5000,15000]`` and ``-1, [5000,15000]``.
+    ``None`` is returned for ordinary integer/random seed values so callers can
+    retain their existing fixed-seed behavior.
+    """
+
+    if seed is None:
+        return None
+    match = _SEED_RANGE_RE.match(str(seed).strip())
+    if match is None:
+        return None
+    minimum, maximum = int(match.group(1)), int(match.group(2))
+    if minimum > maximum:
+        minimum, maximum = maximum, minimum
+    if minimum < 0 or maximum > MAX_SEED:
+        raise ValueError(f"Seed range must stay between 0 and {MAX_SEED}.")
+    return minimum, maximum
 
 
 def resolve_seed(seed: int | None) -> int:

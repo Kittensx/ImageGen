@@ -62,6 +62,42 @@ class ConfigResolver:
             text_encoder_config_path=text_encoder_config_path,
         )
 
+
+    def resolve_explicit(
+        self,
+        *,
+        architecture: str,
+        root_dir: str,
+        unet_config_path: str,
+        vae_config_path: str,
+        text_encoder_config_path: str,
+        manifest_path: str | None = None,
+    ) -> ResolvedConfigs:
+        required = [unet_config_path, vae_config_path, text_encoder_config_path]
+        missing = [path for path in required if not os.path.exists(path)]
+        if missing:
+            joined = "\n".join(missing)
+            raise FileNotFoundError(
+                f"Missing required explicit config files for architecture '{architecture}':\n{joined}"
+            )
+
+        manifest: dict = {}
+        resolved_manifest_path = str(manifest_path or "")
+        if resolved_manifest_path and os.path.exists(resolved_manifest_path):
+            with open(resolved_manifest_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            manifest = payload if isinstance(payload, dict) else {}
+
+        return ResolvedConfigs(
+            architecture=architecture,
+            root_dir=str(root_dir),
+            manifest_path=resolved_manifest_path,
+            manifest=manifest,
+            unet_config_path=str(unet_config_path),
+            vae_config_path=str(vae_config_path),
+            text_encoder_config_path=str(text_encoder_config_path),
+        )
+
     def _map_architecture_to_dir(self, architecture: str) -> str:
         if architecture == "sdxl":
             return "sdxl"

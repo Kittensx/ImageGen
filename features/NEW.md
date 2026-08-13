@@ -2,90 +2,117 @@
 
 This page highlights recent user-visible improvements present in the current source. It is intentionally shorter and more product-focused than the chronological changelog.
 
-## Canvas Expansion and Shape Adaptation
+## Stable Diffusion 2.x Generation
 
-ImageGen now includes a generative Canvas Expansion workflow for adapting an existing composition to a larger target shape without stretching the protected source image.
+Qualified **Stable Diffusion 2.x** checkpoints can now use ImageGen's normal generation runtime through a dedicated OpenCLIP conditioning path and SD 2.x runtime-profile contract.
 
-Current workflows include:
+SD 2.x no longer reuses SD 1.x text-conditioning assumptions. The runtime validates the 1024-wide OpenCLIP conditioning contract, resolves SD 2.x prediction/runtime profiles, and keeps architecture qualification explicit.
 
-```text
-fresh txt2img result
--> optional Expand After Generation
--> expanded intermediate image
-```
+SDXL remains planned for base-model generation.
 
-and:
+## Stronger LoRA Compatibility and Inspection
 
-```text
-existing image
--> Expand Existing Image
--> expanded intermediate image
-```
+LoRA compatibility now distinguishes:
 
-Typical uses include portrait-to-square, square-to-landscape, square-to-taller-portrait, and other larger-canvas conversions.
+- Stable Diffusion family;
+- adapter format;
+- target components; and
+- actual runtime-loader support.
 
-The runtime supports source placement, preserve/feather/generate areas, Edge Pad context initialization, an optional Reflect Pad mode, extension prompts, expansion denoising, source-handoff tracking, and replayable geometry/inference metadata.
+The standard adapter loader covers conventional Kohya/Diffusers/PEFT/up-down LoRA representations when their targets map cleanly to supported model components.
 
-This is intentionally an **intermediate image product**. A future general Img2Img module is planned to provide the next refinement stage.
+ImageGen can also recognize formats such as LoHa and LoKr without pretending the standard loader can execute them. Unsupported formats are reported clearly instead of being silently routed through an unsafe generic fallback.
 
-## End-to-End LoRA Generation
+## Asset Hub
 
-LoRA has moved beyond future-facing folders/metadata and is now part of the active generation runtime.
+ImageGen now includes a provider-neutral Asset Hub, with **Civitai as the first provider**.
 
-Current work includes:
-
-- discovery and compatibility scanning;
-- weighted LoRA application;
-- multiple LoRAs per generation;
-- prompt/structured LoRA normalization;
-- generation/replay provenance;
-- dedicated LoRA WebUI tooling; and
-- CivitAI-oriented metadata/preview support.
-
-## Pixel-Neural Hires
-
-Hires now uses supported neural `.pth` upscalers in image space rather than the retired latent-only interpolation modes.
-
-The active Hires flow decodes the base image, runs the selected neural upscaler, resolves the exact requested target, re-encodes through the VAE, and performs the refinement pass.
-
-Recent Hires work also adds stronger tiling, memory preflight, stage-owned component residency, replay identity, and intermediate diagnostic support.
-
-## Leaner Replay Files and Output Metadata
-
-ImageGen's replay format has been streamlined around a compact authoritative replay record.
-
-Recent cleanup removes several forms of duplicated data from the normal replay JSON, including redundant prompt assets, scheduler/schedule structures, and execution-only runtime records. Deeper troubleshooting information remains available through a separately pruned diagnostics record.
-
-The result is a clearer division between:
+The current flow supports:
 
 ```text
-replay data -> what is needed to reproduce the request
-
-diagnostics -> what is needed to investigate execution
+discover
+-> stage download
+-> verify size/hash
+-> classify
+-> install or quarantine
+-> record provenance
 ```
 
-This reduces save-file redundancy and lowers output finalization/storage overhead.
+Downloads remain outside live model folders until verification and installation succeed. Installed assets retain local provenance so useful provider/model metadata can remain available offline.
 
-## Safer Output Commits
+## Help Center
 
-Image, TXT, replay JSON, and diagnostic sidecars are staged before the final paths are committed. If a write fails, ImageGen cleans up the transaction rather than intentionally leaving a partially committed batch.
+The WebUI now includes a searchable Help Center backed by the public `help_documentation/` tree.
 
-## Faster Generation and Finalization Path
+Topics can provide category navigation, related guides, local images/video, and explicit external links. The Home Changelog now uses the same shared Markdown viewer instead of maintaining a separate document renderer.
 
-Recent runtime, Hires, memory-lifecycle, and output-path cleanup has reduced unnecessary work in the generation pipeline and in post-generation serialization.
+## Theme Manager
 
-Current alpha testing has shown materially faster normal txt2img and Hires workflows than earlier development builds. These are development observations rather than universal performance guarantees: actual time depends on GPU, model, target size, sampler/scheduler, attention backend, preview behavior, Hires configuration, and memory pressure.
+Theme Manager now exposes semantic appearance roles for application surfaces, component/card surfaces, borders, accents, primary text, and secondary text.
 
-## Improved Prompt Authoring
+The editor reports contrast diagnostics without silently changing the user's colors. Low-contrast themes remain allowed, with a confirmation warning enabled by default.
 
-The current source includes the newer **SuperHybrid** prompt workflow alongside the legacy and experimental parser paths, plus shortcut profiles, prompt presets, validation/preview tools, and regional prompt tooling.
+Local theme-package import is also available with validation, explicit activation, and safety checks that reject executable/script content and unsafe package paths.
 
-## More Focused Asset Workspaces
+## Workspace Manager and Responsive Layouts
 
-The WebUI now separates major asset tasks more clearly, including dedicated checkpoint and LoRA workspaces instead of forcing all asset behavior into one generation form.
+Workspace Manager now controls registered page components using portable base layouts.
 
-## Stronger Replay and Provenance for Advanced Workflows
+Wide, Standard, Compact, and Narrow presentations derive from the same saved layout based on the actual workspace width rather than forcing users to maintain separate layouts for every display size.
 
-Hires and Canvas Expansion now carry more of the information required to inspect how a result was produced, including relevant asset identities, exact target geometry, handoff behavior, and advanced-generation settings.
+## Better Seed and Parameter Randomization
 
-The goal is for newer multi-stage workflows to remain reviewable instead of becoming opaque one-off actions.
+Advanced Seed controls now live directly beneath Seed and can switch between:
+
+- sequential;
+- random; and
+- random-within-range behavior.
+
+The Seed expression and structured range controls synchronize. Range forms such as `[5000,15000]`, `-1 [5000,15000]`, and `-1, [5000,15000]` are accepted and normalized.
+
+Eligible numeric settings also have a shared advanced range editor with random min/max values, optional integer resolution, and independent hard bounds. CFG Scale uses CFG-appropriate examples and runtime locks instead of inheriting Seed-specific values.
+
+## CFG Lab Presets
+
+CFG Lab can now save user presets inside ImageGen and import/export preset files. CFG-related random-range state can travel with those presets.
+
+Effective CFG min/max locks are enforced by the guidance runtime rather than existing only as visual UI limits.
+
+## More Capable Queue Control
+
+Queued work can now be paused and resumed per item, and active multi-image work can pause at a safe image boundary.
+
+Paused jobs can coexist while other non-paused work continues. Queued items can be moved higher or lower without silently taking over the active generation.
+
+Finite and continuous generation expose clearer progress such as `2 of 20` and `2 of ∞`.
+
+## Safer Replay Preferences
+
+Replay now keeps a stronger boundary between generation state and user-owned operational preferences.
+
+Historical runs no longer automatically re-enable TXT/diagnostic sidecars, low-resolution Hires artifacts, or overwrite the user's preferred Hires upscaler merely because an older run used different output settings.
+
+Current defaults favor the compact replay record:
+
+- TXT sidecar off;
+- compact replay JSON on;
+- diagnostics JSON off; and
+- exact low-resolution Hires base artifact off.
+
+## Faster Variation Matrix Workflow
+
+Variation Matrix still validates expanded jobs internally, but users no longer need to manually create a separate `validated job` state before queueing the previewed Cartesian expansion.
+
+## Improved Hires Recovery
+
+When Hires has no valid upscaler selected, the UI now focuses the affected Hires control and provides recovery guidance instead of relying only on a detached corner error.
+
+The preferred Hires upscaler is also preserved as a user preference across unrelated replay actions.
+
+## Better REGION Selection
+
+New REGION boxes prefer nearby free/low-overlap placement when possible, and overlapping/contained regions can be selected through a region-stack list so buried boxes are easier to edit.
+
+## In-Program User Configuration Editing
+
+`user_config/user-config.yml` can now be edited from inside ImageGen. YAML is validated before save, the write is atomic, and the previous file is retained as a backup.

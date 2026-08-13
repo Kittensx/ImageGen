@@ -105,6 +105,8 @@ _DEFAULT_PATHS: dict[str, str] = {
     "embeddings_dir": "models/Embeddings",
     "hypernetworks_dir": "models/StableDiffusion/Hypernetworks",
     "local_config_dir": "modules/local_configs",
+    "runtime_assets_dir": "runtime_assets",
+    "model_tooling_dir": "model_tooling",
     "tokenizer_dir": "modules/local_tokenizers/clip-vit-large-patch14",
     "data_dir": "data",
     "registry_db_path": "data/asset_registry.db",
@@ -165,6 +167,8 @@ class ProjectContext:
     embeddings_dir: Path
     hypernetworks_dir: Path
     local_config_dir: Path
+    runtime_assets_root: Path
+    model_tooling_root: Path
     tokenizer_root: Path
     data_root: Path
     registry_db_path: Path
@@ -255,6 +259,8 @@ class ProjectContext:
             embeddings_dir=resolved["embeddings_dir"],
             hypernetworks_dir=resolved["hypernetworks_dir"],
             local_config_dir=resolved["local_config_dir"],
+            runtime_assets_root=resolved["runtime_assets_dir"],
+            model_tooling_root=resolved["model_tooling_dir"],
             tokenizer_root=resolved["tokenizer_dir"],
             data_root=resolved["data_dir"],
             registry_db_path=resolved["registry_db_path"],
@@ -372,6 +378,8 @@ class ProjectContext:
                 "embeddings_dir": str(self.embeddings_dir),
                 "hypernetworks_dir": str(self.hypernetworks_dir),
                 "local_config_dir": str(self.local_config_dir),
+                "runtime_assets_dir": str(self.runtime_assets_root),
+                "model_tooling_dir": str(self.model_tooling_root),
                 "tokenizer_dir": str(self.tokenizer_root),
                 "data_dir": str(self.data_root),
                 "registry_db_path": str(self.registry_db_path),
@@ -437,6 +445,18 @@ class ProjectContext:
                 if model_path is not None and str(model_path).strip()
                 else self.default_model_path
             )
+            if selected_model is not None and not selected_model.is_file() and self.checkpoints_dir.is_dir():
+                from modules.asset_discovery import resolve_nested_asset
+
+                requested_model = str(model_path or selected_model.name)
+                nested_model = resolve_nested_asset(
+                    self.checkpoints_dir,
+                    requested_model,
+                    extensions={".safetensors", ".ckpt", ".pt"},
+                )
+                if nested_model is not None:
+                    selected_model = nested_model
+
             if selected_model is None:
                 add("error", "MODEL_NOT_CONFIGURED", "model path", None, "no model path was supplied or configured")
             elif not selected_model.is_file():

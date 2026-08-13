@@ -101,6 +101,7 @@ class ComponentBuilder:
             unet_state=mapped_state.unet,
             vae_state=mapped_state.vae,
             text_state=mapped_state.text_encoder,
+            architecture=configs.architecture,
         )
 
         unet = self._build_unet(configs.unet_config_path)
@@ -154,6 +155,7 @@ class ComponentBuilder:
         vae = vae_result.model
         
         text_encoder = self._build_text_encoder(configs.text_encoder_config_path)
+        setattr(text_encoder, "_image_gen_architecture", str(configs.architecture or ""))
 
         text_encoder_result = self._load_component_state(
             component=text_encoder,

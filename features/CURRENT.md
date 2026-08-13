@@ -4,16 +4,19 @@ This page describes capabilities present in the current ImageGen source/runtime.
 
 ImageGen is still an alpha application, so “available” means implemented in the current alpha rather than frozen or guaranteed API compatibility.
 
-## 1. Native SD 1.x Text-to-Image Generation
+## 1. Native SD 1.x and Qualified SD 2.x Text-to-Image Generation
 
 ImageGen runs its own modular Stable Diffusion generation pipeline rather than launching another image-generation WebUI as its backend.
 
-The current qualified model family is **Stable Diffusion 1.x** using a full monolithic `.safetensors` checkpoint containing the components required by the SD 1.x pipeline.
+The current enabled model-family boundary is:
 
-The runtime handles:
+- **Stable Diffusion 1.x** using qualified full monolithic `.safetensors` checkpoints; and
+- **qualified Stable Diffusion 2.x** checkpoints using the dedicated SD 2.x OpenCLIP/runtime-profile path.
+
+The shared runtime handles:
 
 - checkpoint inspection and architecture validation;
-- UNet, CLIP text encoder, and VAE loading;
+- UNet, text encoder, and VAE loading;
 - positive and negative conditioning;
 - seeded latent creation;
 - sampler/scheduler execution;
@@ -22,7 +25,30 @@ The runtime handles:
 - output saving and metadata generation; and
 - replay/provenance capture.
 
-SD 2.x and SDXL checkpoints may be identifiable by inspection, but generation is intentionally blocked until their different conditioning contracts are implemented.
+### SD 1.x conditioning
+
+SD 1.x uses the established single-CLIP path with 768-wide text conditioning and the SD 1.x model/component contract.
+
+### SD 2.x conditioning
+
+Qualified SD 2.x generation uses a separate OpenCLIP path instead of reusing SD 1.x text-encoder assumptions.
+
+The SD 2.x runtime includes:
+
+- local OpenCLIP tokenizer/text-encoder assets;
+- 1024-wide conditioning validation;
+- 77-token context validation;
+- checkpoint-derived text-encoder conversion/loading;
+- explicit SD 2.x runtime profiles;
+- prediction-type resolution;
+- known checkpoint qualification evidence; and
+- optional explicit profile override when automatic evidence is insufficient.
+
+Runtime-profile definitions cover SD 2.0/2.1 base and 768-oriented families, but an arbitrary checkpoint is not accepted solely because its filename or provider metadata says “SD2.” ImageGen still requires the model to satisfy the active qualification contract.
+
+### SDXL boundary
+
+SDXL checkpoints can be inspected and SDXL adapter targets can be classified, but base-model SDXL generation remains blocked until the dual-tokenizer/dual-text-encoder, pooled-conditioning, time-ID, and SDXL UNet-call contracts are implemented and qualified.
 
 ## 2. Exact Requested Dimensions
 
@@ -30,7 +56,7 @@ Users can request non-standard widths and heights instead of being restricted to
 
 ImageGen resolves the model-compatible internal geometry required for generation and preserves the requested final output dimensions in the generation workflow and replay data.
 
-This exact-size behavior also feeds newer Hires and Canvas Expansion workflows.
+This exact-size behavior also feeds Hires and Canvas Expansion workflows.
 
 ## 3. Samplers and Schedulers
 
@@ -69,15 +95,26 @@ Some parser paths remain more experimental than the legacy path and may evolve d
 
 ImageGen includes regional-prompting integration and a dedicated Region Builder surface for defining region-aware conditioning.
 
-The current tooling includes region geometry, regional prompts, weights, timing/start-stop behavior, blending controls, and integration with the ImageGen generation workflow.
+The current tooling includes:
+
+- region geometry;
+- regional positive/negative prompt data;
+- weights;
+- timing/start-stop behavior;
+- blending controls;
+- generation integration;
+- preference for nearby empty/low-overlap placement when creating a new region; and
+- a region-stack selector for choosing boxes that overlap or contain one another.
+
+Manual editing can still create intentional overlap. The placement preference is a quality-of-life aid rather than a hard non-overlap rule.
 
 REGION remains an advanced feature and should be treated separately from ordinary global prompting and from Canvas Expansion.
 
-## 6. LoRA Support
+## 6. LoRA and Adapter Compatibility
 
 LoRA is active in the current generation runtime.
 
-Current LoRA capabilities include:
+Current general capabilities include:
 
 - LoRA discovery;
 - weighted application;
@@ -90,7 +127,42 @@ Current LoRA capabilities include:
 - LoRA information in generation/replay records; and
 - a dedicated WebUI LoRA workspace.
 
-The WebUI also contains CivitAI-oriented LoRA metadata support, including hash-based matching and preview/metadata workflows where the required network/API configuration is available.
+The compatibility layer now separates four questions that were previously easy to conflate:
+
+1. **Family** — SD 1.x, SD 2.x, SDXL, or unknown.
+2. **Format** — the adapter representation detected from metadata/tensor keys.
+3. **Targets** — components such as UNet, text encoder 1, text encoder 2, linear layers, or convolutional layers.
+4. **Runtime support** — whether the current build has a qualified loader for that exact combination.
+
+### Standard loader
+
+The registered standard Diffusers/PEFT path handles conventional representations classified as:
+
+```text
+standard_kohya_lora
+standard_diffusers_peft_lora
+standard_lora_up_down
+```
+
+Conventional linear and supported convolutional LoRA targets can use the standard path when converted keys map cleanly to qualified model components.
+
+Current family target awareness includes:
+
+- **SD 1.x:** UNet and text encoder 1;
+- **SD 2.x:** UNet and text encoder 1, without applying SD 1-specific text-encoder shape assumptions; and
+- **SDXL:** UNet, TE1, and TE2 target identification/mapping for adapter compatibility work.
+
+SDXL adapter compatibility does not mean SDXL base generation is enabled.
+
+### Unsupported or partial adapter formats
+
+ImageGen can identify LyCORIS-style formats such as **LoHa** and **LoKr**, but the current standard loader does not execute those algorithms. They are reported as unsupported rather than silently passed through a generic fallback.
+
+DoRA magnitude data is also inventoried separately and is currently treated as requiring a dedicated qualified runtime path.
+
+Checkpoint-like Safetensors files found in the LoRA library are marked as misclassified rather than attempted as adapters.
+
+The WebUI also contains Civitai-oriented LoRA metadata support, including hash-based matching and preview/metadata workflows where the required network/API configuration is available.
 
 Default LoRA folder:
 
@@ -128,14 +200,18 @@ Current Hires tooling includes:
 - CFG overrides;
 - independent Hires prompt routing;
 - optional preservation of intermediate/base artifacts;
-- upscaler and VAE provenance in generation records; and
-- replay validation against recorded asset identity.
+- upscaler and VAE provenance in generation records;
+- replay validation against recorded asset identity;
+- persistent preferred-upscaler behavior; and
+- focused UI recovery when Hires is enabled without a valid selected upscaler.
+
+The exact low-resolution base artifact is no longer enabled by default. It remains an optional output preference.
 
 Hires is available, but it is still an **alpha feature** and is sensitive to upscaler compatibility, target size, memory pressure, VAE behavior, and sampler/scheduler qualification.
 
 ## 8. Canvas Expansion / Shape Adaptation
 
-ImageGen now has an alpha generative Canvas Expansion workflow.
+ImageGen has an alpha generative Canvas Expansion workflow.
 
 The goal is to preserve an existing composition and generate the missing space required by a larger canvas rather than stretching the source image.
 
@@ -178,6 +254,7 @@ The current WebUI includes dedicated workspaces and controls for areas such as:
 - Generation;
 - checkpoint selection and model status;
 - LoRA browsing/selection;
+- Asset Hub;
 - prompts and parser tools;
 - exact dimensions;
 - Hires;
@@ -189,8 +266,11 @@ The current WebUI includes dedicated workspaces and controls for areas such as:
 - replay;
 - output details;
 - variation tools;
-- memory/runtime information; and
-- configurable workspace/layout behavior.
+- memory/runtime information;
+- Help Center;
+- Theme Manager;
+- Workspace Manager; and
+- in-program user-configuration editing.
 
 The server binds to localhost and is designed for a local single-user workflow.
 
@@ -210,7 +290,7 @@ Current telemetry includes items such as:
 
 Preview decoding can be throttled or suspended by memory policy without disabling the underlying generation progress/CFG telemetry.
 
-## 11. CFG Lab and Guidance Controls
+## 11. CFG Lab, Presets, Randomization, and Guidance Controls
 
 The KES/guidance path includes more than a single flat CFG number.
 
@@ -225,22 +305,38 @@ Current source supports configurable guidance shaping such as:
 - CFG rescale; and
 - seed-locked CFG comparison/sweep tooling.
 
+CFG Lab also supports user presets that can be saved inside ImageGen and imported/exported as preset files.
+
+Advanced numeric range support can randomize CFG-related numeric settings per generated image. Hard minimum/maximum locks are separate from the random range and can clamp the effective runtime CFG trajectory.
+
+The shared range editor is field-aware. CFG Scale uses CFG-appropriate examples such as `[5.0, 7.5]` rather than Seed-sized example values.
+
 ## 12. Generation Queue and Batch Workflows
 
 The WebUI includes a local job queue and batch-oriented tools.
 
 Current functionality includes:
 
-- queued/running/completed/failed/cancelled states;
+- queued/running/paused/completed/failed/cancelled states;
 - active-job cancellation;
+- per-item pause and resume;
+- pause-after-current-image boundaries for active multi-image work;
+- multiple held/paused jobs;
+- skipping paused queue items while other work remains schedulable;
+- moving queued items higher or lower without displacing the active generation;
+- finite progress such as `2 of 20`;
+- continuous-generation progress such as `2 of ∞`;
 - queue filtering;
 - recent run information;
 - batch size and batch count;
 - continuous generation;
 - queue import/export;
 - JSON, JSON Lines, and CSV request workflows;
-- request remapping/validation; and
-- queue composition from prior outputs.
+- request remapping/validation;
+- queue composition from prior outputs; and
+- seed-strategy selection for sequential, random, and bounded-random batches.
+
+Finite random seed ranges can avoid duplicates until their available values are exhausted, and already consumed values are preserved when a job pauses/resumes.
 
 ## 13. Replay and Variation Matrix
 
@@ -251,10 +347,12 @@ Current replay tooling can:
 - reconstruct a generation request from ImageGen output metadata;
 - preflight required assets/settings before queueing;
 - report missing or changed assets instead of silently substituting them;
-- restore prior settings to the generation form; and
-- send validated requests back to the normal generation queue.
+- restore prior generation settings to the form; and
+- send compatible requests back to the normal generation queue.
 
-The Variation Matrix can expand one or more requests through controlled combinations of settings and seed policies before submission.
+Replay intentionally does **not** treat every historical UI/output setting as reproducibility state. User-owned operational preferences such as TXT/JSON/diagnostic sidecars, low-resolution Hires artifact saving, and preferred Hires upscaler behavior remain current-user preferences unless they are genuinely required for exact generation reproduction.
+
+The Variation Matrix can expand one or more requests through controlled combinations of settings and seed policies before submission. Preview/queue behavior transparently performs the required validation/revalidation so users do not need to manage a separate `validated job` state manually.
 
 ## 14. Output Gallery and Image Details
 
@@ -276,7 +374,7 @@ A larger durable Gallery/asset-library system is separately planned and should n
 
 ## 15. Compact Replay and Output Storage
 
-The output pipeline now separates replay-essential data from deeper diagnostics.
+The output pipeline separates replay-essential data from deeper diagnostics.
 
 The normal structured sidecar uses a compact replay serialization profile. It is designed to keep the generation inputs and reproducibility identity required for replay while pruning duplicated or execution-only structures.
 
@@ -289,9 +387,16 @@ Current storage cleanup includes behavior such as:
 - keeping compact runtime fingerprints instead of the entire conformance snapshot; and
 - pruning duplicated diagnostic/runtime structures in the deeper diagnostics sidecar.
 
-This makes replay files smaller and easier to inspect while preserving a separate path for deeper troubleshooting data.
+The current default output preferences are:
 
-The save path also uses temporary files and final atomic replacement so an interrupted save does not intentionally expose half-written output sets.
+- TXT sidecar: **off**;
+- compact replay JSON: **on**;
+- diagnostics JSON: **off**; and
+- exact low-resolution Hires base artifact: **off**.
+
+These are user-owned preferences rather than exact replay requirements.
+
+The save path uses temporary files and final atomic replacement so an interrupted save does not intentionally expose half-written output sets.
 
 ## 16. Memory-Aware Runtime
 
@@ -321,7 +426,7 @@ The runtime supports selectable attention paths including:
 - PyTorch scaled-dot-product attention; and
 - eager/compatibility paths.
 
-The public installer is profile-driven because the custom attention stack is hardware and environment specific.
+The public installer is profile-driven because optimized attention stacks can be hardware and environment specific.
 
 ## 18. Diagnostics and Reproducibility
 
@@ -360,3 +465,181 @@ run_config.bat
 for generation driven by the saved configuration/request format.
 
 The WebUI, CLI, replay, and saved-request flows share the same underlying generation contracts rather than maintaining unrelated generation engines.
+
+## 20. Asset Hub
+
+Asset Hub is the current provider-neutral system for discovering, downloading, verifying, classifying, installing, and tracking model-related assets. Civitai is the first supported provider.
+
+### Provider discovery and authentication
+
+Provider credentials are backend-owned. The browser can learn whether a credential is configured, but stored credentials are not returned after submission.
+
+Civitai authentication can use supported session/environment/OS credential sources. Credentials are attached only to the expected provider host and are not forwarded to unexpected redirect destinations.
+
+### Secure download staging
+
+Asset Hub downloads first enter a temporary staging area rather than writing directly into live checkpoint/LoRA/VAE/upscaler folders.
+
+Current download behavior includes:
+
+- queueing;
+- bounded concurrent transfers;
+- cancellation;
+- safe resume when the remote transfer supports it;
+- restart recovery;
+- file-size verification; and
+- SHA-256 verification.
+
+A verified staged file is not considered installed or `In Library` until the install phase succeeds.
+
+### Classification and installation
+
+Asset Hub creates an install plan before changing a live asset directory.
+
+ImageGen reuses its own technical inspectors for classification. Current paths include:
+
+- LoRA Safetensors inspection;
+- checkpoint Safetensors inspection;
+- ESRGAN/RealESRGAN-oriented `.pth` upscaler inspection;
+- recognizable Safetensors VAE layouts; and
+- safely readable Safetensors textual-inversion payloads.
+
+Unknown, unsafe, or ambiguous inputs are quarantined/reviewed rather than guessed into a live folder.
+
+Final destinations come from configured ProjectContext asset roots. Installation rechecks the staged hash, copies into a destination-side temporary file, verifies the copied SHA-256, and then commits through an atomic replace/rename.
+
+### Provenance
+
+Installed assets can retain:
+
+- provider/model/version/file IDs;
+- source page;
+- author/description/tags/trained words;
+- base model;
+- original filename and size;
+- verified SHA-256;
+- classification result;
+- install timestamp;
+- local install path; and
+- scan metadata.
+
+Durable metadata uses the existing `.imagegen.json` sidecar convention. A derived local Asset Hub index provides a faster searchable view.
+
+## 21. Help Center and Home Changelog
+
+The WebUI contains a user-facing Help Center backed by public documentation under `help_documentation/`.
+
+Current Help Center behavior includes:
+
+- category/topic navigation;
+- search over title, summary, keywords, category, and Markdown body;
+- search suggestions after a minimum useful query length;
+- related-topic links;
+- shared Markdown rendering;
+- repository-owned local image/video support; and
+- explicit external HTTPS links.
+
+Local help media is served only from the public help root. External resources are not silently embedded as third-party executable content.
+
+The Home Changelog uses the same shared Markdown capability. It can open recent development/release notes from the public repository and fall back to changelog content bundled with the local build when necessary.
+
+## 22. Theme Manager
+
+Theme Manager controls shared WebUI appearance using semantic roles.
+
+Current roles include:
+
+- accent;
+- primary surface;
+- secondary surface;
+- component/card surface;
+- component border;
+- component accent;
+- primary text; and
+- secondary/muted text.
+
+### Contrast diagnostics
+
+Text contrast is measured against relevant surfaces. A 4.5:1 ratio is presented as a recommended readability target rather than a hard Save/Apply blocker.
+
+Low-contrast themes are allowed. By default ImageGen asks for confirmation before saving/applying a low-contrast theme; that confirmation preference can be disabled while diagnostics remain visible.
+
+### Local theme packages
+
+Theme Manager can import ZIP-compatible local theme packages.
+
+Import validates the package and adds it to the local theme library without activating it automatically. Packages can then be explicitly activated, disabled, or removed.
+
+Theme packages are treated as visual data. Executable/script payloads, unsafe paths, symbolic links, and unsafe SVG content are rejected. Optional scoped CSS requires the corresponding declared capability.
+
+If an active package later becomes missing or corrupt, ImageGen disables the broken package and falls back to the lower-layer/custom palette so the WebUI can still start.
+
+## 23. Workspace Manager and Responsive Layouts
+
+Workspace Manager controls registered components on supported ImageGen pages.
+
+A component can declare:
+
+- stable identity;
+- compatible pages;
+- presentation variants;
+- size constraints; and
+- shared capabilities.
+
+The saved workspace is a portable base layout. Responsive Wide, Standard, Compact, and Narrow modes derive their effective spans/presentations from that base according to actual workspace-container width.
+
+Responsive preview does not overwrite the user's base layout values merely because a narrower/wider preview is selected.
+
+## 24. Advanced Seed and Numeric Randomization
+
+ImageGen has a shared randomization layer rather than requiring every numeric setting to implement its own unrelated random-number behavior.
+
+### Seed strategy
+
+Normal Seed remains available as a simple fixed or `-1` random value. Advanced Seed adds structured strategy controls directly below the Seed field.
+
+Current strategies include:
+
+- sequential;
+- unrestricted random; and
+- random within range.
+
+Range syntax accepts forms such as:
+
+```text
+[5000,15000]
+-1 [5000,15000]
+-1, [5000,15000]
+```
+
+The optional punctuation after `-1` is normalized rather than treated as a reason to reject an otherwise unambiguous range.
+
+The structured range fields and the Seed expression synchronize in both directions.
+
+### Other numeric parameters
+
+Eligible numeric generation settings can use a structured advanced range containing:
+
+- randomization enabled/disabled;
+- random minimum;
+- random maximum;
+- whole-number-only resolution where appropriate;
+- optional hard minimum lock; and
+- optional hard maximum lock.
+
+The expression and structured controls synchronize, and field-specific guidance is used where appropriate. CFG Scale, for example, uses a normal CFG-scale example such as `[5.0, 7.5]` instead of Seed-sized values.
+
+Randomization state travels with the generation form/request state and can be included in supported preset/replay workflows.
+
+## 25. In-Program User Configuration Editor
+
+ImageGen can edit `user_config/user-config.yml` from inside the WebUI.
+
+The editor:
+
+- loads the active user configuration;
+- validates YAML before saving;
+- writes the replacement atomically; and
+- keeps a `.bak` copy of the prior file.
+
+This provides a supported recovery/configuration path for settings such as custom asset roots without requiring the user to leave the application for every configuration change.

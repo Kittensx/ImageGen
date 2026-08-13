@@ -2,13 +2,13 @@
 
 This page summarizes user-relevant work that is planned but **not yet supported** in the current public runtime.
 
-It is based on the current phase-program direction while deliberately avoiding implementation details that belong in internal engineering documents.
+It is based on the current product/program direction while deliberately avoiding implementation details that belong in private/internal engineering documents.
 
-No dates are promised here. Program order can change after the next major generation milestone when priorities or technical dependencies change.
+No dates are promised here. Program order can change as technical dependencies, qualification results, and user priorities change.
 
 ## Coming Next: Image-to-Image and Inpainting
 
-The current phase-program index identifies **Image-to-Image and Inpainting** as the next major program after the completed neural-Hires continuation work.
+The next major generation program remains **Image-to-Image and Inpainting**.
 
 The planned progression begins with a normal external-image conditioning foundation and then expands toward:
 
@@ -30,34 +30,58 @@ Txt2Img or Existing Image
 -> Img2Img refinement
 ```
 
-## Near-Future Model-Family Expansion
+## Stable Diffusion XL (SDXL)
 
-ImageGen is currently SD 1.x only.
+Stable Diffusion 2.x has moved into the current qualified generation runtime, so the remaining major Stable Diffusion family expansion is **SDXL**.
 
-Near-future model-family work is expected to add support for:
+SDXL generation requires more than model discovery. Planned work still needs to qualify:
 
-- **Stable Diffusion 2.x**; and
-- **Stable Diffusion XL (SDXL)**.
+- dual tokenizers;
+- dual text encoders;
+- pooled prompt embeddings;
+- added conditioning/time IDs;
+- the SDXL-specific UNet call contract;
+- model-family-specific validation; and
+- end-to-end sampler/scheduler/replay behavior.
 
-These are not simple model-browser toggles. Each family requires its own conditioning/model contract to be implemented and validated before generation is enabled.
+The standard LoRA compatibility layer can already identify SDXL UNet/TE1/TE2 adapter targets, but that adapter mapping work should not be mistaken for a completed SDXL base-generation runtime.
 
-Until that work lands, SD 2.x and SDXL will remain clearly marked as planned.
+## Broader Adapter / LyCORIS Runtime Support
 
-## Asset Hub and Interoperability
+The current adapter inspector can identify formats beyond standard LoRA, but the runtime does not yet execute every detected algorithm.
 
-A planned asset-management program expands the current model/LoRA tooling into a broader asset hub.
+Future adapter work can expand qualified support for formats such as:
 
-Planned areas include:
+- LoHa;
+- LoKr;
+- DoRA;
+- LoCon-specific algorithm variants that are not safely representable by the current standard path;
+- DyLoRA;
+- IA3;
+- OFT/Diag-OFT;
+- BOFT; and
+- newer/emerging adapter representations as their runtime contracts stabilize.
 
-- asset discovery and installed-asset management;
-- secure downloads and install routing;
-- stronger provenance;
-- CivitAI integration;
+Longer-term adapter architecture may also support conversion/analysis between representations rather than treating external adapter formats as ImageGen's internal model.
+
+Until a loader is implemented and qualified, detection should remain informational and unsupported adapters should remain blocked.
+
+## Asset Hub Expansion and Interoperability
+
+The core Asset Hub lifecycle is now present. Future work can build on it rather than creating a second unrelated asset manager.
+
+Planned or expandable areas include:
+
+- additional providers beyond Civitai;
+- richer installed-asset browsing and lifecycle actions;
+- deeper library-status filtering/search;
+- stronger update/version management;
+- provider synchronization;
 - workflow/recipe analysis;
 - ComfyUI-oriented interoperability and translation; and
 - optional external workflow bridging where appropriate.
 
-This work is intended to build on ImageGen's existing asset identities and generation contracts rather than creating a second unrelated runtime.
+These features should continue using ImageGen's existing asset identities, provenance, staged-download safety, and generation contracts.
 
 ## Durable Gallery and Image Library
 
@@ -74,12 +98,12 @@ Planned capabilities include:
 - notes;
 - filtering/search;
 - source-aware metadata ingestion;
-- CivitAI synchronization; and
+- Civitai synchronization; and
 - replay-readiness analysis using ImageGen's existing replay pipeline.
 
-## Prompt Favorites and Shared Workspace Navigation
+## Prompt Favorites and Reusable Prompt Cards
 
-A separate planned UI/workflow program covers reusable prompt-card storage and stronger navigation between ImageGen workspaces.
+Workspace Manager and responsive navigation/layout foundations are now current features. A separate planned prompt-productivity program can build on those foundations.
 
 Planned user-facing areas include:
 
@@ -87,8 +111,28 @@ Planned user-facing areas include:
 - prompt cards/thumbnails;
 - prompt-only or full-generation loading;
 - saved-prompt actions;
-- tags and search; and
-- shared/responsive workspace navigation.
+- tags; and
+- prompt search/filtering.
+
+## Further Workspace and Home-Surface Expansion
+
+The component-based Workspace Manager, responsive layouts, Help Center, and shared Changelog/Markdown capability are now implemented foundations.
+
+Future UI work can extend those foundations with additional registered components, saved workflow profiles, stronger dashboard/home composition, and more reusable cross-workspace surfaces without returning to one monolithic page layout.
+
+## Theme Ecosystem Expansion
+
+Theme Manager now has semantic roles, contrast diagnostics, and local validated packages.
+
+Potential future work includes:
+
+- richer theme-library browsing;
+- additional safe visual capabilities;
+- more preview surfaces;
+- optional sharing/import workflows; and
+- expanded package metadata/version management.
+
+Theme packages should remain visual/appearance packages unless a separate extension system explicitly defines a broader security contract.
 
 ## Persistent CLI / `run.bat` Quality-of-Life Work
 
@@ -105,11 +149,17 @@ Planned improvements include:
 - CFG profiles; and
 - stronger interoperability with the normal ImageGen configuration format.
 
-## Additional UI Reorganization
+## Additional Generation and Conditioning Systems
 
-Internal phase planning also contains further workspace/UI organization work, including a stronger home/dashboard concept, shared navigation, changelog/community surfaces, workflow profiles, and more modular workspace behavior.
+Several generation capabilities remain outside the current runtime and should stay in the planned category until their end-to-end application path exists.
 
-These are planned product improvements rather than requirements for the current generation runtime.
+Examples include:
+
+- ControlNet;
+- active Textual Inversion application;
+- Hypernetworks;
+- fully qualified external VAE replacement across generation workflows; and
+- additional image-conditioned controls built on the future Img2Img foundation.
 
 ## Longer-Range Research and Feature Programs
 

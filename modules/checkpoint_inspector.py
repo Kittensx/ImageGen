@@ -10,6 +10,9 @@ from typing import Any, Dict, List, Mapping, Set
 from safetensors import safe_open
 from safetensors.torch import load_file
 
+from modules.model_qualification_registry import qualification_for_sha256
+from modules.sd2_runtime_profile import normalize_prediction_type
+
 
 def _display_architecture(value: str | None) -> str:
     architecture = str(value or "").strip().lower()
@@ -25,26 +28,13 @@ def _display_architecture(value: str | None) -> str:
 
 
 def _normalize_prediction_type(value: Any) -> str:
-    text = str(value or "").strip().lower().replace("-", "_")
-    mapping = {
-        "eps": "epsilon",
-        "epsilon": "epsilon",
-        "epsilon_prediction": "epsilon",
-        "v": "v-prediction",
-        "v_prediction": "v-prediction",
-        "vpred": "v-prediction",
-        "v_pred": "v-prediction",
-        "sample": "sample",
-        "sample_prediction": "sample",
-    }
-    return mapping.get(text, "")
+    return normalize_prediction_type(value)
 
 
 def _default_prediction_type_for_architecture(architecture: str | None) -> str:
     normalized = str(architecture or "").strip().lower()
     defaults = {
         "sd1.x": "epsilon",
-        "sd2.x": "v-prediction",
         "sdxl": "epsilon",
     }
     return defaults.get(normalized, "")
@@ -105,8 +95,23 @@ _METADATA_PREDICTION_KEYS = (
 )
 
 
-def detect_prediction_type(metadata: Mapping[str, Any] | None, architecture: str | None = None) -> tuple[str, str]:
+def detect_prediction_type(
+    metadata: Mapping[str, Any] | None,
+    architecture: str | None = None,
+    *,
+    filename: str | None = None,
+) -> tuple[str, str]:
+    normalized_architecture = str(architecture or "").strip().lower()
     source = dict(metadata or {})
+    if normalized_architecture == "sd2.x":
+        for key in _METADATA_PREDICTION_KEYS:
+            if key not in source:
+                continue
+            normalized = _normalize_prediction_type(source.get(key))
+            if normalized:
+                return normalized, "metadata"
+        return "", ""
+
     for key in _METADATA_PREDICTION_KEYS:
         if key in source:
             normalized = _normalize_prediction_type(source.get(key))
@@ -265,6 +270,44 @@ class CheckpointInspector:
                 digest.update(block)
         return digest.hexdigest()
 
+    def inspect_architecture_contract(self, model_path: str) -> ArchitectureContract:
+        """Inspect checkpoint architecture from the Safetensors header without hashing payload bytes."""
+
+        path = Path(model_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Model file not found: {path}")
+        if path.suffix.lower() != ".safetensors":
+            raise ValueError(f"Architecture preflight requires a .safetensors checkpoint, got: {path.name}")
+
+        keys: list[str] = []
+        shapes: dict[str, tuple[int, ...]] = {}
+        metadata: Mapping[str, str] | None = None
+        with safe_open(str(path), framework="pt", device="cpu") as handle:
+            keys = list(handle.keys())
+            metadata = handle.metadata()
+            for key in keys:
+                if not (
+                    key.startswith("cond_stage_model.")
+                    or key.startswith("model.diffusion_model.")
+                    or key.startswith("conditioner.embedders.")
+                    or "text_encoder_2" in key
+                ):
+                    continue
+                try:
+                    shapes[key] = tuple(int(value) for value in handle.get_slice(key).get_shape())
+                except Exception:
+                    continue
+
+        has_te2 = any("conditioner.embedders.1" in key or "text_encoder_2" in key for key in keys)
+        architecture, _, model_dimension = self._detect_architecture(keys, shapes, has_te2)
+        prediction_type, prediction_source = detect_prediction_type(metadata, architecture, filename=path.name)
+        return build_architecture_contract(
+            architecture,
+            prediction_type,
+            model_dimension,
+            source=prediction_source or "checkpoint_header_preflight",
+        )
+
     def inspect(self, model_path: str) -> CheckpointReport:
         path = Path(model_path).expanduser().resolve()
         if not path.is_file():
@@ -299,7 +342,13 @@ class CheckpointInspector:
             keys, has_unet, has_vae, has_text_encoder
         )
         architecture, evidence, model_dimension = self._detect_architecture(keys, shapes, has_te2)
-        prediction_type, prediction_source = detect_prediction_type(metadata, architecture)
+        prediction_type, prediction_source = detect_prediction_type(metadata, architecture, filename=path.name)
+        file_sha256 = self.sha256_file(path)
+        if architecture == "sd2.x" and not prediction_type:
+            qualification = qualification_for_sha256(file_sha256)
+            if qualification is not None and qualification.architecture == "sd2.x":
+                prediction_type = _normalize_prediction_type(qualification.prediction_type)
+                prediction_source = qualification.source
         model_name, model_name_source = detect_model_name(metadata, path.stem)
         contract = build_architecture_contract(
             architecture,
@@ -322,7 +371,7 @@ class CheckpointInspector:
             has_text_encoder=has_text_encoder,
             has_sdxl_text_encoder_2=has_te2,
             file_size_bytes=path.stat().st_size,
-            sha256=self.sha256_file(path),
+            sha256=file_sha256,
             dtype_summary=dict(sorted(dtype_counter.items())),
             tensor_shape_summary={
                 key: list(shape) for key, shape in selected_shapes.items()

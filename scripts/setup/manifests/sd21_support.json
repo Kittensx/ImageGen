@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "support_id": "stable-diffusion-2.1-base-runtime",
+  "repo_id": "sd-research/stable-diffusion-2-1-base",
+  "revision": "main",
+  "estimated_download_bytes": 1589156,
+  "files": [
+    {
+      "remote_path": "model_index.json",
+      "destination_kind": "runtime",
+      "destination_path": "model_index.json",
+      "required": true
+    },
+    {
+      "remote_path": "feature_extractor/preprocessor_config.json",
+      "destination_kind": "runtime",
+      "destination_path": "feature_extractor/preprocessor_config.json",
+      "required": true
+    },
+    {
+      "remote_path": "scheduler/scheduler_config.json",
+      "destination_kind": "runtime",
+      "destination_path": "scheduler/scheduler_config.json",
+      "required": true
+    },
+    {
+      "remote_path": "text_encoder/config.json",
+      "destination_kind": "runtime",
+      "destination_path": "text_encoder/config.json",
+      "required": true
+    },
+    {
+      "remote_path": "tokenizer/merges.txt",
+      "destination_kind": "runtime",
+      "destination_path": "tokenizer/merges.txt",
+      "required": true
+    },
+    {
+      "remote_path": "tokenizer/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "destination_path": "tokenizer/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "remote_path": "tokenizer/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "destination_path": "tokenizer/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "remote_path": "tokenizer/vocab.json",
+      "destination_kind": "runtime",
+      "destination_path": "tokenizer/vocab.json",
+      "required": true
+    },
+    {
+      "remote_path": "unet/config.json",
+      "destination_kind": "runtime",
+      "destination_path": "unet/config.json",
+      "required": true
+    },
+    {
+      "remote_path": "vae/config.json",
+      "destination_kind": "runtime",
+      "destination_path": "vae/config.json",
+      "required": true
+    }
+  ]
+}

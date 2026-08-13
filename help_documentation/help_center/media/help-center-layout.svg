@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">Help Center layout</title>
+  <desc id="desc">Diagram showing topic tree, search, Markdown content, and related topics.</desc>
+  <rect width="960" height="420" rx="24" fill="#151c25"/>
+  <rect x="28" y="28" width="904" height="58" rx="12" fill="#243040"/>
+  <text x="54" y="64" fill="#f4f9fd" font-family="sans-serif" font-size="22">Search help</text>
+  <rect x="28" y="108" width="260" height="284" rx="14" fill="#1d2733"/>
+  <text x="52" y="144" fill="#f4f9fd" font-family="sans-serif" font-size="19">Topic tree</text>
+  <text x="52" y="184" fill="#9db2c4" font-family="sans-serif" font-size="16">Asset Hub</text>
+  <text x="72" y="216" fill="#9db2c4" font-family="sans-serif" font-size="15">Downloads</text>
+  <text x="72" y="246" fill="#9db2c4" font-family="sans-serif" font-size="15">Installation</text>
+  <text x="52" y="286" fill="#9db2c4" font-family="sans-serif" font-size="16">Theme Manager</text>
+  <text x="52" y="326" fill="#9db2c4" font-family="sans-serif" font-size="16">Workspace</text>
+  <rect x="310" y="108" width="622" height="206" rx="14" fill="#202b38"/>
+  <text x="338" y="148" fill="#f4f9fd" font-family="sans-serif" font-size="22">Markdown topic</text>
+  <rect x="338" y="174" width="500" height="12" rx="6" fill="#63798e"/>
+  <rect x="338" y="202" width="548" height="12" rx="6" fill="#4e6275"/>
+  <rect x="338" y="230" width="430" height="12" rx="6" fill="#4e6275"/>
+  <rect x="338" y="258" width="520" height="12" rx="6" fill="#4e6275"/>
+  <rect x="310" y="334" width="622" height="58" rx="14" fill="#243040"/>
+  <text x="338" y="370" fill="#9db2c4" font-family="sans-serif" font-size="18">Related topics</text>
+</svg>

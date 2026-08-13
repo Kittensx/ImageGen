@@ -50,6 +50,7 @@ from modules.prompt_shortcuts import (
     validate_prompt_shortcut_profile,
 )
 from modules.adapters.local_clip_conditioning_wrapper import LocalCLIPConditioningWrapper
+from modules.adapters.sd2_openclip_conditioning import SD2OpenCLIPConditioningRuntime
 from image_gen.systems.guidance import (
     PromptCFGScheduleError,
     finalize_prompt_cfg_payload,
@@ -194,6 +195,21 @@ class PromptConditioningAdapter(PromptAdapter):
 
 
         if text_encoder is not None and tokenizer is not None:
+            config = getattr(text_encoder, "config", None)
+            hidden_size = int(getattr(config, "hidden_size", 0) or 0)
+            hidden_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+            architecture = str(getattr(text_encoder, "_image_gen_architecture", "") or "").strip().lower()
+            is_sd2 = architecture in {"sd2", "sd2.1", "sd2.x", "stable-diffusion-2.x"}
+            if is_sd2:
+                if hidden_size != 1024 or hidden_layers != 23:
+                    raise ValueError(
+                        "Qualified SD2 text encoder must use the 23-layer / 1024-wide runtime contract; "
+                        f"got layers={hidden_layers}, hidden_size={hidden_size}."
+                    )
+                return SD2OpenCLIPConditioningRuntime(
+                    text_encoder=text_encoder,
+                    tokenizer=tokenizer,
+                )
             wrapper = LocalCLIPConditioningWrapper(
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,

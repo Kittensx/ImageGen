@@ -93,6 +93,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repeat batches until Ctrl+C. Random seed mode chooses a new base seed per batch.",
     )
     run_parser.add_argument("--model", dest="model_path")
+    run_parser.add_argument("--vae", dest="vae_path", help="Optional external VAE path override.")
+    run_parser.add_argument(
+        "--sd2-runtime-profile",
+        dest="sd2_runtime_profile_override",
+        choices=("sd2.0-base-512", "sd2.0-768-v", "sd2.1-base-512", "sd2.1-768-v"),
+        help="Optional explicit SD2 runtime profile override for qualified SD2.x checkpoints.",
+    )
+    run_parser.add_argument(
+        "--sd2-dedicated-generation",
+        dest="sd2_dedicated_generation",
+        action="store_true",
+        help="Allow SD2.x dedicated generation support in the main CLI/WebUI runtime path.",
+    )
     run_parser.add_argument("--sampler", dest="sampler_name")
     run_parser.add_argument("--scheduler", dest="scheduler_name")
     run_parser.add_argument("--output-dir")
@@ -392,6 +405,9 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "batch_count": args.batch_count,
         "unlimited": args.unlimited,
         "model_path": args.model_path,
+        "vae_path": args.vae_path,
+        "sd2_dedicated_generation": args.sd2_dedicated_generation,
+        "sd2_runtime_profile_override": args.sd2_runtime_profile_override,
         "sampler_name": args.sampler_name,
         "scheduler_name": args.scheduler_name,
         "output_dir": args.output_dir,

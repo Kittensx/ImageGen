@@ -7,12 +7,14 @@ import time
 import torch
 
 from modules.config_options import ConfigOptions
+from modules.asset_discovery import resolve_nested_asset
 from modules.checkpoint_inspector import CheckpointInspector, CheckpointReport
 from modules.config_resolver import ConfigResolver, ResolvedConfigs
 from modules.state_dict_mapper import StateDictMapper, MappedStateDict
 from modules.registry import AssetRegistry
 from modules.component_builder import ComponentBuilder, BuiltComponents
 from modules.project_context import ProjectContext
+from modules.sd2_model_contract import SD2ResolvedModelContract, resolve_sd2_model_contract
 from image_gen.systems.validation.capabilities import capability_for
 
 
@@ -21,6 +23,7 @@ class LoadPlan:
     report: CheckpointReport
     configs: ResolvedConfigs
     mapped_state: MappedStateDict
+    sd2_contract: SD2ResolvedModelContract | None = None
 
 
 class LoadModel(ConfigOptions):
@@ -126,13 +129,31 @@ class LoadModel(ConfigOptions):
             return "vae"
         return "unknown"
 
-    def prepare_load_plan(self, checkpoint_path: str | None = None) -> LoadPlan:
+    def prepare_load_plan(
+        self,
+        checkpoint_path: str | None = None,
+        *,
+        require_generation_support: bool = True,
+        explicit_sd2_runtime_profile: str | None = None,
+    ) -> LoadPlan:
         checkpoint_path = checkpoint_path if checkpoint_path is not None else self.MODEL_PATH
         if not checkpoint_path:
             raise ValueError(
                 "No checkpoint path was supplied and defaults.model_path is not configured."
             )
-        checkpoint_path = os.path.abspath(checkpoint_path)
+        requested_checkpoint = str(checkpoint_path)
+        direct_checkpoint = Path(requested_checkpoint).expanduser()
+        if not direct_checkpoint.is_absolute():
+            direct_checkpoint = self.context.resolve_project_path(direct_checkpoint)
+        if direct_checkpoint.is_file():
+            checkpoint_path = str(direct_checkpoint.resolve())
+        else:
+            nested_checkpoint = resolve_nested_asset(
+                self.checkpoints_dir,
+                requested_checkpoint,
+                extensions={".safetensors", ".ckpt", ".pt"},
+            )
+            checkpoint_path = str(nested_checkpoint) if nested_checkpoint is not None else os.path.abspath(requested_checkpoint)
 
         start_time = time.perf_counter()
         asset_id = None
@@ -189,14 +210,51 @@ class LoadModel(ConfigOptions):
                 )
 
             capability = capability_for(report.architecture)
-            if not capability.generation_supported:
+            if require_generation_support:
+                if not capability.generation_supported:
+                    requirements = "; ".join(capability.requirements)
+                    raise ValueError(
+                        f"Checkpoint architecture {report.architecture!r} is not enabled for generation: "
+                        f"{capability.reason} Required work: {requirements}"
+                    )
+            elif not (capability.validation_supported or capability.generation_supported):
                 requirements = "; ".join(capability.requirements)
                 raise ValueError(
-                    f"Checkpoint architecture {report.architecture!r} is not enabled: "
+                    f"Checkpoint architecture {report.architecture!r} is not enabled for validation: "
                     f"{capability.reason} Required work: {requirements}"
                 )
 
-            configs = self.config_resolver.resolve(report.architecture)
+            sd2_contract = None
+            if report.architecture == "sd2.x":
+                configured_profile = explicit_sd2_runtime_profile
+                if configured_profile is None:
+                    configured_profile = str(
+                        ((self.config.get("defaults") or {}).get("sd2_runtime_profile") or "")
+                    ).strip() or None
+                sd2_contract = resolve_sd2_model_contract(
+                    self.context,
+                    checkpoint_filename=report.file_name,
+                    checkpoint_sha256=report.sha256,
+                    checkpoint_prediction_type=report.prediction_type,
+                    checkpoint_prediction_source=report.prediction_type_source,
+                    explicit_profile_id=configured_profile,
+                )
+                report.prediction_type = sd2_contract.prediction_type
+                report.prediction_type_source = sd2_contract.prediction_type_source
+                report.architecture_summary = (
+                    f"SD 2.x / {sd2_contract.prediction_type} / {sd2_contract.conditioning_dimension}"
+                )
+                report.architecture_source = "qualified_sd2_runtime_profile"
+                configs = self.config_resolver.resolve_explicit(
+                    architecture=report.architecture,
+                    root_dir=str(sd2_contract.assets.root),
+                    manifest_path=str(sd2_contract.assets.model_index or ""),
+                    unet_config_path=str(sd2_contract.assets.unet_config),
+                    vae_config_path=str(sd2_contract.assets.vae_config),
+                    text_encoder_config_path=str(sd2_contract.assets.text_encoder_config),
+                )
+            else:
+                configs = self.config_resolver.resolve(report.architecture)
             state_dict = self.inspector.load_state_dict(checkpoint_path)
             mapped_state = self.mapper.split_checkpoint(state_dict)
 
@@ -212,6 +270,7 @@ class LoadModel(ConfigOptions):
                     "architecture": report.architecture,
                     "path_kind": path_kind,
                     "managed_category": managed_category,
+                    "mode": "generation" if require_generation_support else "validation",
                 },
             )
 
@@ -219,6 +278,7 @@ class LoadModel(ConfigOptions):
                 report=report,
                 configs=configs,
                 mapped_state=mapped_state,
+                sd2_contract=sd2_contract,
             )
 
         except Exception as e:
@@ -238,6 +298,18 @@ class LoadModel(ConfigOptions):
                     },
                 )
             raise
+
+    def prepare_validation_plan(
+        self,
+        checkpoint_path: str | None = None,
+        *,
+        explicit_sd2_runtime_profile: str | None = None,
+    ) -> LoadPlan:
+        return self.prepare_load_plan(
+            checkpoint_path=checkpoint_path,
+            require_generation_support=False,
+            explicit_sd2_runtime_profile=explicit_sd2_runtime_profile,
+        )
 
     def debug_print_plan(self, plan: LoadPlan) -> None:
         print("=== Load Plan ===")

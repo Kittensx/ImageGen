@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Any
 
+from modules.text_encoder_strategy import text_encoder_strategy_for
+from modules.sd2_openclip_reference_converter import SD2OpenCLIPReferenceConverter
+
 
 @dataclass
 class ConvertedStateDict:
@@ -23,11 +26,12 @@ class StateDictConverter:
         unet_state: Dict[str, Any],
         vae_state: Dict[str, Any],
         text_state: Dict[str, Any],
+        architecture: str | None = None,
     ) -> ConvertedStateDict:
         return ConvertedStateDict(
             unet=self.convert_unet_state_dict(unet_state),
             vae=self.convert_vae_state_dict(vae_state),
-            text_encoder=self.convert_text_encoder_state_dict(text_state),
+            text_encoder=self.convert_text_encoder_state_dict(text_state, architecture=architecture),
         )
 
     def convert_unet_state_dict(self, state_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -67,35 +71,52 @@ class StateDictConverter:
         new_state: Dict[str, Any] = {}
 
         for key, value in state_dict.items():
-            new_key = key
+            new_key = self.convert_vae_key(key)
+            new_value = self.convert_vae_tensor(new_key, value)
 
-            new_key = self._convert_vae_encoder_blocks(new_key)
-            new_key = self._convert_vae_decoder_blocks(new_key)
-            new_key = self._convert_vae_mid_blocks(new_key)
-
-            new_key = new_key.replace(".downsample.conv.", ".downsamplers.0.conv.")
-            new_key = new_key.replace(".upsample.conv.", ".upsamplers.0.conv.")
-            new_key = new_key.replace("norm_out.", "conv_norm_out.")
-
-            new_key = self._convert_resnet_subkeys(new_key)
-            new_key = self._convert_vae_attention_subkeys(new_key)
-            
             if new_key in new_state:
                 print(f"COLLISION: {key} -> {new_key}")
-            new_state[new_key] = value
+            new_state[new_key] = new_value
 
         return new_state
 
-    def convert_text_encoder_state_dict(self, state_dict: Dict[str, Any]) -> Dict[str, Any]:
-        new_state: Dict[str, Any] = {}
+    def convert_vae_key(self, key: str) -> str:
+        """Convert one original-LDM VAE key to the Diffusers AutoencoderKL layout."""
+        new_key = key
+        new_key = self._convert_vae_encoder_blocks(new_key)
+        new_key = self._convert_vae_decoder_blocks(new_key)
+        new_key = self._convert_vae_mid_blocks(new_key)
+        new_key = new_key.replace("norm_out.", "conv_norm_out.")
+        new_key = self._convert_resnet_subkeys(new_key)
+        new_key = new_key.replace(".nin_shortcut.", ".conv_shortcut.")
+        new_key = self._convert_vae_attention_subkeys(new_key)
+        return new_key
 
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "")
-            if new_key in new_state:
-                print(f"COLLISION: {key} -> {new_key}")
-            new_state[new_key] = value
+    @staticmethod
+    def convert_vae_tensor(converted_key: str, value: Any) -> Any:
+        """Transform LDM 1x1-convolution attention weights into Linear weights."""
+        attention_weight_suffixes = (
+            ".attentions.0.query.weight",
+            ".attentions.0.key.weight",
+            ".attentions.0.value.weight",
+            ".attentions.0.proj_attn.weight",
+        )
+        if str(converted_key).endswith(attention_weight_suffixes):
+            shape = tuple(getattr(value, "shape", ()) or ())
+            if len(shape) == 4 and shape[-2:] == (1, 1):
+                return value[:, :, 0, 0]
+        return value
 
-        return new_state
+    def convert_text_encoder_state_dict(
+        self,
+        state_dict: Dict[str, Any],
+        architecture: str | None = None,
+    ) -> Dict[str, Any]:
+        normalized_architecture = str(architecture or "").strip().lower()
+        if normalized_architecture in {"sd2", "sd2.1", "sd2.x", "stable-diffusion-2.x"}:
+            return SD2OpenCLIPReferenceConverter().convert(state_dict)
+        strategy = text_encoder_strategy_for(architecture)
+        return strategy.convert_state_dict(state_dict)
 
     def _cleanup_unet_key(self, key: str) -> str:
         """
@@ -266,10 +287,13 @@ class StateDictConverter:
         mappings = {
             "encoder.down.0.block.0.": "encoder.down_blocks.0.resnets.0.",
             "encoder.down.0.block.1.": "encoder.down_blocks.0.resnets.1.",
+            "encoder.down.0.downsample.": "encoder.down_blocks.0.downsamplers.0.",
             "encoder.down.1.block.0.": "encoder.down_blocks.1.resnets.0.",
             "encoder.down.1.block.1.": "encoder.down_blocks.1.resnets.1.",
+            "encoder.down.1.downsample.": "encoder.down_blocks.1.downsamplers.0.",
             "encoder.down.2.block.0.": "encoder.down_blocks.2.resnets.0.",
             "encoder.down.2.block.1.": "encoder.down_blocks.2.resnets.1.",
+            "encoder.down.2.downsample.": "encoder.down_blocks.2.downsamplers.0.",
             "encoder.down.3.block.0.": "encoder.down_blocks.3.resnets.0.",
             "encoder.down.3.block.1.": "encoder.down_blocks.3.resnets.1.",
         }
@@ -279,22 +303,26 @@ class StateDictConverter:
         return key
 
     def _convert_vae_decoder_blocks(self, key: str) -> str:
+        # LDM decoder levels are numbered opposite to Diffusers execution order.
         mappings = {
-            "decoder.up.0.block.0.": "decoder.up_blocks.0.resnets.0.",
-            "decoder.up.0.block.1.": "decoder.up_blocks.0.resnets.1.",
-            "decoder.up.0.block.2.": "decoder.up_blocks.0.resnets.2.",
+            "decoder.up.3.block.0.": "decoder.up_blocks.0.resnets.0.",
+            "decoder.up.3.block.1.": "decoder.up_blocks.0.resnets.1.",
+            "decoder.up.3.block.2.": "decoder.up_blocks.0.resnets.2.",
+            "decoder.up.3.upsample.": "decoder.up_blocks.0.upsamplers.0.",
 
-            "decoder.up.1.block.0.": "decoder.up_blocks.1.resnets.0.",
-            "decoder.up.1.block.1.": "decoder.up_blocks.1.resnets.1.",
-            "decoder.up.1.block.2.": "decoder.up_blocks.1.resnets.2.",
+            "decoder.up.2.block.0.": "decoder.up_blocks.1.resnets.0.",
+            "decoder.up.2.block.1.": "decoder.up_blocks.1.resnets.1.",
+            "decoder.up.2.block.2.": "decoder.up_blocks.1.resnets.2.",
+            "decoder.up.2.upsample.": "decoder.up_blocks.1.upsamplers.0.",
 
-            "decoder.up.2.block.0.": "decoder.up_blocks.2.resnets.0.",
-            "decoder.up.2.block.1.": "decoder.up_blocks.2.resnets.1.",
-            "decoder.up.2.block.2.": "decoder.up_blocks.2.resnets.2.",
+            "decoder.up.1.block.0.": "decoder.up_blocks.2.resnets.0.",
+            "decoder.up.1.block.1.": "decoder.up_blocks.2.resnets.1.",
+            "decoder.up.1.block.2.": "decoder.up_blocks.2.resnets.2.",
+            "decoder.up.1.upsample.": "decoder.up_blocks.2.upsamplers.0.",
 
-            "decoder.up.3.block.0.": "decoder.up_blocks.3.resnets.0.",
-            "decoder.up.3.block.1.": "decoder.up_blocks.3.resnets.1.",
-            "decoder.up.3.block.2.": "decoder.up_blocks.3.resnets.2.",
+            "decoder.up.0.block.0.": "decoder.up_blocks.3.resnets.0.",
+            "decoder.up.0.block.1.": "decoder.up_blocks.3.resnets.1.",
+            "decoder.up.0.block.2.": "decoder.up_blocks.3.resnets.2.",
         }
         for old, new in mappings.items():
             if key.startswith(old):
@@ -332,9 +360,15 @@ class StateDictConverter:
         return key
 
     def _convert_vae_attention_subkeys(self, key: str) -> str:
-        key = key.replace("norm.", "group_norm.")
-        key = key.replace("q.", "query.")
-        key = key.replace("k.", "key.")
-        key = key.replace("v.", "value.")
-        key = key.replace("proj_out.", "proj_attn.")
+        # Rewrite only attention leaf names. Global replacements such as
+        # ``k. -> key.`` corrupt ``mid_block.`` into ``mid_blockey.``.
+        replacements = {
+            ".attentions.0.norm.": ".attentions.0.group_norm.",
+            ".attentions.0.q.": ".attentions.0.query.",
+            ".attentions.0.k.": ".attentions.0.key.",
+            ".attentions.0.v.": ".attentions.0.value.",
+            ".attentions.0.proj_out.": ".attentions.0.proj_attn.",
+        }
+        for old, new in replacements.items():
+            key = key.replace(old, new)
         return key

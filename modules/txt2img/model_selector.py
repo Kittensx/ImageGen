@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from modules.asset_discovery import resolve_nested_asset
 from modules.project_context import ProjectContext
 
 
@@ -110,13 +111,31 @@ class ModelSelector:
         """Resolve an explicit, interactive, or configured model path."""
 
         if explicit_path:
-            return str(self.context.resolve_project_path(explicit_path))
+            direct = self.context.resolve_project_path(explicit_path)
+            if direct.is_file():
+                return str(direct)
+            nested = resolve_nested_asset(
+                self.get_checkpoint_root(),
+                explicit_path,
+                extensions=MODEL_EXTENSIONS,
+            )
+            return str(nested) if nested is not None else str(direct)
 
         if interactive:
             return self.choose_model().path
 
         if self.context.default_model_path is not None:
-            return str(self.context.default_model_path)
+            configured = self.context.default_model_path
+            if configured.is_file():
+                return str(configured)
+            nested = resolve_nested_asset(
+                self.get_checkpoint_root(),
+                configured.name,
+                extensions=MODEL_EXTENSIONS,
+            )
+            if nested is not None:
+                return str(nested)
+            return str(configured)
 
         return ""
 

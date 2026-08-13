@@ -19,6 +19,8 @@ paths:
   
 
   local_config_dir: "modules/local_configs"
+  runtime_assets_dir: "runtime_assets"
+  model_tooling_dir: "model_tooling"
   tokenizer_dir: "modules/local_tokenizers/clip-vit-large-patch14"
   data_dir: "data"
   registry_db_path: "data/asset_registry.db"
@@ -29,16 +31,17 @@ paths:
   diagnostics_dir: "artifacts/diagnostics"
 
 defaults:
-  model_path: "models/StableDiffusion/CheckPoints/Nautica.safetensors"
+  model_path: ""
+  sd2_runtime_profile: null
   vae_path: null
   lora_paths: []
   device: "auto"
   dtype: "auto"
 
 generation:
-  positive_prompt: "raw photo, (attractive woman, age20), styled ((blonde)) hair, ((blue)) eyes, standing, {wearing dress, slit, exposed upper thighs}, tan-lines, {relaxed posture}, softlight, small breasts"
-  negative_prompt: "cape"
-  seed: 519822357
+  positive_prompt: ""
+  negative_prompt: ""
+  seed: -1
   steps: 20
   cfg_scale: 6.0
   width: 512

@@ -13,7 +13,7 @@ from image_gen.systems.regional_prompting import (
     estimate_region_runtime,
     extract_superhybrid_region_slot,
 )
-from modules.txt2img.seed_utils import resolve_seed_sequence
+from modules.txt2img.seed_utils import parse_seed_range_expression, resolve_seed_sequence
 from modules.prompt_parsers.canonical import canonicalize_prompt
 from modules.prompt_parsers.contracts import PromptParserError
 from modules.prompt_parsers.adapters.legacy import LegacyPromptParserAdapter
@@ -672,7 +672,16 @@ class PromptProcessingPreflight:
         hires_steps_raw = source.get("hires_steps")
         hires_steps = int(hires_steps_raw) if hires_steps_raw not in (None, "") else None
         seed_raw = source.get("seed")
-        seed = int(seed_raw) if seed_raw not in (None, "") else None
+        if seed_raw in (None, ""):
+            seed = None
+        elif parse_seed_range_expression(seed_raw) is not None:
+            # Prompt preflight needs a scalar seed only for parser syntax / preview
+            # behavior. The actual finite-range selection is owned by the WebUI
+            # generation seed plan, so preserve the random sentinel here instead
+            # of coercing the range expression through int(...).
+            seed = -1
+        else:
+            seed = int(seed_raw)
         shadow_compare = bool(source.get("prompt_shadow_compare", False))
         batch_size = max(1, int(source.get("batch_size") or 1))
         base_width = int(source.get("generation_width") or source.get("width") or 512)

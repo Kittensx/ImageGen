@@ -693,6 +693,66 @@ def _restore_venv(root: Path, backup: Path | None) -> None:
         backup.rename(target)
 
 
+def _install_sd21_support(
+    root: Path,
+    python: Path,
+    *,
+    no_download: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "launched": False,
+        "return_code": None,
+    }
+    print("\nStable Diffusion 2.1 runtime support")
+    print("------------------------------------")
+    print("IMAGE_GEN installs the lightweight SD2.1 tokenizer/config support files during normal setup.")
+    print("Model checkpoints remain user-managed and are never downloaded by this installer.")
+
+    if no_download:
+        print("SD2.1 runtime support skipped because --no-download is active.")
+        record["status"] = "no_download"
+        return record
+
+    command = [
+        str(python),
+        str(root / "scripts" / "setup" / "install_sd21_support.py"),
+        "--project-root",
+        str(root),
+        "--trigger",
+        "main_setup",
+    ]
+    if dry_run:
+        command.append("--dry-run")
+
+    printable = subprocess.list2cmdline(command)
+    print(f"Launching separate SD2.1 runtime-support installer:\n+ {printable}")
+    record["launched"] = True
+    if dry_run:
+        record["status"] = "dry_run"
+        record["return_code"] = 0
+        return record
+
+    creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if sys.platform == "win32" else 0
+    completed = subprocess.run(
+        command,
+        cwd=str(root),
+        creationflags=creationflags,
+        check=False,
+    )
+    record["return_code"] = int(completed.returncode)
+    if completed.returncode == 0:
+        print("SD2.1 runtime support installer completed successfully. Resuming IMAGE_GEN setup.")
+        record["status"] = "installed"
+    else:
+        print(
+            f"WARNING: SD2.1 runtime support installer exited with code {completed.returncode}. "
+            "Core IMAGE_GEN setup will continue; the same standalone installer will be offered again "
+            "if an SD2.x model is later activated while support files are missing."
+        )
+        record["status"] = "installer_failed"
+    return record
+
 def _install_profile(
     root: Path,
     python: Path,
@@ -740,6 +800,13 @@ def _install_profile(
         dry_run=dry_run,
     )
 
+    sd21_support = _install_sd21_support(
+        root,
+        python,
+        no_download=no_download,
+        dry_run=dry_run,
+    )
+
     attention_manifest = root / str(profile.get("attention_manifest"))
     qualification = _profile_qualification(profile)
     community_mode = qualification != "validated"
@@ -770,6 +837,7 @@ def _install_profile(
             "index_url": index_url,
             "attention_manifest": str(attention_manifest),
             "qualification": qualification,
+            "sd21_support": sd21_support,
         }
 
     verification_code = (
@@ -801,6 +869,7 @@ def _install_profile(
         )
 
     verification["qualification"] = qualification
+    verification["sd21_support"] = sd21_support
     if community_mode:
         if skip_gpu_smoke:
             verification["community_attention_probe"] = {
