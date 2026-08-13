@@ -11,6 +11,7 @@ from image_gen.contracts import PipelineComponents
 from image_gen.systems.validation.capabilities import capability_for
 from image_gen.systems.memory.telemetry import MemoryTelemetry
 from image_gen.contracts.vae_provenance import attach_vae_provenance
+from image_gen.systems.model_loading.vae_override import apply_external_vae_override
 
 if TYPE_CHECKING:
     from modules.load_safetensors_model import LoadModel
@@ -40,7 +41,17 @@ class ModelLoadingSystem:
         if architecture.startswith("sd1") or "stable-diffusion-1" in architecture:
             return "epsilon", "sd1_architecture_contract"
         if architecture.startswith("sd2") or "stable-diffusion-2" in architecture:
-            return "v_prediction", "sd2_architecture_contract"
+            sd2_contract = getattr(plan, "sd2_contract", None)
+            resolved = str(getattr(sd2_contract, "prediction_type", "") or "")
+            if resolved:
+                return resolved, str(
+                    getattr(sd2_contract, "prediction_type_source", "runtime_scheduler_config")
+                    or "runtime_scheduler_config"
+                )
+            raise RuntimeError(
+                "SD2 prediction type is unresolved. IMAGE_GEN no longer guesses v_prediction for all SD2 checkpoints; "
+                "the checkpoint must provide metadata or resolve through a qualified SD2 runtime profile."
+            )
         return "epsilon", "legacy_supported_checkpoint_default"
 
     @property
@@ -55,15 +66,34 @@ class ModelLoadingSystem:
         tokenizer: Any,
         dtype: torch.dtype | None = None,
         device: str | torch.device | None = None,
+        request_extras: dict[str, Any] | None = None,
     ) -> LoadedModel:
         load_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         telemetry = MemoryTelemetry(device=load_device)
         before_memory = telemetry.capture("before_checkpoint_component_load").to_dict()
-        plan = self.loader.prepare_load_plan(model_path)
+        extras = dict(request_extras or {})
+        allow_validation_generation = bool(extras.get("sd2_dedicated_generation"))
+        explicit_sd2_profile = str(extras.get("sd2_runtime_profile_override") or "").strip() or None
+        plan = self.loader.prepare_load_plan(
+            model_path,
+            require_generation_support=not allow_validation_generation,
+            explicit_sd2_runtime_profile=explicit_sd2_profile,
+        )
         checkpoint_report = getattr(plan, "report", None)
         if checkpoint_report is not None:
             capability = capability_for(getattr(checkpoint_report, "architecture", "unknown"))
-            if not capability.generation_supported:
+            if allow_validation_generation:
+                architecture = str(getattr(checkpoint_report, "architecture", "")).strip().lower()
+                if architecture != "sd2.x":
+                    raise RuntimeError(
+                        "Dedicated validation generation override currently supports SD2.x checkpoints only."
+                    )
+                if not (capability.validation_supported or capability.generation_supported):
+                    raise RuntimeError(
+                        f"Checkpoint architecture {capability.architecture!r} is not enabled for dedicated validation generation: "
+                        f"{capability.reason}"
+                    )
+            elif not capability.generation_supported:
                 raise RuntimeError(
                     f"Checkpoint architecture {capability.architecture!r} is not enabled: "
                     f"{capability.reason}"
@@ -115,12 +145,30 @@ class ModelLoadingSystem:
                 "embedded_in_checkpoint": True,
             },
         )
+        override_path = str(extras.get("vae_path") or "").strip()
+        active_vae = built.vae
+        if override_path:
+            override = apply_external_vae_override(built.vae, override_path)
+            active_vae = override.vae
+            vae_provenance = override.provenance
+            # Keep the compatibility view aligned with the effective runtime
+            # component. This also releases the superseded embedded VAE once no
+            # other references remain, instead of retaining two VAEs for the
+            # lifetime of the loaded model.
+            built.vae = active_vae
+            placement_reports = getattr(built, "placement_reports", None)
+            if isinstance(placement_reports, dict):
+                placement_reports["vae"] = dict(
+                    getattr(active_vae, "_image_gen_placement_report", {}) or {}
+                )
         return LoadedModel(
             components=PipelineComponents(
                 unet=built.unet,
-                vae=built.vae,
+                vae=active_vae,
                 text_encoder=built.text_encoder,
                 tokenizer=tokenizer,
+                text_encoder_2=getattr(built, "text_encoder_2", None),
+                tokenizer_2=getattr(built, "tokenizer_2", None),
                 prediction_type=prediction_type,
                 prediction_type_source=prediction_type_source,
                 model_identity=model_identity,

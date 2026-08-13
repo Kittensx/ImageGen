@@ -6,9 +6,11 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from image_gen.runtime.adapters.contracts import AdapterInspectionRecord
+
 
 _KNOWN_MODEL_FAMILIES = {"sd1", "sd2", "sdxl", "sd3", "flux"}
-LORA_SCAN_CACHE_SCHEMA_VERSION = 4
+LORA_SCAN_CACHE_SCHEMA_VERSION = 5
 _HASH_CHUNK_SIZE = 1024 * 1024
 _HEX_HASH_RE = re.compile(r"^[0-9a-fA-F]{12,128}$")
 
@@ -268,25 +270,6 @@ def _family_from_metadata(metadata: Mapping[str, Any]) -> str:
     return ""
 
 
-def _tensor_format(keys: list[str]) -> str:
-    lowered = [key.lower() for key in keys]
-    if any("hada_w1_a" in key or "hada_w2_a" in key or "lokr_" in key for key in lowered):
-        return "LyCORIS"
-    if any(
-        key.startswith("lora_unet_")
-        or key.startswith("lora_te_")
-        or key.startswith("lora_te1_")
-        or key.startswith("lora_te2_")
-        for key in lowered
-    ):
-        return "Kohya"
-    if any(".lora_a.weight" in key or ".lora_b.weight" in key for key in lowered):
-        return "Diffusers PEFT"
-    if any("lora_down.weight" in key or "lora_up.weight" in key for key in lowered):
-        return "LoRA up/down"
-    return "Unknown"
-
-
 def _is_family_probe_key(key: str) -> bool:
     lowered = key.lower()
     is_text_encoder = lowered.startswith("lora_te") or "text_encoder" in lowered
@@ -313,12 +296,24 @@ def _is_family_probe_key(key: str) -> bool:
 
 def _family_from_keys_and_shapes(keys: list[str], shape_map: Mapping[str, tuple[int, ...]]) -> str:
     lowered = [key.lower() for key in keys]
-    if any(key.startswith("lora_te2_") or "text_encoder_2" in key for key in lowered):
+    if any(
+        key.startswith("lora_te2_")
+        or "text_encoder_2" in key
+        or key.startswith("conditioner.embedders.1")
+        for key in lowered
+    ):
         return "sdxl"
 
     input_dimensions: set[int] = set()
     for key, shape in shape_map.items():
-        if len(shape) < 2 or not _is_family_probe_key(key):
+        lowered_key = key.lower()
+        checkpoint_probe = (
+            lowered_key.startswith("cond_stage_model.") and lowered_key.endswith("token_embedding.weight")
+        ) or (
+            lowered_key.startswith("model.diffusion_model.")
+            and (".attn2.to_k.weight" in lowered_key or ".attn2.to_v.weight" in lowered_key)
+        )
+        if len(shape) < 2 or not (_is_family_probe_key(key) or checkpoint_probe):
             continue
         input_dimension = int(shape[-1])
         if input_dimension in {768, 1024, 1280, 2048}:
@@ -333,29 +328,283 @@ def _family_from_keys_and_shapes(keys: list[str], shape_map: Mapping[str, tuple[
     return ""
 
 
+def _adapter_parameter_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(
+        token in lowered
+        for token in (
+            ".lora_a.",
+            ".lora_b.",
+            ".lora_down.",
+            ".lora_up.",
+            "lora_down.weight",
+            "lora_up.weight",
+            "lora_a.weight",
+            "lora_b.weight",
+            "lora_magnitude_vector",
+            "magnitude_vector",
+            "hada_w1_",
+            "hada_w2_",
+            "lokr_",
+        )
+    ) or lowered.startswith(("lora_unet_", "lora_te_", "lora_te1_", "lora_te2_"))
+
+
+def _checkpoint_like_evidence(keys: list[str]) -> list[str]:
+    lowered = [key.lower() for key in keys]
+    evidence: list[str] = []
+    signals = {
+        "unet": any(key.startswith("model.diffusion_model.") for key in lowered),
+        "vae": any(key.startswith("first_stage_model.") for key in lowered),
+        "text_encoder": any(key.startswith("cond_stage_model.") for key in lowered),
+        "sdxl_conditioner": any(key.startswith("conditioner.embedders.") for key in lowered),
+    }
+    for label, present in signals.items():
+        if present:
+            evidence.append(f"checkpoint_prefix:{label}")
+    return evidence
+
+
+def _network_metadata(metadata: Mapping[str, Any]) -> tuple[str, str]:
+    for key in ("ss_network_module", "ss_network_type"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value, key
+    return "", ""
+
+
+def _adapter_format(keys: list[str], metadata: Mapping[str, Any]) -> tuple[str, list[str]]:
+    lowered = [key.lower() for key in keys]
+    network_type, network_source = _network_metadata(metadata)
+    network_token = _compact_token(network_type)
+    evidence: list[str] = []
+    if network_type:
+        evidence.append(f"{network_source}={network_type}")
+
+    has_hada_w1 = any("hada_w1_" in key for key in lowered)
+    has_hada_w2 = any("hada_w2_" in key for key in lowered)
+    if has_hada_w1 and has_hada_w2:
+        evidence.append("complete_loha_hada_groups")
+        return "lycoris_loha", evidence
+    if any("lokr_" in key for key in lowered):
+        evidence.append("lokr_tensor_group")
+        return "lycoris_lokr", evidence
+
+    has_kohya = any(
+        key.startswith(("lora_unet_", "lora_te_", "lora_te1_", "lora_te2_"))
+        for key in lowered
+    )
+    has_peft = any(".lora_a.weight" in key or ".lora_b.weight" in key for key in lowered)
+    has_up_down = any("lora_down.weight" in key or "lora_up.weight" in key for key in lowered)
+    is_lycoris_metadata = "lycoris" in network_token
+    locon_hint = "locon" in network_token or _compact_token(metadata.get("ss_network_args")).find("conv_dim") >= 0
+
+    if is_lycoris_metadata and (locon_hint or has_up_down or has_kohya):
+        evidence.append("lycoris_metadata_with_lora_up_down_or_kohya_keys")
+        return "lycoris_locon" if locon_hint or has_up_down else "lycoris_other", evidence
+    if is_lycoris_metadata:
+        evidence.append("lycoris_metadata_without_recognized_algorithm_group")
+        return "lycoris_other", evidence
+    if has_kohya:
+        evidence.append("kohya_component_prefixes")
+        return "standard_kohya_lora", evidence
+    if has_peft:
+        evidence.append("peft_lora_a_b_pairs")
+        return "standard_diffusers_peft_lora", evidence
+    if has_up_down:
+        evidence.append("lora_up_down_pairs")
+        return "standard_lora_up_down", evidence
+
+    checkpoint_evidence = _checkpoint_like_evidence(keys)
+    if checkpoint_evidence and not any(_adapter_parameter_key(key) for key in keys):
+        evidence.extend(checkpoint_evidence)
+        evidence.append("no_recognized_adapter_parameter_groups")
+        return "non_adapter_full_model", evidence
+    evidence.append("no_recognized_adapter_format")
+    return "unknown_adapter", evidence
+
+
+def _adapter_extensions(keys: list[str]) -> tuple[str, ...]:
+    lowered = [key.lower() for key in keys]
+    extensions: list[str] = []
+    if any("lora_magnitude_vector" in key or "magnitude_vector" in key for key in lowered):
+        extensions.append("dora_magnitude")
+    return tuple(extensions)
+
+
+def _legacy_tensor_format(adapter_format: str) -> str:
+    return {
+        "standard_kohya_lora": "Kohya",
+        "standard_diffusers_peft_lora": "Diffusers PEFT",
+        "standard_lora_up_down": "LoRA up/down",
+        "lycoris_loha": "LyCORIS",
+        "lycoris_lokr": "LyCORIS",
+        "lycoris_locon": "LyCORIS",
+        "lycoris_other": "LyCORIS",
+        "non_adapter_full_model": "Unknown",
+        "unknown_adapter": "Unknown",
+        "invalid": "Unknown",
+    }.get(adapter_format, "Unknown")
+
+
+def _adapter_group_base(key: str) -> str:
+    lowered = key.lower()
+    suffixes = (
+        ".lora_down.weight",
+        ".lora_up.weight",
+        ".lora_a.weight",
+        ".lora_b.weight",
+        ".alpha",
+        ".lora_magnitude_vector",
+        ".magnitude_vector",
+        ".hada_w1_a",
+        ".hada_w1_b",
+        ".hada_w2_a",
+        ".hada_w2_b",
+    )
+    for suffix in suffixes:
+        if lowered.endswith(suffix):
+            return lowered[: -len(suffix)]
+    marker = lowered.find(".lokr_")
+    if marker >= 0:
+        return lowered[:marker]
+    return lowered
+
+
+def _target_analysis(keys: list[str], shape_map: Mapping[str, tuple[int, ...]]) -> tuple[tuple[str, ...], dict[str, int]]:
+    groups: dict[str, set[str]] = {
+        "unet": set(),
+        "text_encoder": set(),
+        "text_encoder_2": set(),
+        "linear": set(),
+        "convolution": set(),
+        "other": set(),
+    }
+    for key in keys:
+        if not _adapter_parameter_key(key):
+            continue
+        lowered = key.lower()
+        base = _adapter_group_base(key)
+        if lowered.startswith("lora_te2_") or "text_encoder_2" in lowered:
+            groups["text_encoder_2"].add(base)
+        elif (
+            lowered.startswith(("lora_te_", "lora_te1_", "text_encoder.", "text_model."))
+            or ".text_encoder." in lowered
+        ):
+            groups["text_encoder"].add(base)
+        elif (
+            lowered.startswith((
+                "lora_unet_",
+                "unet.",
+                "down_blocks.",
+                "up_blocks.",
+                "mid_block.",
+                "conv_in.",
+                "conv_out.",
+                "time_embedding.",
+                "add_embedding.",
+            ))
+            or ".unet." in lowered
+        ):
+            groups["unet"].add(base)
+        else:
+            groups["other"].add(base)
+
+        shape = shape_map.get(key)
+        if shape and any(token in lowered for token in ("lora_down", "lora_a", "hada_w1_a", "lokr_w1")):
+            if len(shape) > 2:
+                groups["convolution"].add(base)
+            elif len(shape) == 2:
+                groups["linear"].add(base)
+
+    counts = {f"{name}_target_groups": len(values) for name, values in groups.items()}
+    scopes = tuple(name for name in ("unet", "text_encoder", "text_encoder_2", "linear", "convolution", "other") if groups[name])
+    return scopes, counts
+
+
+def _sidecar_family(sidecar: Mapping[str, Any]) -> tuple[str, str]:
+    for key in ("model_family", "base_model", "sd_version"):
+        family = canonical_model_family(sidecar.get(key))
+        if family:
+            return family, f"sidecar:{key}"
+    nested = sidecar.get("metadata")
+    if isinstance(nested, Mapping):
+        for key in ("model_family", "base_model", "sd_version"):
+            family = canonical_model_family(nested.get(key))
+            if family:
+                return family, f"sidecar_metadata:{key}"
+    return "", ""
+
+
+def _cached_compatibility_hash(path: Path, sidecar: Mapping[str, Any]) -> dict[str, str]:
+    cache = dict(sidecar.get("_lora_scan_cache") or {})
+    if not lora_scan_cache_is_current(path, cache, require_compatibility_hash=True):
+        return {"a1111_hash": "", "a1111_short_hash": "", "a1111_hash_source": ""}
+    return {
+        "a1111_hash": _normalized_hash(cache.get("a1111_hash")),
+        "a1111_short_hash": _normalized_hash(cache.get("a1111_short_hash")),
+        "a1111_hash_source": str(cache.get("a1111_hash_source") or ""),
+    }
+
+
 def inspect_lora_file(
     path: str | Path,
     *,
     sidecar_metadata: Mapping[str, Any] | None = None,
+    include_compatibility_hash: bool = True,
 ) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
     sidecar = dict(sidecar_metadata or {})
+    try:
+        stat = resolved.stat()
+        signature = {
+            "path": str(resolved),
+            "size_bytes": int(stat.st_size),
+            "modified_ns": int(stat.st_mtime_ns),
+        }
+    except OSError:
+        signature = {"path": str(resolved), "size_bytes": 0, "modified_ns": 0}
+
     result: dict[str, Any] = {
         "path": str(resolved),
+        "file_signature": signature,
         "tensor_key_count": 0,
         "tensor_key_format": "Unknown",
+        "adapter_format": "invalid" if not resolved.exists() else "unknown_adapter",
+        "adapter_format_evidence": [],
+        "adapter_extensions": [],
+        "target_scopes": [],
+        "target_counts": {},
         "detected_model_family": "",
+        "model_family_evidence": [],
+        "network_type": "Unknown",
         "activation_text": "",
         "activation_text_source": "",
         "safetensors_metadata": {},
+        "network_dimension": None,
+        "network_alpha": None,
         "a1111_hash": "",
         "a1111_short_hash": "",
         "a1111_hash_source": "",
         "a1111_hash_error": "",
+        "inspection_warnings": [],
+        "inspection_errors": [],
         "inspection_error": "",
+        "adapter_inspection": {},
     }
     if resolved.suffix.lower() != ".safetensors":
-        result["inspection_error"] = "LoRA metadata inspection currently supports .safetensors files only."
+        message = "LoRA metadata inspection currently supports .safetensors files only."
+        result["adapter_format"] = "invalid"
+        result["inspection_error"] = message
+        result["inspection_errors"] = [message]
+        record = AdapterInspectionRecord(
+            source_path=str(resolved),
+            file_signature=signature,
+            adapter_format="invalid",
+            adapter_format_evidence=("unsupported_file_extension",),
+            inspection_errors=(message,),
+        )
+        result["adapter_inspection"] = record.to_dict()
         return result
 
     try:
@@ -367,8 +616,19 @@ def inspect_lora_file(
             keys = list(handle.keys())
             metadata = dict(handle.metadata() or {})
             for key in keys:
-                if not _is_family_probe_key(key) and not (
-                    key.lower().startswith("lora_te2_") or "text_encoder_2" in key.lower()
+                lowered_key = key.lower()
+                checkpoint_family_probe = (
+                    lowered_key.startswith("cond_stage_model.") and lowered_key.endswith("token_embedding.weight")
+                ) or (
+                    lowered_key.startswith("model.diffusion_model.")
+                    and (".attn2.to_k.weight" in lowered_key or ".attn2.to_v.weight" in lowered_key)
+                ) or lowered_key.startswith("conditioner.embedders.1")
+                if not (
+                    _adapter_parameter_key(key)
+                    or _is_family_probe_key(key)
+                    or lowered_key.startswith("lora_te2_")
+                    or "text_encoder_2" in lowered_key
+                    or checkpoint_family_probe
                 ):
                     continue
                 try:
@@ -376,34 +636,113 @@ def inspect_lora_file(
                 except Exception:
                     continue
 
-        family = _family_from_metadata(metadata) or _family_from_keys_and_shapes(keys, shapes)
+        metadata_family = _family_from_metadata(metadata)
+        shape_family = _family_from_keys_and_shapes(keys, shapes)
+        sidecar_family, sidecar_family_source = _sidecar_family(sidecar)
+        family = metadata_family or shape_family or sidecar_family
+        family_evidence: list[str] = []
+        if metadata_family:
+            family_evidence.append("safetensors_architecture_metadata")
+        if shape_family:
+            family_evidence.append(f"tensor_shape_family:{shape_family}")
+        if sidecar_family and not metadata_family and not shape_family:
+            family_evidence.append(sidecar_family_source)
+        elif sidecar_family and family and sidecar_family != family:
+            family_evidence.append(f"contradictory_{sidecar_family_source}:{sidecar_family}")
+
+        adapter_format, format_evidence = _adapter_format(keys, metadata)
+        adapter_extensions = _adapter_extensions(keys)
+        target_scopes, target_counts = _target_analysis(keys, shapes)
         activation_text, activation_source = _activation_text_from_sources(sidecar, metadata)
-        try:
-            compatibility_hash = compute_lora_compatibility_hash(
-                resolved,
-                safetensors_metadata=metadata,
+        network_type, _ = _network_metadata(metadata)
+        if not network_type:
+            if adapter_format == "non_adapter_full_model":
+                network_type = "full"
+            elif adapter_format.startswith("lycoris_"):
+                network_type = "LyCORIS"
+            elif adapter_format.startswith("standard_"):
+                network_type = "LoRA"
+            else:
+                network_type = "Unknown"
+
+        compatibility_hash = _cached_compatibility_hash(resolved, sidecar)
+        compatibility_hash_error = ""
+        if include_compatibility_hash and not compatibility_hash.get("a1111_hash"):
+            try:
+                compatibility_hash = compute_lora_compatibility_hash(
+                    resolved,
+                    safetensors_metadata=metadata,
+                )
+            except Exception as exc:
+                compatibility_hash = {
+                    "a1111_hash": "",
+                    "a1111_short_hash": "",
+                    "a1111_hash_source": "",
+                }
+                compatibility_hash_error = f"{type(exc).__name__}: {exc}"
+
+        warnings: list[str] = []
+        if sidecar_family and family and sidecar_family != family:
+            warnings.append(
+                f"Sidecar/provider family '{sidecar_family}' contradicts file-derived family '{family}'; file evidence is authoritative."
             )
-            compatibility_hash_error = ""
-        except Exception as exc:
-            compatibility_hash = {
-                "a1111_hash": "",
-                "a1111_short_hash": "",
-                "a1111_hash_source": "",
-            }
-            compatibility_hash_error = f"{type(exc).__name__}: {exc}"
+        if adapter_format == "unknown_adapter":
+            warnings.append("No recognized adapter tensor representation was found.")
+        if "dora_magnitude" in adapter_extensions:
+            warnings.append("DoRA magnitude-vector extension detected; this extension requires explicit runtime qualification.")
+
+        record = AdapterInspectionRecord(
+            source_path=str(resolved),
+            file_signature=signature,
+            model_family=family,
+            model_family_evidence=tuple(family_evidence),
+            adapter_format=adapter_format,
+            adapter_format_evidence=tuple(format_evidence),
+            adapter_extensions=adapter_extensions,
+            network_type=network_type,
+            tensor_key_count=len(keys),
+            target_scopes=target_scopes,
+            target_counts=target_counts,
+            source_rank=metadata.get("ss_network_dim"),
+            source_alpha=metadata.get("ss_network_alpha"),
+            inspection_warnings=tuple(warnings),
+        )
         result.update(
             {
                 "tensor_key_count": len(keys),
-                "tensor_key_format": _tensor_format(keys),
+                "tensor_key_format": _legacy_tensor_format(adapter_format),
+                "adapter_format": adapter_format,
+                "adapter_format_evidence": format_evidence,
+                "adapter_extensions": list(adapter_extensions),
+                "target_scopes": list(target_scopes),
+                "target_counts": target_counts,
                 "detected_model_family": family,
+                "model_family_evidence": family_evidence,
+                "network_type": network_type,
                 "activation_text": activation_text,
                 "activation_text_source": activation_source,
                 "safetensors_metadata": metadata,
+                "network_dimension": metadata.get("ss_network_dim"),
+                "network_alpha": metadata.get("ss_network_alpha"),
                 **compatibility_hash,
                 "a1111_hash_error": compatibility_hash_error,
+                "inspection_warnings": warnings,
+                "inspection_errors": [],
                 "inspection_error": "",
+                "adapter_inspection": record.to_dict(),
             }
         )
     except Exception as exc:
-        result["inspection_error"] = f"{type(exc).__name__}: {exc}"
+        message = f"{type(exc).__name__}: {exc}"
+        result["adapter_format"] = "invalid"
+        result["inspection_error"] = message
+        result["inspection_errors"] = [message]
+        record = AdapterInspectionRecord(
+            source_path=str(resolved),
+            file_signature=signature,
+            adapter_format="invalid",
+            adapter_format_evidence=("safetensors_open_failed",),
+            inspection_errors=(message,),
+        )
+        result["adapter_inspection"] = record.to_dict()
     return result

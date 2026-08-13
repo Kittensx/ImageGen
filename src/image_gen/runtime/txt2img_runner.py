@@ -14,6 +14,8 @@ from typing import Any, Callable
 import torch
 
 from modules.component_placement import place_component
+from modules.checkpoint_inspector import CheckpointInspector
+from modules.model_qualification_registry import qualification_for_sha256
 
 from image_gen.contracts import GenerationRequest, GenerationResult
 from image_gen.runtime.composition import PipelineCompositionRoot
@@ -42,6 +44,8 @@ from image_gen.systems.upscaling import (
 from image_gen.systems.registry import RuntimeRegistrySystem
 from modules.pipeline.progress_reporter import ProgressReporter
 from modules.project_context import ProjectContext
+from modules.sd2_runtime_assets import SD2RuntimeAssetResolver
+from modules.sd2_runtime_profile import profile_from_filename, profile_from_id
 from modules.shared_state import SharedState
 from modules.txt2img.output_saver import SavedImageRecord
 from modules.txt2img.request_loader import load_request_payload, payload_to_generation_request
@@ -324,6 +328,7 @@ class Txt2ImgRunner:
         self.output_system = output_system or OutputSystem()
         self.model_loading_system = model_loading_system or ModelLoadingSystem(self.model_loader)
         self.tokenizer = tokenizer
+        self._tokenizer_identity = "injected" if tokenizer is not None else ""
         self._loaded_model_cache: dict[tuple[str, str, str, int, int], Any] = {}
         self.last_loaded_model: Any | None = None
         self.lora_runtime_manager = LoRARuntimeManager(self.project_context)
@@ -569,13 +574,85 @@ class Txt2ImgRunner:
         finally:
             self.reset_runtime_state()
 
-    def _build_local_tokenizer(self):
+    def _resolve_sd2_profile_hint(self, checkpoint_path: str | Path | None):
+        """Resolve an SD2 runtime profile for pre-load assets without family guessing.
+
+        Canonical filenames remain a cheap profile hint. If the user renamed a
+        qualified checkpoint, fall back to the exact SHA-256 qualification
+        registry. The result is cached for this runner so tokenizer identity
+        checks do not hash the same large checkpoint repeatedly.
+        """
+        path = Path(str(checkpoint_path or "")).expanduser()
+        profile = profile_from_filename(path.name)
+        if profile is not None:
+            return profile
+
+        if path.is_file() and path.suffix.lower() == ".safetensors":
+            try:
+                stat = path.stat()
+                cache_key = (str(path.resolve()), int(stat.st_size), int(stat.st_mtime_ns))
+                cache = getattr(self, "_sd2_profile_hint_cache", None)
+                if cache is None:
+                    cache = {}
+                    setattr(self, "_sd2_profile_hint_cache", cache)
+                if cache_key in cache:
+                    return cache[cache_key]
+
+                digest = ""
+                registry = getattr(self.model_loader, "asset_registry", None)
+                if registry is not None:
+                    try:
+                        asset_record = registry.get_asset_by_path(str(path.resolve()))
+                    except Exception:
+                        asset_record = None
+                    digest = str(getattr(asset_record, "sha256", "") or "").strip().lower()
+                if not digest:
+                    digest = CheckpointInspector.sha256_file(path)
+
+                qualification = qualification_for_sha256(digest)
+                profile = (
+                    profile_from_id(qualification.profile_id)
+                    if qualification is not None
+                    else None
+                )
+                cache[cache_key] = profile
+                if profile is not None:
+                    return profile
+            except OSError:
+                pass
+
+        configured_profile = str(
+            ((self.project_context.config.get("defaults") or {}).get("sd2_runtime_profile") or "")
+        ).strip()
+        return profile_from_id(configured_profile) if configured_profile else None
+
+    def _build_local_tokenizer(
+        self,
+        *,
+        checkpoint_path: str | Path | None = None,
+        checkpoint_family: str = "",
+    ):
+        family = str(checkpoint_family or "").strip().lower()
         local_dir = self.project_context.tokenizer_root
+        identity = f"sd1:{local_dir.resolve()}"
+
+        if "sd 2" in family or family.startswith("sd2") or "stable-diffusion-2" in family:
+            profile = self._resolve_sd2_profile_hint(checkpoint_path)
+            if profile is None:
+                raise ValueError(
+                    "SD2 tokenizer profile is unresolved for this checkpoint. IMAGE_GEN will not reuse the SD1 "
+                    "tokenizer silently; select/declare a qualified SD2 runtime profile first."
+                )
+            assets = SD2RuntimeAssetResolver(self.project_context).resolve(profile)
+            local_dir = assets.tokenizer_dir
+            identity = f"{profile.profile_id}:{local_dir.resolve()}"
+
         if not local_dir.exists():
             raise FileNotFoundError(f"Missing local tokenizer directory: {local_dir}")
         from transformers import CLIPTokenizer
 
-        return CLIPTokenizer.from_pretrained(str(local_dir), local_files_only=True)
+        tokenizer = CLIPTokenizer.from_pretrained(str(local_dir), local_files_only=True)
+        return tokenizer, identity
 
     def _resolve_adapter(
         self,
@@ -851,15 +928,58 @@ class Txt2ImgRunner:
         if not model_path:
             raise ValueError("No model_path provided in request extras and no default MODEL_PATH found.")
 
-        if self.tokenizer is None:
+        model_file = Path(str(model_path)).expanduser().resolve()
+        checkpoint_family = ""
+        if model_file.is_file() and model_file.suffix.lower() == ".safetensors":
+            try:
+                checkpoint_contract = CheckpointInspector().inspect_architecture_contract(str(model_file))
+                checkpoint_family = str(checkpoint_contract.family or "")
+                extras["checkpoint_preflight_architecture"] = checkpoint_contract.to_dict()
+            except Exception as exc:
+                extras["checkpoint_preflight_architecture"] = {
+                    "family": "",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+        try:
+            resolved_lora_stack = self.lora_runtime_manager.prepare_request(
+                request,
+                extras,
+                checkpoint_family=checkpoint_family,
+            )
+        except Exception as exc:
+            details = dict(extras.get("adapter_preflight") or {})
+            details.setdefault("checkpoint_family", checkpoint_family)
+            details["error"] = str(exc)
+            extras["adapter_preflight"] = details
+            session.request_extras["adapter_preflight"] = dict(details)
+            raise ValueError(f"LoRA request validation failed: {exc}") from exc
+        session.request_extras["adapter_preflight"] = dict(extras.get("adapter_preflight") or {})
+        session.request_extras["adapter_runtime_plans"] = list(extras.get("adapter_runtime_plans") or [])
+
+        expected_tokenizer_identity = ""
+        preflight_family = checkpoint_family
+        if "SD 2" in preflight_family or preflight_family.lower().startswith("sd2"):
+            profile = self._resolve_sd2_profile_hint(model_file)
+            if profile is not None:
+                assets = SD2RuntimeAssetResolver(self.project_context).resolve(profile)
+                expected_tokenizer_identity = f"{profile.profile_id}:{assets.tokenizer_dir.resolve()}"
+        else:
+            expected_tokenizer_identity = f"sd1:{self.project_context.tokenizer_root.resolve()}"
+
+        if self.tokenizer is None or (
+            self._tokenizer_identity not in {"injected", expected_tokenizer_identity}
+        ):
             self._emit_model_runtime_event(extras, "loading_tokenizer")
-            self.tokenizer = self.diagnostics_system.run_stage(
+            tokenizer_result = self.diagnostics_system.run_stage(
                 session,
                 "model_loading",
                 "load_tokenizer",
-                self._build_local_tokenizer,
+                lambda: self._build_local_tokenizer(
+                    checkpoint_path=model_file,
+                    checkpoint_family=checkpoint_family,
+                ),
             )
-        model_file = Path(str(model_path)).expanduser().resolve()
+            self.tokenizer, self._tokenizer_identity = tokenizer_result
         model_provenance: dict[str, Any] = {
             "requested_path": str(model_path),
             "resolved_path": str(model_file),
@@ -885,6 +1005,20 @@ class Txt2ImgRunner:
             "cpu_fallback_reason": fallback_reason,
             "execution_device_policy": str(extras.get("model_runtime_execution_device") or "cuda_preferred"),
         }
+        vae_override_path = str(extras.get("vae_path") or "").strip()
+        vae_override_identity: tuple[Any, ...] = ("", -1, -1)
+        if vae_override_path:
+            resolved_vae = Path(vae_override_path).expanduser()
+            if resolved_vae.is_file():
+                vae_stat = resolved_vae.stat()
+                vae_override_identity = (str(resolved_vae.resolve()), int(vae_stat.st_size), int(vae_stat.st_mtime_ns))
+            else:
+                vae_override_identity = (vae_override_path, -1, -1)
+        load_variant_key = (
+            bool(extras.get("sd2_dedicated_generation")),
+            str(extras.get("sd2_runtime_profile_override") or ""),
+            *vae_override_identity,
+        )
         if model_file.is_file():
             stat = model_file.stat()
             load_path = str(model_file)
@@ -896,11 +1030,12 @@ class Txt2ImgRunner:
                 str(runtime_device),
                 int(stat.st_size),
                 int(stat.st_mtime_ns),
+                *load_variant_key,
             )
         else:
             # Injected/fake loaders used by focused tests may use a symbolic path.
             load_path = str(model_path)
-            cache_key = (str(model_file), str(runtime_dtype), str(runtime_device), -1, -1)
+            cache_key = (str(model_file), str(runtime_dtype), str(runtime_device), -1, -1, *load_variant_key)
         extras["model_provenance"] = dict(model_provenance)
         session.request_extras["model_provenance"] = dict(model_provenance)
         self.diagnostics_system.emit(
@@ -938,6 +1073,14 @@ class Txt2ImgRunner:
                 )
             ):
                 load_kwargs["device"] = runtime_device
+            if (
+                "request_extras" in load_parameters
+                or any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in load_parameters.values()
+                )
+            ):
+                load_kwargs["request_extras"] = extras
             if runtime_device.type == "cuda":
                 self._emit_model_runtime_event(
                     extras,
@@ -1092,26 +1235,14 @@ class Txt2ImgRunner:
             **model_provenance,
         )
         self.last_loaded_model = loaded
-        checkpoint_family_hint = str(
-            model_provenance.get("architecture")
-            or model_provenance.get("architecture_summary")
-            or model_provenance.get("checkpoint_kind")
-            or ""
-        )
-        checkpoint_family = checkpoint_family_hint.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
         try:
-            resolved_lora_stack = self.lora_runtime_manager.prepare_request(
-                request,
-                extras,
-                checkpoint_family=checkpoint_family,
-            )
             self.lora_runtime_manager.apply(
                 components=loaded.components,
                 stack=resolved_lora_stack,
                 extras=extras,
             )
         except Exception as exc:
-            raise ValueError(f"LoRA request validation failed: {exc}") from exc
+            raise ValueError(f"LoRA runtime application failed: {exc}") from exc
         session.request_extras["resolved_lora_stack"] = list(extras.get("resolved_lora_stack") or [])
         self.diagnostics_system.update_components(session, loaded.components)
         model_load_memory = dict(getattr(loaded, "memory_telemetry", {}) or {})

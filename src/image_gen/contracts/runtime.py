@@ -617,6 +617,8 @@ class PipelineComponents:
     vae: torch.nn.Module
     text_encoder: torch.nn.Module
     tokenizer: Any = None
+    text_encoder_2: torch.nn.Module | None = None
+    tokenizer_2: Any = None
     prediction_type: str = "epsilon"
     prediction_type_source: str = "pipeline_components"
     model_identity: str = ""
@@ -624,17 +626,25 @@ class PipelineComponents:
     vae_provenance: dict[str, Any] = field(default_factory=dict)
 
     def placement_metadata(self) -> dict[str, dict[str, Any]]:
-        return {
+        payload = {
             "unet": component_placement_report(self.unet),
             "vae": component_placement_report(self.vae),
             "text_encoder": component_placement_report(self.text_encoder),
         }
+        if self.text_encoder_2 is not None:
+            payload["text_encoder_2"] = component_placement_report(self.text_encoder_2)
+        return payload
 
     def describe(self) -> dict[str, Any]:
         return {
             "unet": f"{type(self.unet).__module__}.{type(self.unet).__qualname__}",
             "vae": f"{type(self.vae).__module__}.{type(self.vae).__qualname__}",
             "text_encoder": f"{type(self.text_encoder).__module__}.{type(self.text_encoder).__qualname__}",
+            "text_encoder_2": (
+                f"{type(self.text_encoder_2).__module__}.{type(self.text_encoder_2).__qualname__}"
+                if self.text_encoder_2 is not None
+                else None
+            ),
             "prediction_type": self.prediction_type,
             "prediction_type_source": self.prediction_type_source,
             "model_identity": self.model_identity,
@@ -644,6 +654,11 @@ class PipelineComponents:
             "tokenizer": (
                 f"{type(self.tokenizer).__module__}.{type(self.tokenizer).__qualname__}"
                 if self.tokenizer is not None
+                else None
+            ),
+            "tokenizer_2": (
+                f"{type(self.tokenizer_2).__module__}.{type(self.tokenizer_2).__qualname__}"
+                if self.tokenizer_2 is not None
                 else None
             ),
         }

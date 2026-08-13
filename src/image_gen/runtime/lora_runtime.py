@@ -3,17 +3,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-import inspect
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from modules.asset_discovery import resolve_nested_asset
 from modules.project_context import ProjectContext
 from image_gen.runtime.lora_inspector import (
     cached_or_compute_lora_compatibility_hash,
     canonical_model_family,
+    inspect_lora_file,
+)
+from image_gen.runtime.adapters.compatibility import AdapterCompatibilityService
+from image_gen.runtime.adapters.contracts import AdapterInspectionRecord, AdapterRuntimePlan
+from image_gen.runtime.adapters.registry import (
+    AdapterLoaderRegistry,
+    default_adapter_loader_registry,
 )
 from image_gen.contracts import (
     PROMPT_ASSET_CONTRACT_VERSION,
@@ -100,6 +107,9 @@ class ResolvedLoRAAsset:
             metadata["a1111_hash"] = self.a1111_hash
             metadata["a1111_short_hash"] = self.a1111_short_hash or self.a1111_hash[:12]
             metadata["a1111_hash_source"] = self.a1111_hash_source
+        inspection = dict(metadata.get("_adapter_inspection") or {})
+        runtime_plan = dict(metadata.get("_adapter_runtime_plan") or {})
+        compatibility = dict(runtime_plan.get("compatibility") or {})
         return {
             "asset_type": "lora",
             "asset_id": self.asset_id,
@@ -126,6 +136,16 @@ class ResolvedLoRAAsset:
             "origin": self.source,
             "order": self.order,
             "adapter_name": self.adapter_name,
+            "adapter_format": str(inspection.get("adapter_format") or ""),
+            "adapter_extensions": list(inspection.get("adapter_extensions") or []),
+            "detected_model_family": str(inspection.get("model_family") or ""),
+            "target_scopes": list(inspection.get("target_scopes") or []),
+            "runtime_support_state": str(compatibility.get("overall_support_state") or ""),
+            "runtime_loadable": bool(compatibility.get("runtime_loadable", False)),
+            "support_reason": str(compatibility.get("blocking_reason") or ""),
+            "loader_id": str(runtime_plan.get("loader_id") or ""),
+            "adapter_inspection": inspection,
+            "adapter_runtime_plan": runtime_plan,
             "metadata": metadata,
         }
 
@@ -187,6 +207,21 @@ class LoRAResolver:
         for candidate in candidates:
             if candidate.is_file():
                 return candidate
+
+        lora_root = getattr(self.context, "lora_dir", None)
+        if lora_root is not None:
+            for raw in (requested_path, requested_name):
+                text = str(raw or "").strip()
+                if not text:
+                    continue
+                nested = resolve_nested_asset(
+                    lora_root,
+                    text,
+                    extensions={".safetensors", ".pt", ".ckpt", ".bin"},
+                )
+                if nested is not None:
+                    return nested
+
         catalog = self._scan_catalog()
         for raw in (requested_path, requested_name):
             text = str(raw or "").strip()
@@ -284,6 +319,8 @@ class LoRARuntimeManager:
     def __init__(self, context: ProjectContext) -> None:
         self.context = context
         self.resolver = LoRAResolver(context)
+        self.loader_registry: AdapterLoaderRegistry = default_adapter_loader_registry()
+        self.compatibility_service = AdapterCompatibilityService(self.loader_registry)
         self._bound_component_id: int | None = None
         self._loaded_adapters: dict[str, dict[str, Any]] = {}
         self._active_signature: tuple[tuple[str, float], ...] = ()
@@ -323,6 +360,7 @@ class LoRARuntimeManager:
 
         resolved_stack: list[dict[str, Any]] = []
         contract_stack: list[dict[str, Any]] = []
+        preflight_items: list[dict[str, Any]] = []
         seen: set[str] = set()
         for order, item in enumerate(merged):
             if not _coerce_bool(item.get("enabled", True), True):
@@ -336,8 +374,48 @@ class LoRARuntimeManager:
             requested_name = str(item.get("name") or item.get("requested_name") or "").strip()
             requested_path = str(item.get("path") or item.get("requested_path") or "").strip()
             resolved_path = self.resolver.resolve(requested_name, requested_path)
-            file_hash = self.resolver.file_hash(resolved_path)
             sidecar_metadata = self.resolver.metadata(resolved_path)
+            inspection_metadata = {**sidecar_metadata, **dict(item.get("metadata") or {})}
+            requested_family = (
+                item.get("model_family")
+                or item.get("base_model")
+                or item.get("sd_version")
+            )
+            if requested_family and not inspection_metadata.get("model_family"):
+                inspection_metadata["model_family"] = requested_family
+            inspection_payload = inspect_lora_file(
+                resolved_path,
+                sidecar_metadata=inspection_metadata,
+                include_compatibility_hash=False,
+            )
+            inspection = AdapterInspectionRecord.from_mapping(inspection_payload.get("adapter_inspection"))
+            compatibility = self.compatibility_service.evaluate(
+                inspection,
+                active_checkpoint_family=checkpoint_family,
+            )
+            requested_label = requested_name or resolved_path.stem
+            preflight_item = {
+                "requested_name": requested_label,
+                "resolved_path": str(resolved_path),
+                "inspection": inspection.to_dict(),
+                "compatibility": compatibility.to_dict(),
+            }
+            preflight_items.append(preflight_item)
+            if not compatibility.runtime_loadable:
+                extras["adapter_preflight"] = {
+                    "adapter_count": len(merged),
+                    "checkpoint_family": checkpoint_family,
+                    "runtime_loadable": False,
+                    "blocked_adapter": requested_label,
+                    "blocking_reason": compatibility.blocking_reason,
+                    "items": list(preflight_items),
+                }
+                raise ValueError(f"LoRA '{requested_label}' cannot be loaded: {compatibility.blocking_reason}")
+
+            # Expensive identity hashing happens only after format/family/target preflight
+            # proves that this adapter has a valid runtime path.
+            file_hash = self.resolver.file_hash(resolved_path)
+            inspection = AdapterInspectionRecord.from_mapping({**inspection.to_dict(), "sha256": file_hash})
             compatibility_hash = self.resolver.compatibility_hash(
                 resolved_path,
                 sidecar_metadata=sidecar_metadata,
@@ -351,6 +429,38 @@ class LoRARuntimeManager:
                 or item.get("origin")
                 or "visual_selection"
             )
+            runtime_plan = AdapterRuntimePlan(
+                adapter_identity=file_hash or str(resolved_path),
+                asset_id=str(item.get("asset_id") or item.get("catalog_asset_id") or "").strip(),
+                requested_name=requested_name or resolved_path.stem,
+                resolved_path=str(resolved_path),
+                file_hash=file_hash,
+                inspection_contract_version=inspection.contract_version,
+                adapter_format=inspection.adapter_format,
+                model_family=inspection.model_family,
+                active_checkpoint_family=checkpoint_family,
+                compatibility=compatibility.to_dict(),
+                loader_id=compatibility.loader_id,
+                requested_weight=_coerce_float(item.get("weight"), 1.0),
+                effective_weight=_coerce_float(item.get("weight"), 1.0),
+                weight_semantics="user multiplier after loader-native rank/alpha normalization",
+                expected_component_targets=inspection.target_scopes,
+                blocking_reason=compatibility.blocking_reason,
+                warnings=compatibility.warnings,
+            )
+            technical_metadata = {
+                **sidecar_metadata,
+                **dict(item.get("metadata") or {}),
+                "adapter_format": inspection.adapter_format,
+                "adapter_extensions": list(inspection.adapter_extensions),
+                "target_scopes": list(inspection.target_scopes),
+                "runtime_support_state": compatibility.overall_support_state,
+                "runtime_loadable": compatibility.runtime_loadable,
+                "support_reason": compatibility.blocking_reason,
+                "loader_id": compatibility.loader_id,
+                "_adapter_inspection": inspection.to_dict(),
+                "_adapter_runtime_plan": runtime_plan.to_dict(),
+            }
             entry = ResolvedLoRAAsset(
                 requested_name=requested_name or resolved_path.stem,
                 requested_path=requested_path,
@@ -361,14 +471,8 @@ class LoRARuntimeManager:
                 weight=_coerce_float(item.get("weight"), 1.0),
                 enabled=_coerce_bool(item.get("enabled", True), True),
                 polarity=str(item.get("polarity") or "positive").strip().lower(),
-                activation_text=str(item.get("activation_text") or sidecar_metadata.get("activation_text") or "").strip(),
-                model_family=_canonical_family(
-                    item.get("model_family")
-                    or item.get("base_model")
-                    or item.get("sd_version")
-                    or sidecar_metadata.get("model_family")
-                    or sidecar_metadata.get("base_model")
-                ),
+                activation_text=str(item.get("activation_text") or inspection_payload.get("activation_text") or sidecar_metadata.get("activation_text") or "").strip(),
+                model_family=inspection.model_family,
                 source_url=str(item.get("source_url") or sidecar_metadata.get("source_url") or "").strip(),
                 source=source,
                 original_source=canonical_prompt_asset_source(item.get("original_source"), default="") if item.get("original_source") else "",
@@ -378,13 +482,8 @@ class LoRARuntimeManager:
                 a1111_short_hash=str(compatibility_hash.get("a1111_short_hash") or ""),
                 a1111_hash_source=str(compatibility_hash.get("a1111_hash_source") or ""),
                 adapter_name=f"lora_{adapter_token}",
-                metadata={**sidecar_metadata, **dict(item.get("metadata") or {})},
+                metadata=technical_metadata,
             )
-            if entry.model_family and checkpoint_family and entry.model_family != checkpoint_family:
-                raise ValueError(
-                    f"LoRA '{entry.requested_name}' is tagged for model family '{entry.model_family}', "
-                    f"but the active checkpoint family is '{checkpoint_family}'."
-                )
             dedupe_key = (entry.file_hash or _path_token(entry.resolved_path)).casefold()
             if dedupe_key in seen:
                 continue
@@ -409,6 +508,18 @@ class LoRARuntimeManager:
             if item.get("resolved_path") or item.get("path")
         ]
         extras["resolved_lora_stack"] = [dict(item) for item in resolved_stack]
+        extras["adapter_runtime_plans"] = [
+            dict(item.get("adapter_runtime_plan") or {})
+            for item in resolved_stack
+            if isinstance(item.get("adapter_runtime_plan"), Mapping)
+        ]
+        extras["adapter_preflight"] = {
+            "adapter_count": len(resolved_stack),
+            "checkpoint_family": checkpoint_family,
+            "runtime_loadable": True,
+            "items": list(preflight_items),
+            "plans": list(extras["adapter_runtime_plans"]),
+        }
         extras["prompt_asset_contract_version"] = PROMPT_ASSET_CONTRACT_VERSION
         return [dict(item) for item in resolved_stack]
 
@@ -426,7 +537,15 @@ class LoRARuntimeManager:
             self._bound_component_id = component_id
 
         normalized_stack = [dict(item) for item in (stack or [])]
-        signature = tuple((str(item.get("file_hash") or item.get("resolved_path") or ""), round(_coerce_float(item.get("weight"), 1.0), 6)) for item in normalized_stack)
+        signature = tuple(
+            (
+                str(item.get("file_hash") or item.get("resolved_path") or ""),
+                round(_coerce_float(item.get("weight"), 1.0), 6),
+                str((item.get("adapter_runtime_plan") or {}).get("loader_id") or item.get("loader_id") or ""),
+                str((item.get("adapter_runtime_plan") or {}).get("active_checkpoint_family") or ""),
+            )
+            for item in normalized_stack
+        )
         if not normalized_stack:
             self._deactivate_components(components)
             self._active_signature = ()
@@ -458,8 +577,9 @@ class LoRARuntimeManager:
             adapter_name = str(item.get("adapter_name") or "").strip()
             loaded_entry = dict(item)
             if adapter_name:
+                loader_id, implementation = self._loader_implementation_for_entry(item)
                 if adapter_name not in self._loaded_adapters:
-                    self._loaded_adapters[adapter_name] = self._load_adapter_into_components(components, dict(item))
+                    self._loaded_adapters[adapter_name] = implementation.load(components=components, entry=dict(item))
                 cached = dict(self._loaded_adapters.get(adapter_name) or {})
                 if cached:
                     loaded_entry.update({
@@ -467,6 +587,7 @@ class LoRARuntimeManager:
                         for key, value in cached.items()
                         if key in {"runtime_applied", "runtime_load_report"}
                     })
+                loaded_entry["loader_id"] = loader_id
             runtime_stack.append(loaded_entry)
 
         runtime_stack = self._decorate_stack_with_runtime_details(runtime_stack)
@@ -643,352 +764,54 @@ class LoRARuntimeManager:
             if cached.get("runtime_applied") is not None:
                 payload["runtime_applied"] = bool(cached.get("runtime_applied"))
             if isinstance(cached.get("runtime_load_report"), Mapping):
-                payload["runtime_load_report"] = dict(cached["runtime_load_report"])
+                report = dict(cached["runtime_load_report"])
+                current_weight = _coerce_float(payload.get("weight"), 1.0)
+                report["requested_weight"] = current_weight
+                report["effective_user_multiplier"] = current_weight
+                report["final_effective_scale"] = current_weight
+                payload["runtime_load_report"] = report
             output.append(payload)
         return output
 
-    def _module_supports_load(self, module: Any) -> bool:
-        return hasattr(module, "load_lora_adapter") or hasattr(module, "load_attn_procs")
-
-    def _stable_diffusion_lora_loader_mixin(self) -> Any:
-        try:
-            from diffusers.loaders import StableDiffusionLoraLoaderMixin
-
-            return StableDiffusionLoraLoaderMixin
-        except Exception:
-            try:
-                from diffusers.loaders import LoraLoaderMixin
-
-                return LoraLoaderMixin
-            except Exception as exc:
-                raise ValueError(
-                    "Unable to import diffusers LoRA loader support. Expected a diffusers build "
-                    "with StableDiffusionLoraLoaderMixin or LoraLoaderMixin."
-                ) from exc
-
-    def _call_with_supported_kwargs(self, target: Any, kwargs: dict[str, Any]) -> Any:
-        filtered = {key: value for key, value in kwargs.items() if value is not None}
-        try:
-            signature = inspect.signature(target)
-            accepts_var_kwargs = any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in signature.parameters.values()
-            )
-            if not accepts_var_kwargs:
-                filtered = {
-                    key: value
-                    for key, value in filtered.items()
-                    if key in signature.parameters
-                }
-        except (TypeError, ValueError):
-            pass
-        return target(**filtered)
-
-    @staticmethod
-    def _looks_like_lora_parameter_key(key: Any) -> bool:
-        token = str(key or "").lower()
-        return any(
-            marker in token
-            for marker in (
-                ".lora_a.",
-                ".lora_b.",
-                ".lora_down.",
-                ".lora_up.",
-                ".lora_magnitude_vector",
-                "lora_down.weight",
-                "lora_up.weight",
-                "lora_a.weight",
-                "lora_b.weight",
-            )
-        )
-
-    @staticmethod
-    def _has_component_prefix(key: Any) -> bool:
-        token = str(key or "")
-        return token.startswith(("unet.", "text_encoder.", "text_encoder_2."))
-
-    def _normalize_lora_component_prefixes(
-        self,
-        state_dict: Mapping[str, Any],
-        network_alphas: Mapping[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], str]:
-        """Normalize pipeline and component-native Diffusers LoRA state dicts.
-
-        Kohya conversion normally produces ``unet.`` / ``text_encoder.`` keys.
-        Diffusers component exports can instead contain keys indexed directly
-        into a UNet. The pipeline mixin always supplies ``prefix='unet'`` to the
-        component loader, so direct keys must be wrapped with ``unet.`` first.
-        """
-
-        normalized_state = dict(state_dict)
-        normalized_alphas = dict(network_alphas)
-        if any(self._has_component_prefix(key) for key in normalized_state):
-            return normalized_state, normalized_alphas, "pipeline_prefixed"
-
-        direct_lora_keys = [
-            key for key in normalized_state if self._looks_like_lora_parameter_key(key)
-        ]
-        if direct_lora_keys:
-            normalized_state = {
-                f"unet.{key}": value
-                for key, value in normalized_state.items()
-            }
-            normalized_alphas = {
-                f"unet.{key}": value
-                for key, value in normalized_alphas.items()
-            }
-            return normalized_state, normalized_alphas, "component_native_unet_prefixed"
-
-        return normalized_state, normalized_alphas, "unrecognized"
-
-    def _load_lora_state(
-        self,
-        *,
-        path: str,
-        components: Any,
-        mixin: Any,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str]:
-        kwargs = {
-            "pretrained_model_name_or_path_or_dict": path,
-            "unet_config": getattr(getattr(components, "unet", None), "config", None),
-            "return_lora_metadata": True,
-        }
-        try:
-            loaded = self._call_with_supported_kwargs(mixin.lora_state_dict, kwargs)
-        except TypeError:
-            kwargs.pop("return_lora_metadata", None)
-            loaded = self._call_with_supported_kwargs(mixin.lora_state_dict, kwargs)
-        if not isinstance(loaded, tuple):
-            raise ValueError("diffusers LoRA state conversion returned an unexpected payload.")
-        if len(loaded) == 3:
-            state_dict, network_alphas, metadata = loaded
-        elif len(loaded) == 2:
-            state_dict, network_alphas = loaded
-            metadata = {}
-        else:
-            raise ValueError("diffusers LoRA state conversion returned an unexpected tuple shape.")
-        if not isinstance(state_dict, Mapping) or not state_dict:
-            raise ValueError("diffusers LoRA state conversion did not produce a usable state dict.")
-        network_alphas = dict(network_alphas or {}) if isinstance(network_alphas, Mapping) else {}
-        metadata = dict(metadata or {}) if isinstance(metadata, Mapping) else {}
-        state_dict, network_alphas, prefix_mode = self._normalize_lora_component_prefixes(
-            dict(state_dict),
-            network_alphas,
-        )
-        return state_dict, network_alphas, metadata, prefix_mode
-
-    @staticmethod
-    def _count_prefixed_keys(state_dict: Mapping[str, Any], prefixes: tuple[str, ...]) -> int:
-        total = 0
-        for key in state_dict.keys():
-            token = str(key or "")
-            if any(token.startswith(prefix) for prefix in prefixes):
-                total += 1
-        return total
-
-    def _build_runtime_load_report(
-        self,
-        *,
-        entry: Mapping[str, Any],
-        state_dict: Mapping[str, Any],
-        network_alphas: Mapping[str, Any],
-        metadata: Mapping[str, Any],
-        prefix_mode: str,
-    ) -> dict[str, Any]:
-        entry_metadata = dict(entry.get("metadata") or {})
-        scan_cache = dict(entry_metadata.get("_lora_scan_cache") or {})
-        source_tensor_format = str(
-            scan_cache.get("tensor_key_format")
-            or entry_metadata.get("tensor_key_format")
-            or ""
-        )
-        source_network_type = str(
-            scan_cache.get("network_type")
-            or entry_metadata.get("network_type")
-            or ""
-        )
-        return {
-            "adapter_name": str(entry.get("adapter_name") or ""),
-            "resolved_path": str(entry.get("resolved_path") or entry.get("path") or ""),
-            "loader_path": "diffusers_pipeline_mixin",
-            "key_prefix_mode": prefix_mode,
-            "source_tensor_format": source_tensor_format,
-            "source_network_type": source_network_type,
-            "converted_key_count": len(state_dict),
-            "network_alpha_count": len(network_alphas),
-            "metadata_key_count": len(metadata),
-            "unet_candidate_keys": self._count_prefixed_keys(state_dict, ("unet.",)),
-            "text_encoder_candidate_keys": self._count_prefixed_keys(state_dict, ("text_encoder.",)),
-            "text_encoder_2_candidate_keys": self._count_prefixed_keys(state_dict, ("text_encoder_2.",)),
-            "converted_key_examples": [str(key) for key in list(state_dict.keys())[:8]],
-            "unet_loaded": False,
-            "text_encoder_loaded": False,
-            "verified": False,
-        }
-
-    @staticmethod
-    def _verify_adapter_presence(module: Any, adapter_name: str) -> bool:
-        if not adapter_name:
-            return False
-        peft_config = getattr(module, "peft_config", None)
-        if isinstance(peft_config, Mapping) and adapter_name in peft_config:
-            return True
-        active = getattr(module, "active_adapters", None)
-        if callable(active):
-            try:
-                current = active()
-            except Exception:
-                current = []
-        else:
-            current = active
-        if isinstance(current, str):
-            return current == adapter_name
-        if isinstance(current, (list, tuple, set)):
-            return adapter_name in current
-        return False
-
-    def _load_adapter_into_components(self, components: Any, entry: dict[str, Any]) -> dict[str, Any]:
-        path = str(entry.get("resolved_path") or entry.get("path") or "").strip()
-        adapter_name = str(entry.get("adapter_name") or "").strip()
-        if not path:
-            raise ValueError("LoRA runtime entry is missing a resolved adapter path.")
-        if not adapter_name:
-            raise ValueError("LoRA runtime entry is missing an adapter name.")
-        if getattr(components, "unet", None) is None:
-            raise ValueError("The active runtime components do not expose a UNet for LoRA loading.")
-        if getattr(components, "text_encoder", None) is None:
-            raise ValueError("The active runtime components do not expose a text encoder for LoRA loading.")
-
-        mixin = self._stable_diffusion_lora_loader_mixin()
-        state_dict, network_alphas, metadata, prefix_mode = self._load_lora_state(
-            path=path,
-            components=components,
-            mixin=mixin,
-        )
-        report = self._build_runtime_load_report(
-            entry=entry,
-            state_dict=state_dict,
-            network_alphas=network_alphas,
-            metadata=metadata,
-            prefix_mode=prefix_mode,
-        )
-        if report["unet_candidate_keys"] <= 0:
-            examples = ", ".join(report.get("converted_key_examples") or []) or "none"
+    def _loader_implementation_for_entry(self, entry: Mapping[str, Any]) -> tuple[str, Any]:
+        runtime_plan = dict(entry.get("adapter_runtime_plan") or {})
+        if not runtime_plan:
+            runtime_plan = dict((entry.get("metadata") or {}).get("_adapter_runtime_plan") or {})
+        loader_id = str(runtime_plan.get("loader_id") or entry.get("loader_id") or "").strip()
+        capability = self.loader_registry.capability(loader_id)
+        if capability is None:
             raise ValueError(
-                "Resolved LoRA did not produce any UNet adapter weights after conversion. "
-                f"key_prefix_mode={prefix_mode}; converted_key_examples={examples}."
+                f"Adapter '{entry.get('requested_name') or entry.get('name') or entry.get('adapter_name') or 'adapter'}' "
+                "has no registered runtime loader capability."
             )
-
-        # Kohya conversion supplies network alphas. Newer serialized PEFT LoRAs
-        # may instead supply adapter metadata. Diffusers rejects both at once,
-        # so prefer the explicit alpha map when it exists.
-        metadata_for_load = metadata if metadata and not network_alphas else None
-        if prefix_mode == "component_native_unet_prefixed":
-            # Component-native exports do not carry pipeline-prefixed metadata.
-            # Let Diffusers derive the PEFT config from the normalized weights.
-            metadata_for_load = None
-
-        self._call_with_supported_kwargs(
-            mixin.load_lora_into_unet,
-            {
-                "state_dict": state_dict,
-                "network_alphas": network_alphas,
-                "unet": getattr(components, "unet", None),
-                "adapter_name": adapter_name,
-                "metadata": metadata_for_load,
-            },
-        )
-        report["unet_loaded"] = self._verify_adapter_presence(getattr(components, "unet", None), adapter_name)
-
-        text_encoder_expected = report["text_encoder_candidate_keys"] > 0
-        if text_encoder_expected:
-            self._call_with_supported_kwargs(
-                mixin.load_lora_into_text_encoder,
-                {
-                    "state_dict": state_dict,
-                    "network_alphas": network_alphas,
-                    "text_encoder": getattr(components, "text_encoder", None),
-                    "prefix": "text_encoder",
-                    "adapter_name": adapter_name,
-                    "metadata": metadata_for_load,
-                },
-            )
-            report["text_encoder_loaded"] = self._verify_adapter_presence(getattr(components, "text_encoder", None), adapter_name)
-        elif report["text_encoder_2_candidate_keys"] > 0:
-            report["text_encoder_loaded"] = False
-            report["warning"] = (
-                "Converted LoRA includes text_encoder_2 weights, but the active runtime exposes only a single text encoder."
-            )
-        else:
-            report["text_encoder_loaded"] = True
-
-        report["verified"] = bool(report["unet_loaded"] and report["text_encoder_loaded"])
-        if not report["verified"]:
+        implementation = self.loader_registry.implementation(loader_id)
+        if implementation is None:
             raise ValueError(
-                "LoRA conversion completed but runtime verification failed. "
-                f"UNet loaded={report['unet_loaded']}, text_encoder loaded={report['text_encoder_loaded']}."
+                f"Adapter loader '{loader_id}' is registered as a capability but has no runtime implementation."
             )
-        return {
-            **dict(entry),
-            "runtime_applied": True,
-            "runtime_load_report": report,
-        }
+        return loader_id, implementation
 
     def _deactivate_components(self, components: Any) -> None:
-        for module_name in ("unet", "text_encoder"):
-            module = getattr(components, module_name, None)
-            if module is None:
-                continue
-            if hasattr(module, "set_adapters"):
-                try:
-                    module.set_adapters([], adapter_weights=[])
-                    continue
-                except TypeError:
-                    try:
-                        module.set_adapters([])
-                        continue
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            disable = getattr(module, "disable_adapters", None)
-            if callable(disable):
-                try:
-                    disable()
-                except Exception:
-                    pass
+        for implementation in self.loader_registry.implementations():
+            deactivate = getattr(implementation, "deactivate", None)
+            if callable(deactivate):
+                deactivate(components=components)
 
     def _activate_stack(self, components: Any, stack: list[dict[str, Any]]) -> None:
-        names = [str(item.get("adapter_name") or "").strip() for item in stack if str(item.get("adapter_name") or "").strip()]
-        weights = [_coerce_float(item.get("weight"), 1.0) for item in stack if str(item.get("adapter_name") or "").strip()]
-        if not names:
-            return
-        activated_any = False
-        for module_name in ("unet", "text_encoder"):
-            module = getattr(components, module_name, None)
-            if module is None:
-                continue
-            setter = getattr(module, "set_adapters", None)
-            if callable(setter):
-                try:
-                    setter(names, adapter_weights=weights)
-                    activated_any = True
-                    continue
-                except TypeError:
-                    try:
-                        setter(names, weights)
-                        activated_any = True
-                        continue
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            enable = getattr(module, "enable_adapters", None)
-            if callable(enable):
-                try:
-                    enable()
-                    activated_any = True
-                except Exception:
-                    pass
-        if not activated_any:
-            raise ValueError("LoRA adapters were loaded but the runtime could not activate the requested adapter stack.")
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for item in stack:
+            loader_id, _implementation = self._loader_implementation_for_entry(item)
+            grouped.setdefault(loader_id, []).append(item)
+        activated = False
+        for loader_id, loader_stack in grouped.items():
+            implementation = self.loader_registry.implementation(loader_id)
+            if implementation is None:
+                raise ValueError(f"Adapter loader '{loader_id}' has no runtime implementation.")
+            activate = getattr(implementation, "activate", None)
+            if not callable(activate):
+                raise ValueError(f"Adapter loader '{loader_id}' does not implement stack activation.")
+            activate(components=components, stack=loader_stack)
+            activated = True
+        if stack and not activated:
+            raise ValueError("LoRA adapters were loaded but no registered adapter loader activated the runtime stack.")
+

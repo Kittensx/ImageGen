@@ -200,6 +200,8 @@ class PipelineBuilder:
                 vae=built_components.vae,
                 text_encoder=built_components.text_encoder,
                 tokenizer=tokenizer,
+                text_encoder_2=getattr(built_components, "text_encoder_2", None),
+                tokenizer_2=getattr(built_components, "tokenizer_2", None),
                 prediction_type=getattr(built_components, "prediction_type", "epsilon"),
                 prediction_type_source=getattr(
                     built_components, "prediction_type_source", "legacy_built_components"

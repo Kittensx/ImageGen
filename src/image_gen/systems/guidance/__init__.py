@@ -15,6 +15,10 @@ from .prompt_cfg import (
     requested_cfg_scale_for_step,
     validate_recorded_prompt_cfg_payload,
 )
+from .effective_cfg import (
+    EffectiveGuidanceController,
+    EffectiveGuidanceProfile,
+)
 from .system import (
     GuidanceComputationResult,
     GuidanceSemantics,
@@ -23,6 +27,8 @@ from .system import (
 )
 
 __all__ = [
+    "EffectiveGuidanceController",
+    "EffectiveGuidanceProfile",
     "GuidanceComputationResult",
     "GuidanceSemantics",
     "apply_canonical_cfg_rescale",

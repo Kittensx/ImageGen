@@ -18,14 +18,14 @@ _CAPABILITIES = {
     ),
     "sd2.x": ArchitectureCapability(
         architecture="sd2.x",
-        status="blocked",
-        generation_supported=False,
-        validation_supported=False,
-        reason="The active conditioning path uses the SD1 CLIP tokenizer/text-encoder contract, not the required SD2 OpenCLIP contract.",
+        status="supported",
+        generation_supported=True,
+        validation_supported=True,
+        reason="Qualified SD2.x checkpoints are enabled for normal generation using the local OpenCLIP text-conditioning runtime and SD2 runtime-profile contract.",
         requirements=(
-            "explicit OpenCLIP tokenizer and text encoder",
-            "1024-wide conditioning tests",
-            "separate SD2 checkpoint mapping validation",
+            "full monolithic safetensors checkpoint",
+            "local OpenCLIP tokenizer and text encoder runtime",
+            "qualified SD2 runtime profile or explicit profile override when needed",
         ),
     ),
     "sdxl": ArchitectureCapability(
