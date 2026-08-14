@@ -604,7 +604,7 @@
   }
 
   .checkpoint-card-grid {
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   }
 }
 
@@ -658,7 +658,7 @@
   .checkpoint-card-grid {
     max-height: none;
     overflow: visible;
-    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
   }
 }
 
@@ -686,7 +686,7 @@
   }
 
   .lora-card-grid {
-    grid-template-columns: repeat(auto-fill, minmax(min(215px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   }
 
   .lora-workspace-active-row {
@@ -755,7 +755,7 @@
   .lora-card-grid {
     max-height: none;
     overflow: visible;
-    grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
   }
 
   .lora-workspace-active-row {

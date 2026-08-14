@@ -1,4 +1,5 @@
 import { api } from "../api.js?v=asset-card-latency1";
+import { createProgressiveAssetGrid } from "../components/progressive-asset-grid.js?v=asset-grid-qol1";
 import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
@@ -357,7 +358,7 @@ function miniDefaultChip(asset) {
     const image = document.createElement("img");
     image.src = preview;
     image.alt = "";
-    image.loading = "eager";
+    image.loading = "lazy";
     image.decoding = "async";
     avatar.append(image);
   } else {
@@ -380,8 +381,6 @@ export function bindLoraWorkspace({ defaultAssetsController, showGenerationWorks
   let search = "";
   let activeFilter = "all";
   let sortMode = "recent";
-  let page = 1;
-  let pageSize = 16;
   let detailsRequestSerial = 0;
 
   const workspace = $("#loraWorkspace");
@@ -427,7 +426,6 @@ export function bindLoraWorkspace({ defaultAssetsController, showGenerationWorks
 
   const setFilterState = (nextFilter) => {
     activeFilter = nextFilter || "all";
-    page = 1;
     document.querySelectorAll("[data-lora-filter]").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.loraFilter === activeFilter);
     });
@@ -753,7 +751,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const image = document.createElement("img");
     image.className = "lora-card-preview";
     image.alt = `${model.name} preview`;
-    image.loading = "eager";
+    image.loading = "lazy";
     image.decoding = "async";
     const badgeWrap = document.createElement("div");
     badgeWrap.className = "lora-card-badges";
@@ -870,15 +868,25 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     )), sortMode);
   };
 
-  const renderCards = () => {
+  const loraGrid = createProgressiveAssetGrid({
+    grid: $("#loraCardGrid"),
+    createCard,
+    batchSize: 50,
+    onProgress: ({ shown, total, hasMore }) => {
+      const status = $("#loraLoadStatus");
+      if (!status) return;
+      status.textContent = total === 0
+        ? "No LoRA cards to display."
+        : hasMore
+          ? `Showing ${shown} of ${total} matching LoRAs. Scroll to load more.`
+          : `Showing all ${shown} matching LoRAs.`;
+    },
+  });
+
+  const renderCards = ({ resetWindow = false } = {}) => {
     autoCompatibleFilter();
     const visible = filteredLoras();
-    const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
-    page = Math.max(1, Math.min(page, pageCount));
-    const offset = (page - 1) * pageSize;
-    const pageItems = visible.slice(offset, offset + pageSize);
-    const grid = $("#loraCardGrid");
-    grid?.replaceChildren(...pageItems.map(createCard));
+    loraGrid.setItems(visible, { reset: resetWindow });
     if ($("#loraResultCount")) $("#loraResultCount").textContent = String(visible.length);
     if ($("#loraLibrarySummary")) {
       const summary = loraScanSummary(loras);
@@ -889,10 +897,17 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     renderScanSummary(loras);
     renderCompatibilityContext();
     if ($("#loraEmptyState")) $("#loraEmptyState").classList.toggle("is-hidden", visible.length > 0);
-    if ($("#loraPageStatus")) $("#loraPageStatus").textContent = `Page ${page} of ${pageCount}`;
-    if ($("#loraPreviousPageButton")) $("#loraPreviousPageButton").disabled = page <= 1;
-    if ($("#loraNextPageButton")) $("#loraNextPageButton").disabled = page >= pageCount;
-    if ($("#loraPagination")) $("#loraPagination").classList.toggle("is-hidden", visible.length === 0);
+  };
+
+  const broadcastCatalogRefresh = () => {
+    window.dispatchEvent(new CustomEvent("image-gen-asset-catalog-refreshed", {
+      detail: {
+        models: state.models,
+        vaes: state.vaes,
+        loras: [...loras],
+        textual_inversions: state.textualInversions,
+      },
+    }));
   };
 
   const renderDetails = () => {
@@ -976,6 +991,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       const response = await api.loraDetails(model.asset_id, { inspect: false });
       const merged = mergeCatalogRecord(response) || response;
       detailCache.set(model.asset_id, merged);
+      loraGrid.refreshItem(model.asset_id, merged);
       if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
       selectedDetails = merged;
       renderDetails();
@@ -1005,7 +1021,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     window.dispatchEvent(new CustomEvent("image-gen-asset-catalog-refreshed", {
       detail: { loras: [...loras], textual_inversions: state.textualInversions },
     }));
-    renderCards();
+    renderCards({ resetWindow: true });
     renderDefaults();
     renderActive();
     if (selectedId) {
@@ -1053,9 +1069,11 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     try {
       const payload = await api.enrichAssetsFromCivitai("lora", mode);
       applyCatalogPayload(payload);
+      detailCache.clear();
       renderCards();
       renderDefaults();
       renderActive();
+      broadcastCatalogRefresh();
       if (selectedId) {
         const selected = loras.find((item) => item.asset_id === selectedId);
         if (selected) await openDetails(selected);
@@ -1078,9 +1096,8 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
   const bindSearch = (selector, counterpart) => {
     $(selector)?.addEventListener("input", (event) => {
       search = event.target.value;
-      page = 1;
       if ($(counterpart) && $(counterpart).value !== search) $(counterpart).value = search;
-      renderCards();
+      renderCards({ resetWindow: true });
     });
   };
   bindSearch("#loraSidebarSearch", "#loraLibrarySearch");
@@ -1090,27 +1107,19 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const button = event.target.closest("[data-lora-filter]");
     if (!button) return;
     setFilterState(button.dataset.loraFilter || "all");
-    renderCards();
+    renderCards({ resetWindow: true });
   });
   $("#loraClearFiltersButton")?.addEventListener("click", () => {
     search = "";
     if ($("#loraSidebarSearch")) $("#loraSidebarSearch").value = "";
     if ($("#loraLibrarySearch")) $("#loraLibrarySearch").value = "";
     setFilterState(selectedCheckpointPath() ? "compatible" : "all");
-    renderCards();
+    renderCards({ resetWindow: true });
   });
   $("#loraSortSelect")?.addEventListener("change", (event) => {
     sortMode = event.target.value;
-    page = 1;
-    renderCards();
+    renderCards({ resetWindow: true });
   });
-  $("#loraPageSizeSelect")?.addEventListener("change", (event) => {
-    pageSize = Math.max(4, Number(event.target.value) || 16);
-    page = 1;
-    renderCards();
-  });
-  $("#loraPreviousPageButton")?.addEventListener("click", () => { page -= 1; renderCards(); });
-  $("#loraNextPageButton")?.addEventListener("click", () => { page += 1; renderCards(); });
   $("#loraRefreshButton")?.addEventListener("click", () => refreshCatalog().catch((error) => notify(`Unable to refresh LoRAs: ${error.message}`, "error")));
   $("#loraScanUnknownButton")?.addEventListener("click", () => runCompatibilityScan("missing"));
   $("#loraFetchCivitaiButton")?.addEventListener("click", () => runCivitaiMetadataFetch("missing"));
@@ -1215,6 +1224,8 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       renderDetails();
       renderDefaults();
       renderActive();
+      loraGrid.refreshItem(selectedDetails.asset_id, selectedDetails);
+      broadcastCatalogRefresh();
       const lookup = civitaiLookupFor(selectedDetails);
       if (lookup.manual_activation_text_search_required) {
         const previewNote = lookup.preview_image_downloaded ? " A preview image was downloaded." : "";

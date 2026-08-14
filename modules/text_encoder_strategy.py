@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict
 
 
+
 @dataclass
 class LayerCoverage:
     label: str
@@ -133,6 +134,159 @@ class SD1TextEncoderStrategy(BaseTextEncoderStrategy):
             str(key).replace("transformer.", ""): value
             for key, value in state_dict.items()
         }
+
+
+class SDXLTextEncoder1Strategy(SD1TextEncoderStrategy):
+    architecture = "sdxl"
+    handler_name = "sdxl_clip_l_hf"
+
+    def convert_state_dict(self, state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        converted: Dict[str, Any] = {}
+        for key, value in state_dict.items():
+            new_key = str(key)
+            if new_key.startswith("transformer."):
+                new_key = new_key[len("transformer.") :]
+            # Transformers registers CLIP position_ids as a non-persistent
+            # buffer, so a monolithic SDXL checkpoint copy must not be sent
+            # to load_state_dict as a model parameter/buffer key.
+            if new_key == "text_model.embeddings.position_ids":
+                continue
+            converted[new_key] = value
+        return converted
+
+
+class SDXLTextEncoder2Strategy(BaseTextEncoderStrategy):
+    architecture = "sdxl"
+    handler_name = "sdxl_openclip_big_g_hf"
+
+    GLOBAL_KEY_MAP = {
+        "positional_embedding": "text_model.embeddings.position_embedding.weight",
+        "token_embedding.weight": "text_model.embeddings.token_embedding.weight",
+        "ln_final.weight": "text_model.final_layer_norm.weight",
+        "ln_final.bias": "text_model.final_layer_norm.bias",
+        "text_projection": "text_projection.weight",
+    }
+
+    TRANSFORM_REPLACEMENTS = (
+        ("resblocks.", "text_model.encoder.layers."),
+        ("ln_1", "layer_norm1"),
+        ("ln_2", "layer_norm2"),
+        (".c_fc.", ".fc1."),
+        (".c_proj.", ".fc2."),
+        (".attn", ".self_attn"),
+    )
+
+    def _strip_model_prefix(self, key: str) -> str:
+        key = str(key)
+        if key.startswith("model."):
+            return key[len("model.") :]
+        return key
+
+    def _transform_key(self, key: str) -> str:
+        new_key = str(key)
+        for old, new in self.TRANSFORM_REPLACEMENTS:
+            new_key = new_key.replace(old, new)
+        return new_key
+
+    @staticmethod
+    def _shape(value: Any) -> tuple[int, ...]:
+        shape = getattr(value, "shape", ())
+        return tuple(int(dim) for dim in shape)
+
+    def _infer_hidden_size(self, normalized: Dict[str, Any]) -> int:
+        projection = normalized.get("text_projection")
+        if projection is not None:
+            shape = self._shape(projection)
+            if len(shape) == 2 and shape[0] > 0:
+                return int(shape[0])
+
+        token_embedding = normalized.get("token_embedding.weight")
+        if token_embedding is not None:
+            shape = self._shape(token_embedding)
+            if len(shape) == 2 and shape[1] > 0:
+                return int(shape[1])
+
+        for key, value in normalized.items():
+            if key.endswith(".attn.in_proj_weight"):
+                shape = self._shape(value)
+                if len(shape) == 2 and shape[0] % 3 == 0:
+                    return int(shape[0] // 3)
+
+        raise ValueError(
+            "Unable to infer SDXL Text Encoder 2 hidden size from text_projection, "
+            "token_embedding.weight, or an attention in_proj_weight tensor."
+        )
+
+    @staticmethod
+    def _transpose_projection(value: Any) -> Any:
+        transposed = value.T
+        contiguous = getattr(transposed, "contiguous", None)
+        return contiguous() if callable(contiguous) else transposed
+
+    @staticmethod
+    def _validate_qkv_tensor(value: Any, *, hidden_size: int, key: str, bias: bool) -> None:
+        shape = tuple(int(dim) for dim in getattr(value, "shape", ()))
+        expected = (hidden_size * 3,) if bias else (hidden_size * 3, hidden_size)
+        if shape != expected:
+            raise ValueError(
+                f"Unexpected SDXL Text Encoder 2 {key} shape {shape}; expected {expected}."
+            )
+
+    def convert_state_dict(self, state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        normalized: Dict[str, Any] = {
+            self._strip_model_prefix(key): value for key, value in state_dict.items()
+        }
+        if not normalized:
+            return {}
+
+        hidden_size = self._infer_hidden_size(normalized)
+        converted: Dict[str, Any] = {}
+
+        for key, value in normalized.items():
+            if key == "logit_scale":
+                # OpenCLIP carries this contrastive-training parameter, but
+                # CLIPTextModelWithProjection does not own it.
+                continue
+
+            target = self.GLOBAL_KEY_MAP.get(key)
+            if target is not None:
+                converted[target] = (
+                    self._transpose_projection(value) if key == "text_projection" else value
+                )
+                continue
+
+            if not key.startswith("transformer."):
+                # Preserve genuinely unknown keys so strict=False loading reports
+                # them as unexpected rather than silently discarding future layout changes.
+                converted[key] = value
+                continue
+
+            transformer_key = key[len("transformer.") :]
+            if transformer_key.endswith(".in_proj_weight"):
+                self._validate_qkv_tensor(
+                    value, hidden_size=hidden_size, key=key, bias=False
+                )
+                base = transformer_key[: -len(".in_proj_weight")]
+                base = self._transform_key(base)
+                converted[base + ".q_proj.weight"] = value[:hidden_size, :]
+                converted[base + ".k_proj.weight"] = value[hidden_size : hidden_size * 2, :]
+                converted[base + ".v_proj.weight"] = value[hidden_size * 2 :, :]
+                continue
+
+            if transformer_key.endswith(".in_proj_bias"):
+                self._validate_qkv_tensor(
+                    value, hidden_size=hidden_size, key=key, bias=True
+                )
+                base = transformer_key[: -len(".in_proj_bias")]
+                base = self._transform_key(base)
+                converted[base + ".q_proj.bias"] = value[:hidden_size]
+                converted[base + ".k_proj.bias"] = value[hidden_size : hidden_size * 2]
+                converted[base + ".v_proj.bias"] = value[hidden_size * 2 :]
+                continue
+
+            converted[self._transform_key(transformer_key)] = value
+
+        return converted
 
 
 class SD2TextEncoderStrategy(BaseTextEncoderStrategy):
@@ -265,8 +419,22 @@ class SD2TextEncoderStrategy(BaseTextEncoderStrategy):
         )
 
 
-def text_encoder_strategy_for(architecture: str | None) -> BaseTextEncoderStrategy:
+def text_encoder_strategy_for(
+    architecture: str | None,
+    *,
+    encoder_index: int = 1,
+) -> BaseTextEncoderStrategy:
     normalized = str(architecture or "").strip().lower()
+    if normalized in {"sdxl", "stable-diffusion-xl", "stable-diffusion-xl-base"}:
+        if int(encoder_index) == 1:
+            return SDXLTextEncoder1Strategy()
+        if int(encoder_index) == 2:
+            return SDXLTextEncoder2Strategy()
+        raise ValueError(f"SDXL text encoder index must be 1 or 2, got {encoder_index!r}.")
     if normalized in {"sd2", "sd2.1", "sd2.x", "stable-diffusion-2.x"}:
         return SD2TextEncoderStrategy()
+    if int(encoder_index) != 1:
+        raise ValueError(
+            f"Architecture {architecture!r} does not define text encoder {encoder_index}."
+        )
     return SD1TextEncoderStrategy()

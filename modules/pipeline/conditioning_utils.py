@@ -4,6 +4,14 @@ from typing import Any, Optional
 
 import torch
 
+from image_gen.contracts.model_conditioning import (
+    ModelConditioningKwargs,
+    select_model_conditioning_branch,
+)
+from modules.pipeline.sdxl_added_conditioning import (
+    build_sdxl_branch_model_conditioning,
+)
+
 
 def align_conditioning_batch(
     tensor: torch.Tensor,
@@ -140,6 +148,83 @@ def resolve_step_conditioning(
 
     return cond, uncond
 
+
+
+def resolve_step_model_conditioning(
+    conditioning: Any,
+    step_index: int,
+    *,
+    latents: torch.Tensor,
+    request: Any,
+) -> ModelConditioningKwargs:
+    """Resolve optional model-specific kwargs for the active sampler step.
+
+    Legacy SD1/SD2 conditioning returns ``None``. SDXL resolves the pooled
+    positive/negative schedules for this step and combines them with geometry
+    derived from the canonical generation dimension plan.
+    """
+
+    conditioning_extra = getattr(conditioning, "extra", None)
+    architecture = (
+        str(conditioning_extra.get("conditioning_architecture") or "").strip().lower()
+        if isinstance(conditioning_extra, dict)
+        else ""
+    )
+    if architecture != "sdxl":
+        return None
+
+    pooled_cond = getattr(conditioning, "pooled_cond", None)
+    pooled_uncond = getattr(conditioning, "pooled_uncond", None)
+    pooled_resolver = (
+        conditioning_extra.get("pooled_resolver")
+        if isinstance(conditioning_extra, dict)
+        else None
+    )
+    if pooled_resolver is not None:
+        resolve_pooled = getattr(pooled_resolver, "resolve_pooled", None)
+        if not callable(resolve_pooled):
+            raise TypeError("SDXL pooled_resolver must provide resolve_pooled(step_index).")
+        pooled_cond, pooled_uncond = resolve_pooled(step_index=step_index)
+
+    if pooled_cond is None or pooled_uncond is None:
+        raise ValueError("SDXL conditioning is missing pooled_cond/pooled_uncond.")
+
+    model_conditioning, time_id_plan = build_sdxl_branch_model_conditioning(
+        pooled_cond=pooled_cond,
+        pooled_uncond=pooled_uncond,
+        request=request,
+        latents=latents,
+    )
+
+    # Metadata only; tensors remain on the branch contract. Keeping this small
+    # makes diagnostics/replay JSON-safe without storing prompt embeddings.
+    if isinstance(conditioning_extra, dict):
+        conditioning_extra["sdxl_time_id_plan"] = time_id_plan.to_serializable_dict()
+        conditioning_extra["model_conditioning_contract"] = "sdxl_text_time_v1"
+
+    return model_conditioning
+
+
+def select_step_model_conditioning_branch(
+    model_conditioning: ModelConditioningKwargs,
+    branch: str,
+) -> dict[str, Any] | None:
+    """Resolve one branch for raw-model samplers such as KES."""
+
+    return select_model_conditioning_branch(model_conditioning, branch)
+
+
+def call_with_optional_model_conditioning(
+    callback: Any,
+    *args: Any,
+    model_conditioning: ModelConditioningKwargs,
+    **kwargs: Any,
+) -> Any:
+    """Call a model callback without changing legacy call arity when unused."""
+
+    if model_conditioning is None:
+        return callback(*args, **kwargs)
+    return callback(*args, model_conditioning, **kwargs)
 
 def resolve_static_conditioning(
     conditioning: Any,

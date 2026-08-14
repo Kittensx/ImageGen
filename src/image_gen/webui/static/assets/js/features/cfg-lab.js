@@ -26,68 +26,84 @@ const RANGE_PAIRS = [
 ];
 
 export const CFG_PRESETS = {
-  classic_flat: {
-    label: "Classic / Flat",
-    cfg_scale: 7.0,
+  sdxl_lightning_recommended: {
+    label: "SDXL Lightning Recommended",
+    preserve_cfg_scale: true,
     cfg_rescale: 0.0,
     sampler_kwargs: {
       cfg_guidance_mode: "legacy_flat",
       cfg_curve_type: "smoothstep",
-      cfg_curve_strength: 1.0,
-      cfg_high_sigma_boost: 1.2,
-      cfg_low_sigma_taper: 0.3,
+      cfg_curve_strength: 0.0,
+      cfg_high_sigma_boost: 0.0,
+      cfg_low_sigma_taper: 0.0,
+      cfg_auto_low_cfg_threshold: 1.0,
+      cfg_early_floor_enabled: false,
+      cfg_early_floor_value: 1.0,
+      cfg_early_floor_until_fraction: 0.0,
+    },
+  },
+  classic_flat: {
+    label: "Classic / Flat",
+    preserve_cfg_scale: true,
+    cfg_rescale: 0.0,
+    sampler_kwargs: {
+      cfg_guidance_mode: "legacy_flat",
+      cfg_curve_type: "smoothstep",
+      cfg_curve_strength: 0.0,
+      cfg_high_sigma_boost: 0.0,
+      cfg_low_sigma_taper: 0.0,
       cfg_auto_low_cfg_threshold: 6.5,
       cfg_early_floor_enabled: false,
-      cfg_early_floor_value: 6.2,
-      cfg_early_floor_until_fraction: 0.3,
+      cfg_early_floor_value: 0.0,
+      cfg_early_floor_until_fraction: 0.0,
     },
   },
   low_cfg_safe: {
     label: "Low-CFG Safe",
-    cfg_scale: 5.5,
+    preserve_cfg_scale: true,
     cfg_rescale: 0.0,
     sampler_kwargs: {
       cfg_guidance_mode: "auto_low_cfg",
       cfg_curve_type: "smoothstep",
-      cfg_curve_strength: 1.0,
-      cfg_high_sigma_boost: 1.2,
-      cfg_low_sigma_taper: 0.3,
+      cfg_curve_strength: 0.35,
+      cfg_high_sigma_boost: 0.35,
+      cfg_low_sigma_taper: 0.0,
       cfg_auto_low_cfg_threshold: 6.5,
-      cfg_early_floor_enabled: true,
-      cfg_early_floor_value: 6.2,
-      cfg_early_floor_until_fraction: 0.3,
+      cfg_early_floor_enabled: false,
+      cfg_early_floor_value: 0.0,
+      cfg_early_floor_until_fraction: 0.0,
     },
   },
   low_cfg_strong: {
     label: "Low-CFG Strong Composition",
-    cfg_scale: 5.0,
+    preserve_cfg_scale: true,
     cfg_rescale: 0.0,
     sampler_kwargs: {
       cfg_guidance_mode: "auto_low_cfg",
       cfg_curve_type: "smoothstep",
-      cfg_curve_strength: 1.0,
-      cfg_high_sigma_boost: 1.8,
-      cfg_low_sigma_taper: 0.25,
+      cfg_curve_strength: 0.6,
+      cfg_high_sigma_boost: 0.6,
+      cfg_low_sigma_taper: 0.0,
       cfg_auto_low_cfg_threshold: 6.8,
-      cfg_early_floor_enabled: true,
-      cfg_early_floor_value: 6.8,
-      cfg_early_floor_until_fraction: 0.4,
+      cfg_early_floor_enabled: false,
+      cfg_early_floor_value: 0.0,
+      cfg_early_floor_until_fraction: 0.0,
     },
   },
   soft_detail_taper: {
     label: "Soft Detail Taper",
-    cfg_scale: 6.0,
+    preserve_cfg_scale: true,
     cfg_rescale: 0.15,
     sampler_kwargs: {
       cfg_guidance_mode: "sigma_shaped",
       cfg_curve_type: "cosine",
-      cfg_curve_strength: 1.0,
-      cfg_high_sigma_boost: 0.8,
-      cfg_low_sigma_taper: 0.65,
+      cfg_curve_strength: 0.5,
+      cfg_high_sigma_boost: 0.2,
+      cfg_low_sigma_taper: 0.35,
       cfg_auto_low_cfg_threshold: 6.5,
       cfg_early_floor_enabled: false,
-      cfg_early_floor_value: 6.2,
-      cfg_early_floor_until_fraction: 0.3,
+      cfg_early_floor_value: 0.0,
+      cfg_early_floor_until_fraction: 0.0,
     },
   },
 };
@@ -189,7 +205,7 @@ function downloadCfgPreset() {
 async function importCfgPreset(file) {
   const raw = JSON.parse(await file.text());
   const preset = raw?.preset && typeof raw.preset === "object" ? raw.preset : raw;
-  if (!preset || typeof preset !== "object" || !Number.isFinite(Number(preset.cfg_scale))) throw new Error("The selected file is not a valid CFG Lab preset.");
+  if (!preset || typeof preset !== "object" || (preset.preserve_cfg_scale !== true && !Number.isFinite(Number(preset.cfg_scale)))) throw new Error("The selected file is not a valid CFG Lab preset.");
   const fallback = String(preset.label || file.name.replace(/\.cfg-lab\.json$/i, "").replace(/\.json$/i, "")).trim() || "Imported CFG Preset";
   const proposed = window.prompt("Imported preset name:", fallback);
   const name = String(proposed || "").trim();
@@ -344,7 +360,9 @@ function materializePromptCfg(spec, steps) {
 }
 
 function requestedPromptCfgSeries(steps) {
-  const uiCfg = numberValue("#cfgScale", 7);
+  const cfgInput = $("#cfgScale");
+  const recommendedEffective = Number(cfgInput?.dataset?.recommendedEffectiveCfg);
+  const uiCfg = Number.isFinite(recommendedEffective) ? recommendedEffective : numberValue("#cfgScale", 7);
   const flat = Array(steps).fill(uiCfg);
   const parserActive = isSuperHybridParser();
   const behavior = $("#promptCfgBehavior")?.value || "replace_ui";
@@ -614,16 +632,21 @@ function updateSamplerAvailability() {
   if (status) status.textContent = "CFG Lab shaping is now standard across samplers. Completed outputs record the actual requested and effective CFG used at every step.";
 }
 
-function applyPreset(name, saveSession) {
+export function applyCfgPreset(name, { saveSession = null, notifyUser = true } = {}) {
   const preset = presetRecord(name);
-  if (!preset) return;
-  assignControl("#cfgScale", preset.cfg_scale);
+  if (!preset) return false;
+  const select = $("#cfgGuidancePreset");
+  if (select && [...select.options].some((option) => option.value === name)) select.value = name;
+  if (preset.preserve_cfg_scale !== true && Number.isFinite(Number(preset.cfg_scale))) {
+    assignControl("#cfgScale", preset.cfg_scale);
+  }
   applyCfgLabValues(preset);
   if (preset.random_ranges) {
     window.dispatchEvent(new CustomEvent("image-gen-apply-parameter-ranges", { detail: preset.random_ranges }));
   }
   saveSession?.();
-  notify(`Applied CFG preset: ${preset.label || name}`);
+  if (notifyUser) notify(`Applied CFG preset: ${preset.label || name}`);
+  return true;
 }
 
 function seedLockedBases(current) {
@@ -682,7 +705,7 @@ export function bindCfgLab({ collect = () => ({}), saveSession = () => {}, openV
   $("#cfgGuidancePreset")?.addEventListener("change", () => {
     if ($("#deleteCfgPresetButton")) $("#deleteCfgPresetButton").disabled = !$("#cfgGuidancePreset").value.startsWith("user:");
   });
-  $("#applyCfgPresetButton")?.addEventListener("click", () => applyPreset($("#cfgGuidancePreset").value, saveSession));
+  $("#applyCfgPresetButton")?.addEventListener("click", () => applyCfgPreset($("#cfgGuidancePreset").value, { saveSession }));
   $("#saveCfgPresetButton")?.addEventListener("click", () => saveCfgPreset(collect).catch((error) => notify(error.message, "error")));
   $("#exportCfgPresetButton")?.addEventListener("click", downloadCfgPreset);
   $("#deleteCfgPresetButton")?.addEventListener("click", () => deleteCfgPreset().catch((error) => notify(error.message, "error")));

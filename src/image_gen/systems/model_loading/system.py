@@ -52,6 +52,15 @@ class ModelLoadingSystem:
                 "SD2 prediction type is unresolved. IMAGE_GEN no longer guesses v_prediction for all SD2 checkpoints; "
                 "the checkpoint must provide metadata or resolve through a qualified SD2 runtime profile."
             )
+        if architecture == "sdxl":
+            sdxl_contract = getattr(plan, "sdxl_contract", None)
+            resolved = str(getattr(sdxl_contract, "prediction_type", "") or "")
+            if resolved:
+                return resolved, str(
+                    getattr(sdxl_contract, "prediction_type_source", "sdxl_runtime_profile")
+                    or "sdxl_runtime_profile"
+                )
+            raise RuntimeError("SDXL prediction type is unresolved; a qualified SDXL runtime profile is required.")
         return "epsilon", "legacy_supported_checkpoint_default"
 
     @property
@@ -72,21 +81,33 @@ class ModelLoadingSystem:
         telemetry = MemoryTelemetry(device=load_device)
         before_memory = telemetry.capture("before_checkpoint_component_load").to_dict()
         extras = dict(request_extras or {})
-        allow_validation_generation = bool(extras.get("sd2_dedicated_generation"))
+        allow_sd2_validation = bool(extras.get("sd2_dedicated_generation"))
+        allow_sdxl_validation = bool(
+            extras.get("sdxl_phase08_validation")
+            or extras.get("sdxl_dedicated_generation")
+        )
+        allow_validation_generation = bool(allow_sd2_validation or allow_sdxl_validation)
         explicit_sd2_profile = str(extras.get("sd2_runtime_profile_override") or "").strip() or None
+        explicit_sdxl_profile = str(extras.get("sdxl_runtime_profile_override") or "").strip() or None
         plan = self.loader.prepare_load_plan(
             model_path,
             require_generation_support=not allow_validation_generation,
             explicit_sd2_runtime_profile=explicit_sd2_profile,
+            explicit_sdxl_runtime_profile=explicit_sdxl_profile,
         )
         checkpoint_report = getattr(plan, "report", None)
         if checkpoint_report is not None:
             capability = capability_for(getattr(checkpoint_report, "architecture", "unknown"))
             if allow_validation_generation:
                 architecture = str(getattr(checkpoint_report, "architecture", "")).strip().lower()
-                if architecture != "sd2.x":
+                allowed = (
+                    architecture == "sd2.x" and allow_sd2_validation
+                ) or (
+                    architecture == "sdxl" and allow_sdxl_validation
+                )
+                if not allowed:
                     raise RuntimeError(
-                        "Dedicated validation generation override currently supports SD2.x checkpoints only."
+                        "Dedicated validation generation override does not match the detected checkpoint architecture."
                     )
                 if not (capability.validation_supported or capability.generation_supported):
                     raise RuntimeError(
@@ -112,11 +133,15 @@ class ModelLoadingSystem:
         else:
             built = build_method(plan, dtype=dtype)
         failures = []
-        for label, result in (
+        component_results = [
             ("UNet", built.unet_result),
             ("Text encoder", built.text_encoder_result),
             ("VAE", built.vae_result),
-        ):
+        ]
+        text_encoder_2_result = getattr(built, "text_encoder_2_result", None)
+        if text_encoder_2_result is not None:
+            component_results.append(("Text encoder 2", text_encoder_2_result))
+        for label, result in component_results:
             if not result.success:
                 failures.append(f"{label} failed: {result.error}")
         if failures:
@@ -161,16 +186,44 @@ class ModelLoadingSystem:
                 placement_reports["vae"] = dict(
                     getattr(active_vae, "_image_gen_placement_report", {}) or {}
                 )
+        built_tokenizer = getattr(built, "tokenizer", None)
+        built_tokenizer_2 = getattr(built, "tokenizer_2", None)
+        sdxl_contract = getattr(plan, "sdxl_contract", None)
+        model_runtime_profile = (
+            dict(sdxl_contract.profile.to_dict()) if sdxl_contract is not None else {}
+        )
+        vae_scaling_factor = float(
+            getattr(sdxl_contract, "vae_scaling_factor", 0.18215)
+            if sdxl_contract is not None else 0.18215
+        )
+        vae_force_upcast = bool(
+            getattr(sdxl_contract, "vae_force_upcast", False)
+            if sdxl_contract is not None else getattr(built, "vae_force_upcast", False)
+        )
+        vae_execution_dtype = str(
+            getattr(built, "vae_execution_dtype", "")
+            or ("torch.float32" if vae_force_upcast else "")
+        )
+        if vae_force_upcast:
+            active_vae.to(dtype=torch.float32)
+            setattr(active_vae, "_image_gen_vae_force_upcast", True)
+            setattr(active_vae, "_image_gen_vae_execution_dtype", "torch.float32")
+        architecture = str(getattr(checkpoint_report, "architecture", "") or "")
         return LoadedModel(
             components=PipelineComponents(
                 unet=built.unet,
                 vae=active_vae,
                 text_encoder=built.text_encoder,
-                tokenizer=tokenizer,
+                tokenizer=built_tokenizer if built_tokenizer is not None else tokenizer,
                 text_encoder_2=getattr(built, "text_encoder_2", None),
-                tokenizer_2=getattr(built, "tokenizer_2", None),
+                tokenizer_2=built_tokenizer_2,
                 prediction_type=prediction_type,
                 prediction_type_source=prediction_type_source,
+                architecture=architecture,
+                model_runtime_profile=model_runtime_profile,
+                vae_scaling_factor=vae_scaling_factor,
+                vae_force_upcast=vae_force_upcast,
+                vae_execution_dtype=vae_execution_dtype,
                 model_identity=model_identity,
                 model_hash=checkpoint_hash,
                 vae_provenance=vae_provenance,
@@ -181,7 +234,12 @@ class ModelLoadingSystem:
                 "before_checkpoint_component_load": before_memory,
                 "after_checkpoint_component_load": telemetry.capture(
                     "after_checkpoint_component_load",
-                    component_residency=[],
+                    component_residency=[
+                        {"component_id": name, **dict(report)}
+                        for name, report in dict(getattr(built, "placement_reports", {}) or {}).items()
+                    ],
                 ).to_dict(),
+                "cpu_first_hydration": bool(getattr(built, "cpu_first_hydration", False)),
+                "runtime_target_device": str(getattr(built, "runtime_target_device", load_device)),
             },
         )

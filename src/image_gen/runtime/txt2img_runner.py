@@ -45,6 +45,9 @@ from image_gen.systems.registry import RuntimeRegistrySystem
 from modules.pipeline.progress_reporter import ProgressReporter
 from modules.project_context import ProjectContext
 from modules.sd2_runtime_assets import SD2RuntimeAssetResolver
+from modules.sdxl_runtime_assets import SDXLRuntimeAssetResolver
+from modules.sdxl_model_contract import resolve_sdxl_model_contract
+from modules.sdxl_runtime_profile import apply_sdxl_profile_to_request
 from modules.sd2_runtime_profile import profile_from_filename, profile_from_id
 from modules.shared_state import SharedState
 from modules.txt2img.output_saver import SavedImageRecord
@@ -64,6 +67,19 @@ class Txt2ImgRunResult:
     prepared_save_request: PreparedOutputSaveRequest | None = None
     expected_saved_count: int = 0
 
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 
@@ -285,7 +301,7 @@ class Txt2ImgRunner:
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         latent_scale_factor: int = 8,
-        vae_scaling_factor: float = 0.18215,
+        vae_scaling_factor: float | None = None,
         registry_system: RuntimeRegistrySystem | None = None,
         output_system: OutputSystem | None = None,
         model_loading_system: ModelLoadingSystem | None = None,
@@ -310,7 +326,7 @@ class Txt2ImgRunner:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype or (torch.float16 if self.device.type == "cuda" else torch.float32)
         self.latent_scale_factor = int(latent_scale_factor)
-        self.vae_scaling_factor = float(vae_scaling_factor)
+        self.vae_scaling_factor = (None if vae_scaling_factor is None else float(vae_scaling_factor))
         self.system_overrides = dict(system_overrides or {})
 
         override_diagnostics = self.system_overrides.get("diagnostics")
@@ -558,6 +574,11 @@ class Txt2ImgRunner:
         try:
             request.device = str(self.device)
             self._configure_runtime_state(payload_extras, session)
+            # Model activation must apply architecture/profile mutations before registry
+            # resolution. SDXL preflight may change the sampler/scheduler and clears
+            # descriptors that were resolved for the previous/default request values.
+            # Running it here keeps WebUI preload ordering identical to generation.
+            self._apply_sdxl_runtime_preflight(request, payload_extras)
             request, payload_extras = self.registry_system.apply_resolution(request, payload_extras)
             self._build_pipeline(request, payload_extras, session)
             self.diagnostics_system.complete(session)
@@ -646,6 +667,10 @@ class Txt2ImgRunner:
             assets = SD2RuntimeAssetResolver(self.project_context).resolve(profile)
             local_dir = assets.tokenizer_dir
             identity = f"{profile.profile_id}:{local_dir.resolve()}"
+        elif family == "sdxl" or "stable-diffusion-xl" in family:
+            assets = SDXLRuntimeAssetResolver(self.project_context).resolve()
+            local_dir = assets.tokenizer_dir
+            identity = f"sdxl:{local_dir.resolve()}"
 
         if not local_dir.exists():
             raise FileNotFoundError(f"Missing local tokenizer directory: {local_dir}")
@@ -840,20 +865,93 @@ class Txt2ImgRunner:
         if components is None:
             return []
         reports: list[dict[str, Any]] = []
-        for name in ("unet", "text_encoder", "vae"):
+        architecture = str(getattr(components, "architecture", "") or "").strip().lower()
+        sdxl_cpu_first = architecture == "sdxl" and device.type == "cuda"
+        component_names = ("unet", "text_encoder", "text_encoder_2", "vae")
+        for name in component_names:
             module = getattr(components, name, None)
             if module is None:
                 continue
+            target_device = torch.device("cpu") if sdxl_cpu_first else device
+            target_dtype = dtype
+            if name == "vae" and bool(getattr(components, "vae_force_upcast", False)):
+                target_dtype = torch.float32
             reports.append(
                 place_component(
                     module,
-                    device=device,
-                    dtype=dtype,
-                    owner="Txt2ImgRunner.execution_promotion",
+                    device=target_device,
+                    dtype=target_dtype,
+                    owner=(
+                        "Txt2ImgRunner.sdxl_cached_cpu_first"
+                        if sdxl_cpu_first
+                        else "Txt2ImgRunner.execution_promotion"
+                    ),
                     component_name=name,
                 ).to_dict()
             )
         return reports
+
+    def _apply_sdxl_runtime_preflight(
+        self,
+        request: GenerationRequest,
+        extras: dict[str, Any],
+    ) -> None:
+        if bool(extras.get("_sdxl_profile_preflight_complete")):
+            return
+        preflight_model_path = extras.get("model_path") or self.model_loading_system.default_model_path
+        if not preflight_model_path:
+            return
+        candidate = Path(str(preflight_model_path)).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.project_context.resolve_project_path(candidate)
+        if not candidate.is_file() or candidate.suffix.lower() != ".safetensors":
+            return
+        try:
+            preflight_contract = CheckpointInspector().inspect_architecture_contract(str(candidate))
+            if str(preflight_contract.family or "").strip().lower() != "sdxl":
+                extras["_sdxl_profile_preflight_complete"] = True
+                return
+            explicit_profile = str(extras.get("sdxl_runtime_profile_override") or "").strip() or None
+            sdxl_contract = resolve_sdxl_model_contract(
+                self.project_context,
+                checkpoint_filename=candidate.name,
+                explicit_profile_id=explicit_profile,
+            )
+            application = apply_sdxl_profile_to_request(
+                request,
+                sdxl_contract.profile,
+                enforce_steps=_optional_bool(extras.get("sdxl_enforce_recommended_steps")),
+                enforce_cfg=_optional_bool(extras.get("sdxl_enforce_recommended_cfg")),
+            )
+            extras["sdxl_runtime_profile_override"] = sdxl_contract.profile.profile_id
+            extras["model_runtime_profile"] = sdxl_contract.profile.to_dict()
+            extras["sdxl_profile_application"] = application
+            scheduler_kwargs = dict(getattr(request, "scheduler_kwargs", {}) or {})
+            if str(request.scheduler_name or "").strip().lower() == "sdxl_euler_trailing":
+                scheduler_kwargs.setdefault(
+                    "scheduler_config_path", str(sdxl_contract.assets.scheduler_config)
+                )
+            request.scheduler_kwargs = scheduler_kwargs
+            # Profiles no longer force sampler/scheduler choices. Only discard
+            # already-resolved descriptors if an explicit future request mutation
+            # actually changes one of those selections.
+            before_selection = dict(application.get("before") or {})
+            after_selection = dict(application.get("after") or {})
+            if (
+                before_selection.get("sampler_name") != after_selection.get("sampler_name")
+                or before_selection.get("scheduler_name") != after_selection.get("scheduler_name")
+            ):
+                for key in (
+                    "resolved_scheduler_entry",
+                    "resolved_scheduler_descriptor",
+                    "resolved_sampler_entry",
+                    "resolved_sampler_descriptor",
+                ):
+                    extras.pop(key, None)
+            extras["_sdxl_profile_preflight_complete"] = True
+        except Exception as exc:
+            extras["sdxl_profile_preflight_error"] = f"{type(exc).__name__}: {exc}"
+            raise
 
     def _build_pipeline(
         self,
@@ -861,6 +959,9 @@ class Txt2ImgRunner:
         extras: dict[str, Any],
         session: DiagnosticSession,
     ):
+        # Programmatic callers may compose directly. Normal run_request performs
+        # this before registry resolution so profile-selected adapters cannot be stale.
+        self._apply_sdxl_runtime_preflight(request, extras)
         prompt_adapter, scheduler_adapter, sampler_adapter = self._resolve_adapters(request, extras)
         hires_scheduler_descriptor = extras.get("resolved_hires_scheduler_descriptor")
         hires_sampler_descriptor = extras.get("resolved_hires_sampler_descriptor")
@@ -963,6 +1064,9 @@ class Txt2ImgRunner:
             if profile is not None:
                 assets = SD2RuntimeAssetResolver(self.project_context).resolve(profile)
                 expected_tokenizer_identity = f"{profile.profile_id}:{assets.tokenizer_dir.resolve()}"
+        elif preflight_family.strip().lower() == "sdxl":
+            assets = SDXLRuntimeAssetResolver(self.project_context).resolve()
+            expected_tokenizer_identity = f"sdxl:{assets.tokenizer_dir.resolve()}"
         else:
             expected_tokenizer_identity = f"sd1:{self.project_context.tokenizer_root.resolve()}"
 
@@ -1017,6 +1121,7 @@ class Txt2ImgRunner:
         load_variant_key = (
             bool(extras.get("sd2_dedicated_generation")),
             str(extras.get("sd2_runtime_profile_override") or ""),
+            str(extras.get("sdxl_runtime_profile_override") or ""),
             *vae_override_identity,
         )
         if model_file.is_file():
@@ -1154,7 +1259,7 @@ class Txt2ImgRunner:
         )
         component_devices: dict[str, str] = {}
         component_dtypes: dict[str, str] = {}
-        for component_name in ("unet", "text_encoder", "vae"):
+        for component_name in ("unet", "text_encoder", "text_encoder_2", "vae"):
             module = getattr(getattr(loaded, "components", None), component_name, None)
             if module is None:
                 continue
@@ -1206,6 +1311,12 @@ class Txt2ImgRunner:
             session.request_extras["attention_backend"] = dict(attention_backend)
         model_provenance["vae_mode"] = vae_provenance["mode"]
         model_provenance["vae_provenance"] = dict(vae_provenance)
+        model_provenance["model_runtime_profile"] = dict(
+            getattr(loaded.components, "model_runtime_profile", {}) or {}
+        )
+        model_provenance["vae_scaling_factor"] = float(
+            getattr(loaded.components, "vae_scaling_factor", 0.18215)
+        )
         extras["vae_provenance"] = dict(vae_provenance)
         session.request_extras["vae_provenance"] = dict(vae_provenance)
         model_provenance["execution_placement_reports"] = list(extras.get("execution_placement_reports") or [])
@@ -1263,7 +1374,11 @@ class Txt2ImgRunner:
             scheduler_adapter=scheduler_adapter,
             sampler_adapter=sampler_adapter,
             latent_scale_factor=self.latent_scale_factor,
-            vae_scaling_factor=self.vae_scaling_factor,
+            vae_scaling_factor=(
+                self.vae_scaling_factor
+                if self.vae_scaling_factor is not None
+                else float(getattr(loaded.components, "vae_scaling_factor", 0.18215))
+            ),
             device=runtime_device,
             dtype=runtime_dtype,
             system_overrides=self.system_overrides,
@@ -1517,6 +1632,12 @@ class Txt2ImgRunner:
             )
             request.device = str(self.device)
             self._configure_runtime_state(extras, session)
+            self.diagnostics_system.run_stage(
+                session,
+                "model_profile",
+                "sdxl_preflight",
+                lambda: self._apply_sdxl_runtime_preflight(request, extras),
+            )
             request, extras = self.diagnostics_system.run_stage(
                 session,
                 "registry",

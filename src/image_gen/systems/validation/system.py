@@ -90,7 +90,7 @@ class RealCheckpointValidationSystem:
     @staticmethod
     def component_coverage(built_components: Any) -> dict[str, Any]:
         report: dict[str, Any] = {}
-        for name in ("unet_result", "text_encoder_result", "vae_result"):
+        for name in ("unet_result", "text_encoder_result", "text_encoder_2_result", "vae_result"):
             result = getattr(built_components, name, None)
             if result is None:
                 continue

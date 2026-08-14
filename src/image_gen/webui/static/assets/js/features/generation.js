@@ -6,7 +6,7 @@ import {
   renderLivePreviewJob,
   setLivePreviewTransport,
   stopLivePreview,
-} from "./live-preview.js?v=status-action-icons1";
+} from "./live-preview.js?v=sdxl-cfg-recommendations4";
 import { showOutput, upsertRecentOutput } from "./gallery.js?v=0.1.46";
 import { openOutputDetailsData } from "./output-details.js";
 import { preflightCurrentPrompt } from "./prompt-tools.js?v=qol-seed-range3";
@@ -432,7 +432,7 @@ function renderQueue(jobs) {
     const schedulerLabel = job.scheduler_name || job.request?.scheduler_name || "scheduler";
     const presetLabel = job.scheduler_preset_name ? ` · preset ${job.scheduler_preset_name}` : "";
     const warningCount = Number(job.scheduler_validation_warning_count || 0);
-    const warningLabel = warningCount ? ` · ${warningCount} scheduler warning${warningCount === 1 ? "" : "s"}` : "";
+    const warningLabel = warningCount ? ` · ${warningCount} setting warning${warningCount === 1 ? "" : "s"}` : "";
     const executionLabel = job.execution_mode ? ` · ${String(job.execution_mode).replaceAll("_", " ")}` : "";
     const parserLabel = job.prompt_preflight?.base?.parser?.label || job.request?.prompt_parser_name || "legacy";
     const profileLabel = job.prompt_preflight?.base?.shortcut_profile?.label || job.request?.prompt_shortcut_profile_name || "profile";
@@ -996,7 +996,7 @@ async function submit(unlimited) {
     const warnings = schedulerPreflight.validation_warnings || [];
     if (warnings.length) {
       const accepted = window.confirm(
-        `The scheduler settings produced ${warnings.length} warning${warnings.length === 1 ? "" : "s"}:\n\n${warnings.join("\n")}\n\nQueue this generation with the normalized effective settings?`,
+        `The generation settings produced ${warnings.length} advisory warning${warnings.length === 1 ? "" : "s"}:\n\n${warnings.join("\n")}\n\nThese warnings do not block generation. Queue this generation with the selected/effective settings?`,
       );
       if (!accepted) return;
       values._webui_scheduler_warnings_acknowledged = true;

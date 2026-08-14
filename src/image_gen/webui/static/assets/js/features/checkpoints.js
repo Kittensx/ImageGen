@@ -1,4 +1,5 @@
 import { api } from "../api.js?v=asset-card-latency1";
+import { createProgressiveAssetGrid } from "../components/progressive-asset-grid.js?v=asset-grid-qol1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 
@@ -288,6 +289,7 @@ export function bindCheckpointWorkspace({
       const response = await api.checkpointDetails(model.asset_id, { inspect: false });
       const merged = mergeCatalogModel(response) || response;
       detailCache.set(model.asset_id, merged);
+      checkpointGrid.refreshItem(model.asset_id, effectiveModel(merged));
       if (requestId !== detailsRequestSerial || selectedId !== model.asset_id) return;
       selectedDetails = effectiveModel(merged);
       renderCurrentModel();
@@ -353,6 +355,8 @@ export function bindCheckpointWorkspace({
     const image = document.createElement("img");
     image.className = "checkpoint-card-preview";
     image.alt = `${model.name} preview`;
+    image.loading = "lazy";
+    image.decoding = "async";
     setPreview(image, fallback, model);
     const badges = document.createElement("div");
     badges.className = "checkpoint-card-badges";
@@ -442,13 +446,39 @@ export function bindCheckpointWorkspace({
     )), sortMode);
   };
 
-  const renderCards = () => {
+  const checkpointGrid = createProgressiveAssetGrid({
+    grid: $("#checkpointCardGrid"),
+    createCard,
+    batchSize: 50,
+    onProgress: ({ shown, total, hasMore }) => {
+      const status = $("#checkpointLoadStatus");
+      if (!status) return;
+      status.textContent = total === 0
+        ? "No checkpoint cards to display."
+        : hasMore
+          ? `Showing ${shown} of ${total} matching checkpoints. Scroll to load more.`
+          : `Showing all ${shown} matching checkpoints.`;
+    },
+  });
+
+  const renderCards = ({ resetWindow = false } = {}) => {
     const visible = filteredModels();
-    const grid = $("#checkpointCardGrid");
-    grid.replaceChildren(...visible.map(createCard));
+    checkpointGrid.setItems(visible, { reset: resetWindow });
     $("#checkpointResultCount").textContent = String(visible.length);
     $("#checkpointLibrarySummary").textContent = `${visible.length} of ${models.length} installed checkpoints`;
     $("#checkpointEmptyState").classList.toggle("is-hidden", visible.length > 0);
+  };
+
+  const broadcastCatalogRefresh = () => {
+    window.dispatchEvent(new CustomEvent("image-gen-asset-catalog-refreshed", {
+      detail: {
+        models: [...models],
+        checkpoints: [...models],
+        vaes: state.vaes,
+        loras: state.loras,
+        textual_inversions: state.textualInversions,
+      },
+    }));
   };
 
   const renderDetails = () => {
@@ -498,7 +528,7 @@ export function bindCheckpointWorkspace({
     state.models = [...models];
     state.checkpointCatalog = [...models];
     refreshGenerationModelSelect?.();
-    renderCards();
+    renderCards({ resetWindow: true });
     renderCurrentModel();
     if (selectedId) {
       const selected = models.find((model) => model.asset_id === selectedId);
@@ -531,9 +561,11 @@ export function bindCheckpointWorkspace({
       models = Array.isArray(payload.checkpoints) ? payload.checkpoints : models;
       state.models = [...models];
       state.checkpointCatalog = [...models];
+      detailCache.clear();
       refreshGenerationModelSelect?.();
       renderCards();
       renderCurrentModel();
+      broadcastCatalogRefresh();
       if (selectedId) {
         const selected = models.find((model) => model.asset_id === selectedId);
         if (selected) await openDetails(selected);
@@ -555,7 +587,7 @@ export function bindCheckpointWorkspace({
     $(selector)?.addEventListener("input", (event) => {
       search = event.target.value;
       if ($(counterpart) && $(counterpart).value !== search) $(counterpart).value = search;
-      renderCards();
+      renderCards({ resetWindow: true });
     });
   };
   bindSearch("#checkpointSidebarSearch", "#checkpointLibrarySearch");
@@ -566,7 +598,7 @@ export function bindCheckpointWorkspace({
     if (!button) return;
     activeFilter = button.dataset.checkpointFilter || "all";
     document.querySelectorAll("[data-checkpoint-filter]").forEach((candidate) => candidate.classList.toggle("is-active", candidate === button));
-    renderCards();
+    renderCards({ resetWindow: true });
   });
   $("#checkpointClearFiltersButton")?.addEventListener("click", () => {
     activeFilter = "all";
@@ -574,11 +606,11 @@ export function bindCheckpointWorkspace({
     $("#checkpointSidebarSearch").value = "";
     $("#checkpointLibrarySearch").value = "";
     document.querySelectorAll("[data-checkpoint-filter]").forEach((button) => button.classList.toggle("is-active", button.dataset.checkpointFilter === "all"));
-    renderCards();
+    renderCards({ resetWindow: true });
   });
   $("#checkpointSortSelect")?.addEventListener("change", (event) => {
     sortMode = event.target.value;
-    renderCards();
+    renderCards({ resetWindow: true });
   });
   document.querySelectorAll('input[name="checkpointStartupMode"]').forEach((input) => {
     input.addEventListener("change", async () => {
@@ -667,10 +699,13 @@ export function bindCheckpointWorkspace({
     try {
       const updated = await api.enrichAssetFromCivitai("checkpoint", selectedDetails.asset_id, false);
       selectedDetails = mergeCatalogModel(updated) || updated;
+      detailCache.set(selectedDetails.asset_id, selectedDetails);
       refreshGenerationModelSelect?.();
       renderCards();
+      checkpointGrid.refreshItem(selectedDetails.asset_id, effectiveModel(selectedDetails));
       renderCurrentModel();
       renderDetails();
+      broadcastCatalogRefresh();
       const lookup = civitaiLookupFor(selectedDetails);
       notify(lookup.preview_image_downloaded
         ? "CivitAI metadata and a preview image were added to the checkpoint sidecar."

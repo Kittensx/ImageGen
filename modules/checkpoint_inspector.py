@@ -189,6 +189,7 @@ class CheckpointReport:
     has_unet: bool = False
     has_vae: bool = False
     has_text_encoder: bool = False
+    has_sdxl_text_encoder_1: bool = False
     has_sdxl_text_encoder_2: bool = False
     file_size_bytes: int = 0
     sha256: str = ""
@@ -229,6 +230,7 @@ class CheckpointReport:
             "has_unet": self.has_unet,
             "has_vae": self.has_vae,
             "has_text_encoder": self.has_text_encoder,
+            "has_sdxl_text_encoder_1": self.has_sdxl_text_encoder_1,
             "has_sdxl_text_encoder_2": self.has_sdxl_text_encoder_2,
             "dtype_summary": dict(self.dtype_summary),
             "tensor_shape_summary": dict(self.tensor_shape_summary),
@@ -256,6 +258,18 @@ class CheckpointInspector:
         "text_model.embeddings.token_embedding.weight",
         "token_embedding.weight",
     )
+
+    @staticmethod
+    def _is_sdxl_text_encoder_1_key(key: str) -> bool:
+        return key.startswith("conditioner.embedders.0.") or key.startswith("text_encoder.")
+
+    @staticmethod
+    def _is_sdxl_text_encoder_2_key(key: str) -> bool:
+        return key.startswith("conditioner.embedders.1.") or key.startswith("text_encoder_2.")
+
+    @classmethod
+    def _is_primary_text_encoder_key(cls, key: str) -> bool:
+        return key.startswith("cond_stage_model.") or cls._is_sdxl_text_encoder_1_key(key)
 
     def load_state_dict(self, model_path: str) -> Dict[str, object]:
         if not os.path.exists(model_path):
@@ -290,6 +304,7 @@ class CheckpointInspector:
                     key.startswith("cond_stage_model.")
                     or key.startswith("model.diffusion_model.")
                     or key.startswith("conditioner.embedders.")
+                    or key.startswith("text_encoder.")
                     or "text_encoder_2" in key
                 ):
                     continue
@@ -298,7 +313,7 @@ class CheckpointInspector:
                 except Exception:
                     continue
 
-        has_te2 = any("conditioner.embedders.1" in key or "text_encoder_2" in key for key in keys)
+        has_te2 = any(self._is_sdxl_text_encoder_2_key(key) for key in keys)
         architecture, _, model_dimension = self._detect_architecture(keys, shapes, has_te2)
         prediction_type, prediction_source = detect_prediction_type(metadata, architecture, filename=path.name)
         return build_architecture_contract(
@@ -308,7 +323,7 @@ class CheckpointInspector:
             source=prediction_source or "checkpoint_header_preflight",
         )
 
-    def inspect(self, model_path: str) -> CheckpointReport:
+    def inspect(self, model_path: str, *, compute_sha256: bool = True) -> CheckpointReport:
         path = Path(model_path).expanduser().resolve()
         if not path.is_file():
             raise FileNotFoundError(f"Model file not found: {path}")
@@ -333,17 +348,21 @@ class CheckpointInspector:
         prefixes = self._collect_prefixes(keys)
         has_unet = any(k.startswith("model.diffusion_model.") for k in keys)
         has_vae = any(k.startswith("first_stage_model.") for k in keys)
-        has_text_encoder = any(k.startswith("cond_stage_model.") for k in keys)
-        has_te2 = any(
-            "conditioner.embedders.1" in k or "text_encoder_2" in k for k in keys
-        )
+        has_sdxl_te1 = any(self._is_sdxl_text_encoder_1_key(k) for k in keys)
+        has_text_encoder = any(self._is_primary_text_encoder_key(k) for k in keys)
+        has_te2 = any(self._is_sdxl_text_encoder_2_key(k) for k in keys)
 
-        checkpoint_kind = self._detect_checkpoint_kind(
-            keys, has_unet, has_vae, has_text_encoder
-        )
         architecture, evidence, model_dimension = self._detect_architecture(keys, shapes, has_te2)
+        checkpoint_kind = self._detect_checkpoint_kind(
+            keys,
+            has_unet,
+            has_vae,
+            has_text_encoder,
+            architecture=architecture,
+            has_text_encoder_2=has_te2,
+        )
         prediction_type, prediction_source = detect_prediction_type(metadata, architecture, filename=path.name)
-        file_sha256 = self.sha256_file(path)
+        file_sha256 = self.sha256_file(path) if compute_sha256 else ""
         if architecture == "sd2.x" and not prediction_type:
             qualification = qualification_for_sha256(file_sha256)
             if qualification is not None and qualification.architecture == "sd2.x":
@@ -369,6 +388,7 @@ class CheckpointInspector:
             has_unet=has_unet,
             has_vae=has_vae,
             has_text_encoder=has_text_encoder,
+            has_sdxl_text_encoder_1=has_sdxl_te1,
             has_sdxl_text_encoder_2=has_te2,
             file_size_bytes=path.stat().st_size,
             sha256=file_sha256,
@@ -404,12 +424,21 @@ class CheckpointInspector:
         has_unet: bool,
         has_vae: bool,
         has_text_encoder: bool,
+        *,
+        architecture: str = "",
+        has_text_encoder_2: bool = False,
     ) -> str:
         lora_signals = any(
             ".lora_" in k or "lora_up." in k or "lora_down." in k for k in keys
         )
         if lora_signals and not has_unet and not has_vae:
             return "lora"
+        if architecture == "sdxl":
+            if has_unet and has_vae and has_text_encoder and has_text_encoder_2:
+                return "full"
+            if has_unet or has_vae or has_text_encoder or has_text_encoder_2:
+                return "partial"
+            return "unknown"
         if has_unet and has_vae and has_text_encoder:
             return "full"
         if has_unet or has_vae or has_text_encoder:

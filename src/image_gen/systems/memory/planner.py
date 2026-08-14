@@ -43,7 +43,11 @@ class MemoryEstimator:
         sampler = str(sampler_name or "").lower()
         history_multiplier = 3 if "dpmpp" in sampler or "2m" in sampler else 2
         sampler_history = latent_bytes * history_multiplier
-        conditioning_bytes = batch * 2 * 77 * 1024 * scalar_bytes
+        is_sdxl = "text_encoder_2" in component_bytes
+        conditioning_width = 2048 if is_sdxl else 1024
+        pooled_width = 1280 if is_sdxl else 0
+        conditioning_bytes = batch * 2 * 77 * conditioning_width * scalar_bytes
+        pooled_conditioning_bytes = batch * 2 * pooled_width * scalar_bytes
         vae_decode_output = batch * 3 * width * height * 4
         preview_long_edge = max(64, int(getattr(request, "live_preview_width", 384) or 384))
         preview_frame = batch * 3 * preview_long_edge * preview_long_edge * 4
@@ -53,12 +57,14 @@ class MemoryEstimator:
             "latent_tensor": int(latent_bytes),
             "sampler_history": int(sampler_history),
             "conditioning": int(conditioning_bytes),
+            "pooled_conditioning": int(pooled_conditioning_bytes),
             "vae_decode_output": int(vae_decode_output),
             "preview_frame": int(preview_runtime),
         }
         if stage == "conditioning":
             contributors["text_encoder_parameters"] = int(component_bytes.get("text_encoder", 0))
-            contributors["unet_parameters"] = int(component_bytes.get("unet", 0))
+            if is_sdxl:
+                contributors["text_encoder_2_parameters"] = int(component_bytes.get("text_encoder_2", 0))
         elif stage == "final_decode":
             contributors["vae_parameters"] = int(component_bytes.get("vae", 0))
             contributors["decode_workspace"] = int(max(vae_decode_output, latent_bytes * 4))
@@ -72,8 +78,10 @@ class MemoryEstimator:
             latent_bytes
             + sampler_history
             + conditioning_bytes
+            + pooled_conditioning_bytes
             + (
                 component_bytes.get("text_encoder", 0)
+                + component_bytes.get("text_encoder_2", 0)
                 if stage == "conditioning"
                 else component_bytes.get("vae", 0)
                 if stage == "final_decode"

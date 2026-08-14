@@ -578,6 +578,29 @@
       <label><span>CFG Scale</span><input id="cfgScale" name="cfg_scale" type="number" min="0" max="30" step="0.1"></label>
     </div>
 
+    <section id="sdxlRecommendationControls" class="sdxl-recommendation-controls is-hidden" aria-label="SDXL model recommendations">
+      <div class="sdxl-recommendation-heading">
+        <strong>Model recommended defaults</strong>
+        <span id="sdxlRecommendationProfile" class="field-status subtle"></span>
+      </div>
+      <div class="sdxl-recommendation-options">
+        <label class="checkbox-row">
+          <input id="sdxlEnforceRecommendedSteps" name="sdxl_enforce_recommended_steps" type="checkbox" checked>
+          <span id="sdxlRecommendedStepsLabel">Use recommended steps</span>
+        </label>
+        <label class="checkbox-row">
+          <input id="sdxlEnforceRecommendedCfg" name="sdxl_enforce_recommended_cfg" type="checkbox" checked>
+          <span id="sdxlRecommendedCfgLabel">Use recommended CFG</span>
+        </label>
+      </div>
+      <small class="field-status subtle">
+        Fields always remain editable. When a recommendation is checked, that recommended value is used for generation; if the visible field differs, IMAGE_GEN warns instead of failing. Uncheck the recommendation to make your custom field value authoritative. Lightning's recommended CFG also selects its recommended CFG Lab preset when enabled or when the profile activates.
+      </small>
+      <div id="sdxlRecommendationStatus" class="field-status subtle" role="status">
+        The current settings match this model's recommendations.
+      </div>
+    </section>
+
     <details class="advanced-section cfg-lab-section" id="cfgLabSection">
       <summary>Guidance / CFG Lab</summary>
       <div class="advanced-content cfg-lab-content">
@@ -585,6 +608,7 @@
           <label class="field-block">
             <span>Guidance preset</span>
             <select id="cfgGuidancePreset">
+              <option value="sdxl_lightning_recommended">SDXL Lightning Recommended</option>
               <option value="classic_flat">Classic / Flat</option>
               <option value="low_cfg_safe">Low-CFG Safe</option>
               <option value="low_cfg_strong">Low-CFG Strong Composition</option>

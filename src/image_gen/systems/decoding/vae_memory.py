@@ -298,7 +298,8 @@ class VAEExecutionController:
         if not torch.is_tensor(latents) or latents.ndim != 4:
             raise ValueError("VAE decode input must be a BCHW tensor.")
         device = self._resolve_device()
-        source = latents.to(device=device)
+        dtype = self._module_dtype(self.vae)
+        source = latents.to(device=device, dtype=dtype)
         slicing = bool(self.settings.slicing and int(source.shape[0]) > 1)
         batches: Iterable[torch.Tensor] = source.split(1, dim=0) if slicing else (source,)
         outputs: list[torch.Tensor] = []
@@ -317,6 +318,8 @@ class VAEExecutionController:
         self._last_report = {
             **self._base_report(),
             "effective_device": str(device),
+            "execution_dtype": str(dtype),
+            "input_dtype": str(latents.dtype),
             "operation": "decode",
             "tiling_applied": tiling_applied,
             "slicing_applied": slicing,
@@ -424,6 +427,8 @@ class VAEExecutionController:
         self._last_report = {
             **self._base_report(),
             "effective_device": str(device),
+            "execution_dtype": str(dtype),
+            "input_dtype": str(images.dtype),
             "operation": "encode",
             "tiling_applied": tiling_applied,
             "slicing_applied": slicing,

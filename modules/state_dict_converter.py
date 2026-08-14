@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 from modules.text_encoder_strategy import text_encoder_strategy_for
 from modules.sd2_openclip_reference_converter import SD2OpenCLIPReferenceConverter
+from modules.sdxl_unet_converter import SDXLUNetStateDictConverter
 
 
 @dataclass
@@ -12,6 +13,7 @@ class ConvertedStateDict:
     unet: Dict[str, Any] = field(default_factory=dict)
     vae: Dict[str, Any] = field(default_factory=dict)
     text_encoder: Dict[str, Any] = field(default_factory=dict)
+    text_encoder_2: Dict[str, Any] = field(default_factory=dict)
 
 
 class StateDictConverter:
@@ -27,11 +29,23 @@ class StateDictConverter:
         vae_state: Dict[str, Any],
         text_state: Dict[str, Any],
         architecture: str | None = None,
+        text_state_2: Dict[str, Any] | None = None,
+        unet_config: Dict[str, Any] | None = None,
     ) -> ConvertedStateDict:
+        normalized_architecture = str(architecture or "").strip().lower()
+        if normalized_architecture in {"sdxl", "stable-diffusion-xl", "stable-diffusion-xl-base"} and unet_state:
+            if not unet_config:
+                raise ValueError("SDXL UNet conversion requires the resolved SDXL UNet config.")
+            converted_unet, _report = SDXLUNetStateDictConverter(unet_config).convert(unet_state)
+        else:
+            converted_unet = self.convert_unet_state_dict(unet_state)
         return ConvertedStateDict(
-            unet=self.convert_unet_state_dict(unet_state),
+            unet=converted_unet,
             vae=self.convert_vae_state_dict(vae_state),
             text_encoder=self.convert_text_encoder_state_dict(text_state, architecture=architecture),
+            text_encoder_2=self.convert_text_encoder_2_state_dict(
+                text_state_2 or {}, architecture=architecture
+            ),
         )
 
     def convert_unet_state_dict(self, state_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -116,6 +130,23 @@ class StateDictConverter:
         if normalized_architecture in {"sd2", "sd2.1", "sd2.x", "stable-diffusion-2.x"}:
             return SD2OpenCLIPReferenceConverter().convert(state_dict)
         strategy = text_encoder_strategy_for(architecture)
+        return strategy.convert_state_dict(state_dict)
+
+    def convert_text_encoder_2_state_dict(
+        self,
+        state_dict: Dict[str, Any],
+        architecture: str | None = None,
+    ) -> Dict[str, Any]:
+        if not state_dict:
+            return {}
+        normalized_architecture = str(architecture or "").strip().lower()
+        if normalized_architecture not in {
+            "sdxl",
+            "stable-diffusion-xl",
+            "stable-diffusion-xl-base",
+        }:
+            return dict(state_dict)
+        strategy = text_encoder_strategy_for(architecture, encoder_index=2)
         return strategy.convert_state_dict(state_dict)
 
     def _cleanup_unet_key(self, key: str) -> str:

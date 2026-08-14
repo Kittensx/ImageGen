@@ -15,6 +15,7 @@ from modules.registry import AssetRegistry
 from modules.component_builder import ComponentBuilder, BuiltComponents
 from modules.project_context import ProjectContext
 from modules.sd2_model_contract import SD2ResolvedModelContract, resolve_sd2_model_contract
+from modules.sdxl_model_contract import SDXLResolvedModelContract, resolve_sdxl_model_contract
 from image_gen.systems.validation.capabilities import capability_for
 
 
@@ -24,6 +25,7 @@ class LoadPlan:
     configs: ResolvedConfigs
     mapped_state: MappedStateDict
     sd2_contract: SD2ResolvedModelContract | None = None
+    sdxl_contract: SDXLResolvedModelContract | None = None
 
 
 class LoadModel(ConfigOptions):
@@ -54,15 +56,26 @@ class LoadModel(ConfigOptions):
         dtype: torch.dtype | None = None,
         device: str | torch.device | None = None,
     ) -> BuiltComponents:
-        builder = ComponentBuilder(device=str(device) if device is not None else None, dtype=dtype)
+        requested_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        cpu_first_sdxl = bool(plan.sdxl_contract is not None and requested_device.type == "cuda")
+        build_device = torch.device("cpu") if cpu_first_sdxl else requested_device
+        builder = ComponentBuilder(
+            device=str(build_device),
+            dtype=dtype,
+            defer_attention_configuration=cpu_first_sdxl,
+        )
         built = builder.build_components(
             configs=plan.configs,
             mapped_state=plan.mapped_state,
         )
+        built.cpu_first_hydration = cpu_first_sdxl
+        built.runtime_target_device = str(requested_device)
         return built
         
     def debug_print_components(self, built) -> None:
-        for result in [built.unet_result, built.text_encoder_result]:
+        for result in [built.unet_result, built.text_encoder_result, getattr(built, "text_encoder_2_result", None)]:
+            if result is None:
+                continue
             print(f"=== Component: {result.name} ===")
             print(f"Success: {result.success}")
             print(f"Loaded keys: {result.loaded_keys}")
@@ -82,7 +95,9 @@ class LoadModel(ConfigOptions):
 
 
     def debug_print_component_key_samples(self, built, limit: int = 40) -> None:
-        for result in [built.unet_result, built.text_encoder_result]:
+        for result in [built.unet_result, built.text_encoder_result, getattr(built, "text_encoder_2_result", None)]:
+            if result is None:
+                continue
             print(f"\n=== Key samples for {result.name} ===")
             if result.missing_keys:
                 print("Missing:")
@@ -135,6 +150,7 @@ class LoadModel(ConfigOptions):
         *,
         require_generation_support: bool = True,
         explicit_sd2_runtime_profile: str | None = None,
+        explicit_sdxl_runtime_profile: str | None = None,
     ) -> LoadPlan:
         checkpoint_path = checkpoint_path if checkpoint_path is not None else self.MODEL_PATH
         if not checkpoint_path:
@@ -200,7 +216,7 @@ class LoadModel(ConfigOptions):
                     "managed_category": managed_category,
                     "path_kind": path_kind,
                 },
-                "inspector_version": "2",
+                "inspector_version": "3",
             }
             self.asset_registry.store_inspection(asset_id, inspection_payload)
 
@@ -225,6 +241,7 @@ class LoadModel(ConfigOptions):
                 )
 
             sd2_contract = None
+            sdxl_contract = None
             if report.architecture == "sd2.x":
                 configured_profile = explicit_sd2_runtime_profile
                 if configured_profile is None:
@@ -253,6 +270,25 @@ class LoadModel(ConfigOptions):
                     vae_config_path=str(sd2_contract.assets.vae_config),
                     text_encoder_config_path=str(sd2_contract.assets.text_encoder_config),
                 )
+            elif report.architecture == "sdxl":
+                configured_profile = explicit_sdxl_runtime_profile
+                if configured_profile is None:
+                    configured_profile = str(
+                        ((self.config.get("defaults") or {}).get("sdxl_runtime_profile") or "")
+                    ).strip() or None
+                sdxl_contract = resolve_sdxl_model_contract(
+                    self.context,
+                    checkpoint_filename=report.file_name,
+                    explicit_profile_id=configured_profile,
+                )
+                report.prediction_type = sdxl_contract.prediction_type
+                report.prediction_type_source = sdxl_contract.prediction_type_source
+                report.architecture_summary = (
+                    f"SDXL / {sdxl_contract.profile.profile_id} / "
+                    f"{sdxl_contract.prediction_type} / 2048"
+                )
+                report.architecture_source = "qualified_sdxl_runtime_profile"
+                configs = sdxl_contract.assets.to_resolved_configs(self.config_resolver)
             else:
                 configs = self.config_resolver.resolve(report.architecture)
             state_dict = self.inspector.load_state_dict(checkpoint_path)
@@ -279,6 +315,7 @@ class LoadModel(ConfigOptions):
                 configs=configs,
                 mapped_state=mapped_state,
                 sd2_contract=sd2_contract,
+                sdxl_contract=sdxl_contract,
             )
 
         except Exception as e:
@@ -304,11 +341,13 @@ class LoadModel(ConfigOptions):
         checkpoint_path: str | None = None,
         *,
         explicit_sd2_runtime_profile: str | None = None,
+        explicit_sdxl_runtime_profile: str | None = None,
     ) -> LoadPlan:
         return self.prepare_load_plan(
             checkpoint_path=checkpoint_path,
             require_generation_support=False,
             explicit_sd2_runtime_profile=explicit_sd2_runtime_profile,
+            explicit_sdxl_runtime_profile=explicit_sdxl_runtime_profile,
         )
 
     def debug_print_plan(self, plan: LoadPlan) -> None:
@@ -321,5 +360,6 @@ class LoadModel(ConfigOptions):
         print(f"UNet keys: {len(plan.mapped_state.unet)}")
         print(f"VAE keys: {len(plan.mapped_state.vae)}")
         print(f"Text encoder keys: {len(plan.mapped_state.text_encoder)}")
+        print(f"Text encoder 2 keys: {len(plan.mapped_state.text_encoder_2)}")
         print(f"Extra keys: {len(plan.mapped_state.extras)}")
         print(f"Config root: {plan.configs.root_dir}")

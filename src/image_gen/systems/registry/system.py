@@ -248,15 +248,21 @@ class RuntimeRegistrySystem:
             hires_scheduler_descriptor,
         )
         hires_compatibility.raise_if_incompatible()
-        hires_qualification = require_qualified_hires_pair(
-            hires_sampler_descriptor.name,
-            hires_scheduler_descriptor.name,
-            compatibility=hires_compatibility.to_dict(),
-        )
+        hires_qualification = None
+        if bool(getattr(request, "hires_enabled", False)):
+            hires_qualification = require_qualified_hires_pair(
+                hires_sampler_descriptor.name,
+                hires_scheduler_descriptor.name,
+                compatibility=hires_compatibility.to_dict(),
+            )
         extras["resolved_hires_sampler_descriptor"] = hires_sampler_descriptor
         extras["resolved_hires_scheduler_descriptor"] = hires_scheduler_descriptor
         extras["hires_plugin_compatibility"] = hires_compatibility.to_dict()
-        extras["hires_pair_qualification"] = hires_qualification.to_serializable_dict()
+        extras["hires_pair_qualification"] = (
+            hires_qualification.to_serializable_dict()
+            if hires_qualification is not None
+            else {}
+        )
         extras["hires_sampler_inherited"] = not bool(hires_sampler_requested)
         extras["hires_scheduler_inherited"] = not bool(hires_scheduler_requested)
         request.hires_sampler_name = (

@@ -7,8 +7,8 @@ import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js?v=svg-profile2";
 import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
 import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
-import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=qol-seed-ui5";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=qol-seed-range3";
+import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=sdxl-cfg-recommendations4";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=sdxl-cfg-recommendations4";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=responsive-action-bar1";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
@@ -17,8 +17,8 @@ import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civita
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
 import { bindWorkspaceLayout } from "./features/layout.js?v=responsive-action-bar1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
-import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-card-latency1";
-import { bindLoraWorkspace } from "./features/loras.js?v=asset-card-latency1";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-grid-qol1";
+import { bindLoraWorkspace } from "./features/loras.js?v=asset-grid-qol1";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindHomeWorkspace } from "./features/home.js?v=home-shell1";
 import { bindHomeComponents } from "./features/home-components.js?v=content-capabilities2";
@@ -29,11 +29,11 @@ import { bindBugReporter } from "./features/bug-reports.js?v=bug-manager1";
 import { bindImageGenProfile } from "./features/profile.js?v=clean-install1";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
-import { bindOutputDetails } from "./features/output-details.js?v=0.1.84";
+import { bindOutputDetails } from "./features/output-details.js?v=sdxl-cfg-recommendations4";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js?v=responsive-action-bar1";
-import { bindCfgLab } from "./features/cfg-lab.js?v=0.1.46-cfg-standard";
+import { applyCfgPreset, bindCfgLab } from "./features/cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
 import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=prompt-cards1";
 import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
@@ -263,6 +263,112 @@ function setModelReadyState(ready, message, kind = "") {
   });
 }
 
+function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = false, applyField = "all" } = {}) {
+  const panel = $("#sdxlRecommendationControls");
+  const stepsToggle = $("#sdxlEnforceRecommendedSteps");
+  const cfgToggle = $("#sdxlEnforceRecommendedCfg");
+  const stepsInput = $("#steps");
+  const cfgInput = $("#cfgScale");
+  const samplerInput = $("#samplerName");
+  const schedulerInput = $("#schedulerName");
+  if (!panel || !stepsToggle || !cfgToggle || !stepsInput || !cfgInput) return;
+
+  const profile = activeModel?.runtime_profile || {};
+  const profileId = String(profile.profile_id || "").trim();
+  const family = String(profile.family || "").trim().toLowerCase();
+  const acceleratedProfile = family === "lightning" || family === "turbo";
+  const previousProfileId = String(panel.dataset.profileId || "");
+  const profileChanged = Boolean(profileId && previousProfileId !== profileId);
+
+  stepsInput.disabled = false;
+  cfgInput.disabled = false;
+
+  if (!acceleratedProfile) {
+    panel.classList.add("is-hidden");
+    panel.classList.remove("is-experimental");
+    panel.dataset.profileId = profileId || "non-accelerated-sdxl";
+    delete cfgInput.dataset.recommendedEffectiveCfg;
+    return;
+  }
+
+  panel.dataset.profileId = profileId;
+  panel.classList.remove("is-hidden");
+
+  const recommendedSteps = Array.isArray(profile.recommended_steps)
+    ? profile.recommended_steps.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+    : [];
+  const preferredSteps = Number(profile.required_steps || recommendedSteps[0] || 0);
+  const recommendedCfg = Number(profile.image_gen_cfg_scale);
+  const recommendedCfgPreset = String(profile.recommended_cfg_preset || "").trim();
+  const applyStepsNow = (profileChanged || (applyDefaults && ["all", "steps"].includes(applyField))) && stepsToggle.checked;
+  const applyCfgNow = (profileChanged || (applyDefaults && ["all", "cfg"].includes(applyField))) && cfgToggle.checked;
+
+  if (applyStepsNow && Number.isFinite(preferredSteps) && preferredSteps > 0) {
+    stepsInput.value = String(preferredSteps);
+  }
+  if (applyCfgNow && Number.isFinite(recommendedCfg)) {
+    cfgInput.value = String(recommendedCfg);
+    if (recommendedCfgPreset) applyCfgPreset(recommendedCfgPreset, { notifyUser: false });
+  }
+
+  if (cfgToggle.checked && Number.isFinite(recommendedCfg)) cfgInput.dataset.recommendedEffectiveCfg = String(recommendedCfg);
+  else delete cfgInput.dataset.recommendedEffectiveCfg;
+
+  const stepsLabel = $("#sdxlRecommendedStepsLabel");
+  const cfgLabel = $("#sdxlRecommendedCfgLabel");
+  const profileLabel = $("#sdxlRecommendationProfile");
+  const status = $("#sdxlRecommendationStatus");
+  if (stepsLabel) {
+    const label = recommendedSteps.length ? recommendedSteps.join(", ") : (preferredSteps > 0 ? String(preferredSteps) : "model default");
+    stepsLabel.textContent = `Use recommended steps (${label})`;
+  }
+  if (cfgLabel) {
+    const cfgText = Number.isFinite(recommendedCfg) ? `Use recommended CFG (${recommendedCfg})` : "Use the model's recommended CFG";
+    cfgLabel.textContent = recommendedCfgPreset ? `${cfgText} + recommended CFG Lab preset` : cfgText;
+  }
+  if (profileLabel) profileLabel.textContent = profileId;
+
+  const warnings = [];
+  const requestedSteps = Number(stepsInput.value);
+  const requestedCfg = Number(cfgInput.value);
+  const samplerName = String(samplerInput?.value || "").trim();
+  const schedulerName = String(schedulerInput?.value || "").trim();
+  if (recommendedSteps.length && Number.isFinite(requestedSteps) && !recommendedSteps.includes(requestedSteps)) {
+    const maxRecommended = Math.max(...recommendedSteps);
+    const relation = requestedSteps > maxRecommended ? "exceeds" : "is outside";
+    warnings.push(stepsToggle.checked
+      ? `Steps ${requestedSteps} ${relation} the recommended ${recommendedSteps.join("/")} setting; the recommended value will be used because its checkbox is checked.`
+      : `Steps ${requestedSteps} ${relation} the recommended ${recommendedSteps.join("/")} setting; generation is still allowed.`);
+  }
+  if (Number.isFinite(recommendedCfg) && Number.isFinite(requestedCfg) && Math.abs(requestedCfg - recommendedCfg) > 1e-6) {
+    warnings.push(cfgToggle.checked
+      ? `CFG ${requestedCfg} differs from the recommended ${recommendedCfg}; CFG ${recommendedCfg} will be used because its checkbox is checked.`
+      : `CFG ${requestedCfg} differs from the recommended ${recommendedCfg}; generation is still allowed.`);
+  }
+  if (profile.sampler_name && samplerName && samplerName !== profile.sampler_name) {
+    warnings.push(`Sampler ${samplerName} differs from the recommended ${profile.sampler_name}; generation is still allowed.`);
+  }
+  if (profile.scheduler_name && schedulerName && schedulerName !== profile.scheduler_name) {
+    warnings.push(`Scheduler ${schedulerName} differs from the recommended ${profile.scheduler_name}; generation is still allowed.`);
+  }
+
+  panel.classList.toggle("is-experimental", warnings.length > 0);
+  if (status) {
+    const activeRules = [];
+    if (stepsToggle.checked) activeRules.push(`recommended steps${Number.isFinite(preferredSteps) && preferredSteps > 0 ? ` ${preferredSteps}` : ""}`);
+    if (cfgToggle.checked) activeRules.push(`recommended CFG${Number.isFinite(recommendedCfg) ? ` ${recommendedCfg}` : ""}`);
+    if (cfgToggle.checked && recommendedCfgPreset) activeRules.push("the SDXL Lightning Recommended CFG Lab preset on activation/enable");
+    const ruleText = activeRules.length
+      ? ` Enabled recommendation${activeRules.length === 1 ? "" : "s"}: ${activeRules.join(", ")}. Fields remain editable; uncheck a recommendation to make that field value authoritative for generation.`
+      : " All model recommendations are advisory; the values you enter will be used.";
+    status.textContent = warnings.length
+      ? `${warnings.join(" ")}${ruleText}`
+      : `The current settings match this model's recommendations.${ruleText}`;
+    status.className = `field-status subtle${warnings.length ? " warning" : ""}`;
+  }
+
+}
+
 function renderModelArchitectureStatus(activeModel = null) {
   const status = $("#modelArchitectureStatus");
   if (!status) return;
@@ -271,17 +377,20 @@ function renderModelArchitectureStatus(activeModel = null) {
     status.textContent = "Architecture: waiting for activation.";
     status.className = "field-status subtle";
     applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: true });
+    renderSdxlRecommendationControls(null);
     return;
   }
   if (summary) {
     status.textContent = `Architecture: ${summary}`;
     status.className = "field-status ready subtle";
     applySd2RuntimePolicy({ activeModel, autoEnable: true });
+    renderSdxlRecommendationControls(activeModel);
     return;
   }
   status.textContent = "Architecture: unknown for the current checkpoint.";
   status.className = "field-status subtle";
   applySd2RuntimePolicy({ activeModel, autoEnable: true });
+  renderSdxlRecommendationControls(activeModel);
 }
 
 async function activateSelectedModel({ quiet = false } = {}) {
@@ -954,6 +1063,39 @@ async function start() {
     populatePlugins(current);
     initializeHiresUpscalers(bootstrap.upscalers || {}, current);
     applyGenerationValues(current);
+    [
+      ["#sdxlEnforceRecommendedSteps", "steps"],
+      ["#sdxlEnforceRecommendedCfg", "cfg"],
+    ].forEach(([selector, field]) => {
+      const control = $(selector);
+      if (!control) return;
+      control.addEventListener("change", () => {
+        renderSdxlRecommendationControls(state.activeModel, { applyDefaults: control.checked, applyField: field });
+        window.dispatchEvent(new CustomEvent("image-gen-cfg-recommendation-changed"));
+        saveSessionSoon();
+      });
+    });
+    window.addEventListener("image-gen-cfg-recommendation-changed", () => {
+      $("#cfgScale")?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    ["#steps", "#cfgScale"].forEach((selector) => {
+      const control = $(selector);
+      if (!control) return;
+      control.addEventListener("input", () => {
+        // Recommendation toggles are startup/default preferences, not locks.
+        // Keep them exactly as the user set them while allowing the current
+        // Steps/CFG value to diverge. The recommendation panel will warn and
+        // the checkbox remains available if the user wants to disable future
+        // auto-application for that field.
+        renderSdxlRecommendationControls(state.activeModel);
+        saveSessionSoon();
+      });
+    });
+    ["#samplerName", "#schedulerName"].forEach((selector) => {
+      const control = $(selector);
+      if (!control) return;
+      control.addEventListener("change", () => renderSdxlRecommendationControls(state.activeModel));
+    });
     applyVaeSelectionPolicy();
     initializePromptTools(current);
     await refreshAdvancedEditors({ preservePresetSelection: true });

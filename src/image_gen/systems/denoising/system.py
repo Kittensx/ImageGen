@@ -7,6 +7,10 @@ import time
 
 import torch
 
+from image_gen.contracts.model_conditioning import (
+    ModelConditioningKwargs,
+    select_model_conditioning_branch,
+)
 from image_gen.systems.guidance import apply_canonical_cfg_rescale
 
 
@@ -136,17 +140,29 @@ class DenoisingSystem:
             cond: torch.Tensor,
             uncond: torch.Tensor,
             cfg_scale: float,
+            extra_cond_kwargs: ModelConditioningKwargs = None,
         ) -> torch.Tensor:
             solver_sample = sample.to(device=sample.device, dtype=torch.float32)
             model_sample = sample.to(device=sample.device, dtype=selected_model_dtype)
-            guided_epsilon = guided_model_fn(
-                model_sample,
-                sigma,
-                timestep,
-                cond,
-                uncond,
-                cfg_scale,
-            )
+            if extra_cond_kwargs is None:
+                guided_epsilon = guided_model_fn(
+                    model_sample,
+                    sigma,
+                    timestep,
+                    cond,
+                    uncond,
+                    cfg_scale,
+                )
+            else:
+                guided_epsilon = guided_model_fn(
+                    model_sample,
+                    sigma,
+                    timestep,
+                    cond,
+                    uncond,
+                    cfg_scale,
+                    extra_cond_kwargs,
+                )
             sigma_values = self._normalize_sigma(
                 solver_sample, sigma, dtype=torch.float32
             )
@@ -277,6 +293,27 @@ class DenoisingSystem:
         sigma_model = self._normalize_sigma(model_sample, sigma, dtype=model_dtype)
         return self.scale_model_input(model_sample, sigma_model), sigma_model
 
+    @staticmethod
+    def _prepare_extra_cond_kwargs(
+        model_input: torch.Tensor,
+        extra_cond_kwargs: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not extra_cond_kwargs:
+            return {}
+        prepared = dict(extra_cond_kwargs)
+        added = prepared.get("added_cond_kwargs")
+        if isinstance(added, dict):
+            normalized_added = dict(added)
+            for key in ("text_embeds", "time_ids"):
+                value = normalized_added.get(key)
+                if torch.is_tensor(value):
+                    normalized_added[key] = value.to(
+                        device=model_input.device,
+                        dtype=model_input.dtype,
+                    )
+            prepared["added_cond_kwargs"] = normalized_added
+        return prepared
+
     def predict_model_output(
         self,
         sample: torch.Tensor,
@@ -287,11 +324,16 @@ class DenoisingSystem:
     ) -> torch.Tensor:
         model_input, _ = self._prepare_model_input(sample, sigma)
         timestep_tensor = self._normalize_timestep(model_input, timestep)
+        prepared_extra_cond_kwargs = self._prepare_extra_cond_kwargs(
+            model_input, extra_cond_kwargs
+        )
         model_out = self.unet(
             sample=model_input,
             timestep=timestep_tensor,
-            encoder_hidden_states=conditioning,
-            **(extra_cond_kwargs or {}),
+            encoder_hidden_states=conditioning.to(
+                device=model_input.device, dtype=model_input.dtype
+            ),
+            **prepared_extra_cond_kwargs,
         )
         prediction = self.extract_model_tensor(model_out, owner="UNet")
         if prediction.shape != sample.shape:
@@ -591,10 +633,16 @@ class DenoisingSystem:
         cfg_scale: float,
         regions: list[Any],
         overlap_policy: str = "additive",
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        uncond_kwargs = select_model_conditioning_branch(
+            extra_cond_kwargs, "unconditional"
+        )
+        cond_kwargs = select_model_conditioning_branch(
+            extra_cond_kwargs, "conditional"
+        )
         output_uncond = self.predict_model_output(
-            sample, sigma, timestep, uncond, extra_cond_kwargs
+            sample, sigma, timestep, uncond, uncond_kwargs
         )
         output_cond = self._regional_conditional_model_output(
             sample,
@@ -604,7 +652,7 @@ class DenoisingSystem:
             regions,
             reference_output=output_uncond,
             overlap_policy=overlap_policy,
-            extra_cond_kwargs=extra_cond_kwargs,
+            extra_cond_kwargs=cond_kwargs,
         )
         guided = output_uncond + float(cfg_scale) * (output_cond - output_uncond)
         guided = apply_canonical_cfg_rescale(guided, output_cond, self._cfg_rescale)
@@ -621,7 +669,7 @@ class DenoisingSystem:
         cfg_scale: float,
         regions: list[Any],
         overlap_policy: str = "additive",
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> torch.Tensor:
         guided_output, output_uncond, output_cond, model_input = self._regional_guided_model_output(
             latents, sigma, timestep, base_cond, uncond, cfg_scale, regions,
@@ -658,7 +706,7 @@ class DenoisingSystem:
         cfg_scale: float,
         regions: list[Any],
         overlap_policy: str = "additive",
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> torch.Tensor:
         guided_output, output_uncond, output_cond, model_input = self._regional_guided_model_output(
             sample, sigma, timestep, base_cond, uncond, cfg_scale, regions,
@@ -693,14 +741,22 @@ class DenoisingSystem:
         cond: torch.Tensor,
         uncond: torch.Tensor,
         cfg_scale: float,
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # Branch order is deliberate and covered by Phase 8C tests.
+        # SDXL supplies different pooled text projections to the negative and
+        # positive branches while sharing the same geometry time IDs.
+        uncond_kwargs = select_model_conditioning_branch(
+            extra_cond_kwargs, "unconditional"
+        )
+        cond_kwargs = select_model_conditioning_branch(
+            extra_cond_kwargs, "conditional"
+        )
         output_uncond = self.predict_model_output(
-            sample, sigma, timestep, uncond, extra_cond_kwargs
+            sample, sigma, timestep, uncond, uncond_kwargs
         )
         output_cond = self.predict_model_output(
-            sample, sigma, timestep, cond, extra_cond_kwargs
+            sample, sigma, timestep, cond, cond_kwargs
         )
         guided = output_uncond + float(cfg_scale) * (output_cond - output_uncond)
         guided = apply_canonical_cfg_rescale(guided, output_cond, self._cfg_rescale)
@@ -747,7 +803,7 @@ class DenoisingSystem:
         cond: torch.Tensor,
         uncond: torch.Tensor,
         cfg_scale: float,
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> torch.Tensor:
         guided_output, output_uncond, output_cond, model_input = self._guided_model_output(
             latents,
@@ -792,7 +848,7 @@ class DenoisingSystem:
         cond: torch.Tensor,
         uncond: torch.Tensor,
         cfg_scale: float,
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> torch.Tensor:
         guided_output, output_uncond, output_cond, model_input = self._guided_model_output(
             sample,

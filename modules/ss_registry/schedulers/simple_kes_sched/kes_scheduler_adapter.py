@@ -68,6 +68,7 @@ class SimpleKESSchedulerAdapter:
             extra_defaults=KES_RUNTIME_DEFAULTS,
             apply_to_state=True,
         )
+        settings["steps"] = int(request.steps)
         settings = validate_simple_kes_settings(settings, pipeline_mode=pipeline_mode)
         settings["steps"] = int(request.steps)
         settings["device"] = str(device)
@@ -81,9 +82,9 @@ class SimpleKESSchedulerAdapter:
             sigma_min=scheduler_kwargs.get("sigma_min"),
             sigma_max=scheduler_kwargs.get("sigma_max"),
             rho=scheduler_kwargs.get("rho"),
-            decay_pattern=scheduler_kwargs.get("decay_pattern"),
-            decay_mode=scheduler_kwargs.get("decay_mode"),
-            tail_steps=scheduler_kwargs.get("tail_steps"),
+            decay_pattern=settings.get("decay_pattern"),
+            decay_mode=settings.get("decay_mode"),
+            tail_steps=settings.get("tail_steps"),
             verbose=scheduler_kwargs.get("verbose", False),
         )
 

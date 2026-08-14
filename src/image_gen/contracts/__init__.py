@@ -14,6 +14,11 @@ from image_gen.contracts.hires_diagnostics import (
     format_hires_failure,
     hires_failure_stage_label,
 )
+from image_gen.contracts.model_conditioning import (
+    BranchModelConditioningKwargs,
+    ModelConditioningKwargs,
+    select_model_conditioning_branch,
+)
 from image_gen.contracts.protocols import (
     AdapterConformanceError,
     AdapterConformanceResult,
@@ -44,6 +49,8 @@ __all__ = [
     "AdapterConformanceError",
     "AdapterConformanceResult",
     "ConditioningOutput",
+    "BranchModelConditioningKwargs",
+    "ModelConditioningKwargs",
     "GenerationRequest",
     "GenerationResult",
     "HIRES_CORRECTION_FINGERPRINT_VERSION",
@@ -71,5 +78,6 @@ __all__ = [
     "SchedulerCompatibilityResult",
     "SchedulerOutput",
     "check_adapter_conformance",
+    "select_model_conditioning_branch",
     "require_adapter_conformance",
 ]

@@ -30,15 +30,19 @@ _CAPABILITIES = {
     ),
     "sdxl": ArchitectureCapability(
         architecture="sdxl",
-        status="blocked",
-        generation_supported=False,
-        validation_supported=False,
-        reason="The active runtime does not yet implement dual text encoders, pooled conditioning, or SDXL time IDs.",
+        status="supported",
+        generation_supported=True,
+        validation_supported=True,
+        reason=(
+            "Generic SDXL Base-compatible checkpoints and qualified SDXL-Lightning runtime profiles "
+            "have passed end-to-end txt2img qualification, including staged low-VRAM residency and "
+            "FP32 SDXL VAE decode. Profile-level gates still block unqualified SDXL variants such as "
+            "the Refiner and SDXL-Turbo from normal txt2img."
+        ),
         requirements=(
-            "two text encoders and tokenizers",
-            "pooled prompt embeddings",
-            "added conditioning time IDs",
-            "SDXL-specific UNet call contract",
+            "full monolithic SDXL Base-compatible safetensors checkpoint",
+            "canonical SDXL Base runtime assets",
+            "generation-qualified SDXL runtime profile",
         ),
     ),
     "sd1.x_or_sd2.x": ArchitectureCapability(

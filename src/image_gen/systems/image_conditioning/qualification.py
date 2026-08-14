@@ -30,10 +30,10 @@ class HiresPairQualification:
         }
 
 
-# Phase 14M-4 qualifies every sampler/scheduler pair currently exposed by the
-# IMAGE_GEN registry.  New plugins must be added here with tests before they can
-# be selected for an image-conditioned second pass.
-_QUALIFIED_PAIRS: dict[tuple[str, str], HiresPairQualification] = {
+# Historical Phase 14M-4 reference matrix. This is retained for diagnostics and
+# regression coverage only; it is not an execution allowlist. Runtime-compatible
+# sampler/scheduler pairs do not need to be enumerated here before hires use.
+_REFERENCE_PAIRS: dict[tuple[str, str], HiresPairQualification] = {
     ("dpmpp_2m", "standard_karras"): HiresPairQualification(
         "dpmpp_2m",
         "standard_karras",
@@ -101,7 +101,9 @@ REQUIRED_PHASE14M4_MATRIX = frozenset(
 
 
 def qualified_hires_pairs() -> tuple[HiresPairQualification, ...]:
-    return tuple(_QUALIFIED_PAIRS[key] for key in sorted(_QUALIFIED_PAIRS))
+    """Return historically exercised/reference pairs, not an execution allowlist."""
+
+    return tuple(_REFERENCE_PAIRS[key] for key in sorted(_REFERENCE_PAIRS))
 
 
 def require_qualified_hires_pair(
@@ -110,17 +112,19 @@ def require_qualified_hires_pair(
     *,
     compatibility: Mapping[str, Any] | None = None,
 ) -> HiresPairQualification:
+    """Describe a hires pair without imposing a static qualification allowlist.
+
+    Registry/plugin compatibility remains the runtime contract. Historical
+    Phase 14M-4 pairs keep their original diagnostic IDs, while any other
+    compatible pair is admitted and marked as open runtime selection.
+    """
+
     key = (_normalize(sampler_name), _normalize(scheduler_name))
-    qualification = _QUALIFIED_PAIRS.get(key)
-    if qualification is None:
-        supported = ", ".join(
-            f"{sampler}+{scheduler}" for sampler, scheduler in sorted(_QUALIFIED_PAIRS)
-        )
+    if not key[0] or not key[1]:
         raise ValueError(
-            "The requested hires sampler/scheduler pair has not been qualified for "
-            f"image-conditioned refinement: {key[0] or '<missing>'}+{key[1] or '<missing>'}. "
-            f"Qualified pairs: {supported}."
+            "Hires refinement requires both a sampler and scheduler selection."
         )
+
     compatibility_report = dict(compatibility or {})
     if compatibility_report and not bool(compatibility_report.get("is_compatible", True)):
         reasons = "; ".join(str(item) for item in compatibility_report.get("reasons") or [])
@@ -128,4 +132,25 @@ def require_qualified_hires_pair(
             "The requested hires sampler/scheduler pair is registry-incompatible: "
             + (reasons or "no compatibility reason was reported")
         )
-    return qualification
+
+    reference = _REFERENCE_PAIRS.get(key)
+    if reference is not None:
+        return reference
+
+    compatibility_mode = str(
+        compatibility_report.get("negotiated_pipeline_mode")
+        or compatibility_report.get("compatibility_mode")
+        or "runtime_compatible"
+    ).strip() or "runtime_compatible"
+    return HiresPairQualification(
+        sampler_name=key[0],
+        scheduler_name=key[1],
+        qualification_id="open-runtime-selection-v1",
+        qualified=True,
+        required_matrix_pair=False,
+        compatibility_mode=compatibility_mode,
+        notes=(
+            "No static hires sampler/scheduler allowlist is applied; runtime plugin compatibility governs execution.",
+        ),
+    )
+

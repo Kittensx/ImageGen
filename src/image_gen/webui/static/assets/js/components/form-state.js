@@ -1,6 +1,6 @@
 import { $, numberValue } from "../utils.js";
 import { readAdvancedValues } from "./advanced-editor.js";
-import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js?v=0.1.46-cfg-standard";
+import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { normalizeHiresSizeMode, planHiresDimensions } from "./hires-dimensions.js";
 import { applyParameterRanges, cfgEffectiveRangeLocks, collectParameterRanges } from "../features/parameter-ranges.js?v=qol2";
 import { collectSeedValues, syncSeedControlsFromGenerationValues } from "../features/seed-controls.js?v=qol-seed-ui5";
@@ -50,6 +50,8 @@ export function collectGenerationValues(selectionMetadata = {}) {
     height: numberValue($("#height"), 960),
     steps: numberValue($("#steps"), 20),
     cfg_scale: numberValue($("#cfgScale"), 7),
+    sdxl_enforce_recommended_steps: Boolean($("#sdxlEnforceRecommendedSteps")?.checked),
+    sdxl_enforce_recommended_cfg: Boolean($("#sdxlEnforceRecommendedCfg")?.checked),
     cfg_rescale: cfgLab.cfg_rescale,
     seed: seedValues.seed,
     batch_size: numberValue($("#batchSize"), 1),
@@ -240,6 +242,12 @@ export function applyGenerationValues(values = {}) {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
   });
+  if ($("#sdxlEnforceRecommendedSteps") && "sdxl_enforce_recommended_steps" in values) {
+    $("#sdxlEnforceRecommendedSteps").checked = Boolean(values.sdxl_enforce_recommended_steps);
+  }
+  if ($("#sdxlEnforceRecommendedCfg") && "sdxl_enforce_recommended_cfg" in values) {
+    $("#sdxlEnforceRecommendedCfg").checked = Boolean(values.sdxl_enforce_recommended_cfg);
+  }
   if ($("#outpaintPrototypeEnabled")) {
     $("#outpaintPrototypeEnabled").checked = Boolean(values.outpaint_prototype_enabled);
     $("#outpaintPrototypeEnabled").dispatchEvent(new Event("change", { bubbles: true }));

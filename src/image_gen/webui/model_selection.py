@@ -11,8 +11,10 @@ from typing import Any, Mapping
 from modules.asset_discovery import resolve_nested_asset
 from modules.checkpoint_inspector import CheckpointInspector
 from modules.project_context import ProjectContext
+from modules.sdxl_runtime_profile import profile_for_sdxl_filename
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
 from image_gen.systems.sd21_support import SD21SupportManager
+from image_gen.systems.validation.capabilities import capability_for
 
 
 def _canonical_text(value: str | os.PathLike[str]) -> str:
@@ -48,6 +50,7 @@ class ActiveModelSelection:
     architecture_source: str = ""
     checkpoint_kind: str = ""
     architecture_contract: dict[str, Any] | None = None
+    runtime_profile: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +73,7 @@ class ActiveModelSelection:
             "architecture_source": self.architecture_source,
             "checkpoint_kind": self.checkpoint_kind,
             "architecture_contract": dict(self.architecture_contract or {}),
+            "runtime_profile": dict(self.runtime_profile or {}),
         }
 
 
@@ -200,6 +204,9 @@ class WebUIModelSelectionState:
             stat_size=int(stat.st_size),
             stat_mtime_ns=int(stat.st_mtime_ns),
         )
+        runtime_profile: dict[str, Any] = {}
+        if str(inspection.get("architecture") or "").strip().casefold() == "sdxl":
+            runtime_profile = profile_for_sdxl_filename(path.name).to_dict()
         return ActiveModelSelection(
             selection_id=uuid.uuid4().hex[:16],
             requested_path=str(model_path),
@@ -219,11 +226,21 @@ class WebUIModelSelectionState:
             architecture_source=str(inspection.get("architecture_source") or ""),
             checkpoint_kind=str(inspection.get("checkpoint_kind") or ""),
             architecture_contract=dict(inspection.get("architecture_contract") or {}),
+            runtime_profile=runtime_profile,
         )
 
     def activate(self, model_path: str | os.PathLike[str], *, source: str = "webui") -> ActiveModelSelection:
         selection = self.authorize(model_path, source=source)
-        if str(selection.architecture or "").strip().casefold() == "sd2.x":
+        architecture = str(selection.architecture or "").strip().casefold()
+        if architecture == "sdxl":
+            capability = capability_for("sdxl")
+            if not capability.generation_supported:
+                raise ValueError(
+                    "Stable Diffusion XL normal generation is not enabled in this IMAGE_GEN build. "
+                    f"{capability.reason}"
+                )
+            # Runtime profiles describe/recommend settings; they do not authorize generation.
+        if architecture == "sd2.x":
             support = self._sd21_support_manager().ensure_for_architecture(
                 selection.architecture,
                 launch_if_missing=True,

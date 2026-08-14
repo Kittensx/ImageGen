@@ -5046,7 +5046,9 @@ body.is-resizing .center-splitter::before {
   display: none;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: var(--charcoal-900);
 }
 
 .current-checkpoint-preview.has-image,
@@ -5145,25 +5147,51 @@ body.is-resizing .center-splitter::before {
   max-width: 440px;
 }
 
-.checkpoint-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 10px;
-  align-content: start;
+.asset-library-card-grid {
+  flex: 1 1 auto;
   min-height: 0;
-  padding: 12px 2px 2px;
+  grid-auto-rows: max-content;
+  align-content: start;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
 
+.asset-grid-load-sentinel {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 2px;
+  pointer-events: none;
+}
+
+.asset-grid-progress {
+  flex: 0 0 auto;
+  min-height: 29px;
+  padding: 8px 4px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.checkpoint-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  gap: 14px;
+  padding: 12px 2px 8px;
+}
+
 .checkpoint-card {
   min-width: 0;
+  min-height: 430px;
+  align-self: start;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
   background: color-mix(in srgb, var(--charcoal-850) 92%, var(--sky-700));
+  content-visibility: auto;
+  contain-intrinsic-size: 430px;
   transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -5180,14 +5208,17 @@ body.is-resizing .center-splitter::before {
 
 .checkpoint-card-preview-wrap {
   position: relative;
-  min-height: 148px;
-  height: 148px;
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-height: 240px;
   overflow: hidden;
   background: var(--charcoal-900);
 }
 
 .checkpoint-card-preview-wrap .checkpoint-preview-fallback {
-  min-height: 148px;
+  min-height: 100%;
+  height: 100%;
   border: 0;
   border-radius: 0;
 }
@@ -5601,19 +5632,14 @@ body.is-resizing .center-splitter::before {
 
 .lora-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(225px, 100%), 1fr));
-  grid-auto-rows: max-content;
-  gap: 10px;
-  align-content: start;
-  min-height: 0;
-  padding: 12px 2px 2px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  gap: 14px;
+  padding: 12px 2px 8px;
 }
 
 .lora-card {
   min-width: 0;
-  min-height: 322px;
+  min-height: 440px;
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -5621,6 +5647,8 @@ body.is-resizing .center-splitter::before {
   border-radius: var(--radius);
   overflow: hidden;
   background: color-mix(in srgb, var(--charcoal-850) 92%, var(--sky-700));
+  content-visibility: auto;
+  contain-intrinsic-size: 440px;
   transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -5642,9 +5670,10 @@ body.is-resizing .center-splitter::before {
 
 .lora-card-preview-wrap {
   position: relative;
-  flex: 0 0 158px;
-  min-height: 158px;
-  height: 158px;
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-height: 240px;
   overflow: hidden;
   background: var(--charcoal-900);
 }
@@ -5654,7 +5683,9 @@ body.is-resizing .center-splitter::before {
   display: none;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: var(--charcoal-900);
 }
 
 .lora-card-preview.has-image,
@@ -5665,7 +5696,7 @@ body.is-resizing .center-splitter::before {
 .lora-preview-fallback {
   display: grid;
   place-items: center;
-  min-height: 158px;
+  min-height: 240px;
   height: 100%;
   border: 1px dashed var(--line);
   border-radius: var(--radius-small);
@@ -7238,4 +7269,34 @@ body.is-resizing .center-splitter::before {
 }
 .parameter-range-dialog {
   width: min(640px, calc(100vw - 2rem));
+}
+
+/* SDXL Lightning qualified-default controls: recommendations are user-overridable. */
+.sdxl-recommendation-controls {
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0.65rem;
+  background: var(--surface-raised, var(--surface-2));
+}
+
+.sdxl-recommendation-heading,
+.sdxl-recommendation-options {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.sdxl-recommendation-heading {
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+
+.sdxl-recommendation-options {
+  align-items: flex-start;
+}
+
+.sdxl-recommendation-controls.is-experimental {
+  border-style: dashed;
 }

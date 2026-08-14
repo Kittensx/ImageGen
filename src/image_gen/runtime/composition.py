@@ -49,7 +49,7 @@ class PipelineCompositionRoot:
         scheduler_adapter: SchedulerAdapterProtocol,
         sampler_adapter: SamplerAdapterProtocol,
         latent_scale_factor: int = 8,
-        vae_scaling_factor: float = 0.18215,
+        vae_scaling_factor: float | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         system_overrides: Mapping[str, Any] | None = None,
@@ -61,7 +61,11 @@ class PipelineCompositionRoot:
         self.device = device or self._infer_device(components)
         self.dtype = dtype or self._infer_dtype(components, self.device)
         self.latent_scale_factor = int(latent_scale_factor)
-        self.vae_scaling_factor = float(vae_scaling_factor)
+        self.vae_scaling_factor = float(
+            getattr(components, "vae_scaling_factor", 0.18215)
+            if vae_scaling_factor is None
+            else vae_scaling_factor
+        )
         self.system_overrides = dict(system_overrides or {})
 
     @staticmethod
@@ -88,6 +92,9 @@ class PipelineCompositionRoot:
             "vae": self.components.vae,
             "text_encoder": self.components.text_encoder,
         }
+        text_encoder_2 = getattr(self.components, "text_encoder_2", None)
+        if text_encoder_2 is not None:
+            component_map["text_encoder_2"] = text_encoder_2
         for name, module in component_map.items():
             if not component_matches_placement(
                 module,
@@ -109,7 +116,11 @@ class PipelineCompositionRoot:
         if prepare_components:
             self.prepare_components()
         else:
-            for module in (self.components.unet, self.components.vae, self.components.text_encoder):
+            modules = [self.components.unet, self.components.vae, self.components.text_encoder]
+            text_encoder_2 = getattr(self.components, "text_encoder_2", None)
+            if text_encoder_2 is not None:
+                modules.append(text_encoder_2)
+            for module in modules:
                 module.eval()
         systems = GenerationSystems(
             conditioning=ConditioningSystem(self.prompt_adapter),
@@ -186,25 +197,32 @@ class PipelineBuilder:
         tokenizer: Any = None,
         state: Any | None = None,
         latent_scale_factor: int = 8,
-        vae_scaling_factor: float = 0.18215,
+        vae_scaling_factor: float | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ):
         if isinstance(built_components, PipelineComponents):
             components = built_components
-            if tokenizer is not None:
+            if components.tokenizer is None and tokenizer is not None:
                 components.tokenizer = tokenizer
         else:
             components = PipelineComponents(
                 unet=built_components.unet,
                 vae=built_components.vae,
                 text_encoder=built_components.text_encoder,
-                tokenizer=tokenizer,
+                tokenizer=getattr(built_components, "tokenizer", None) or tokenizer,
                 text_encoder_2=getattr(built_components, "text_encoder_2", None),
                 tokenizer_2=getattr(built_components, "tokenizer_2", None),
                 prediction_type=getattr(built_components, "prediction_type", "epsilon"),
                 prediction_type_source=getattr(
                     built_components, "prediction_type_source", "legacy_built_components"
+                ),
+                architecture=str(getattr(built_components, "architecture", "") or ""),
+                model_runtime_profile=dict(
+                    getattr(built_components, "model_runtime_profile", {}) or {}
+                ),
+                vae_scaling_factor=float(
+                    getattr(built_components, "vae_scaling_factor", 0.18215)
                 ),
             )
         return PipelineCompositionRoot(

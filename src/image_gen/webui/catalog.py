@@ -885,6 +885,37 @@ class WebUICatalog:
             values.append(str(record.get("sha256") or ""))
         return [value for value in values if value]
 
+    @staticmethod
+    def _civitai_enrichment_is_complete(
+        path: Path,
+        metadata: dict[str, Any],
+        lookup: dict[str, Any],
+    ) -> bool:
+        if str(lookup.get("status") or "").strip().lower() != "matched":
+            return False
+
+        # A matched sidecar can predate preview downloading, or a previous
+        # download can have failed. Treat those records as incomplete so the
+        # normal "missing" refresh can repair the browser card without forcing
+        # the user to refresh each asset individually.
+        if resolve_preview_path(path, metadata) is not None:
+            return True
+        if str(lookup.get("preview_image_download_error") or "").strip():
+            return False
+        if str(lookup.get("preview_image_path") or "").strip():
+            return False
+
+        remote_preview = str(lookup.get("image_url") or "").strip()
+        if not remote_preview:
+            images = lookup.get("images")
+            if isinstance(images, list):
+                remote_preview = next((
+                    str(image.get("url") or "").strip()
+                    for image in images
+                    if isinstance(image, dict) and str(image.get("url") or "").strip()
+                ), "")
+        return not bool(remote_preview)
+
     def enrich_asset_from_civitai(
         self,
         asset_type: str,
@@ -935,7 +966,7 @@ class WebUICatalog:
             metadata = synchronize_asset_companions(path, load_asset_metadata(path))
             lookup = metadata.get("_civitai_lookup")
             lookup = dict(lookup) if isinstance(lookup, dict) else {}
-            if normalized_mode == "missing" and str(lookup.get("status") or "").strip().lower() == "matched":
+            if normalized_mode == "missing" and self._civitai_enrichment_is_complete(path, metadata, lookup):
                 skipped += 1
                 continue
             try:

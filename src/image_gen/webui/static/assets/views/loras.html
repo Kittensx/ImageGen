@@ -78,14 +78,9 @@
         <button class="secondary-button compact-button" id="loraRefreshButton" type="button">↻ Refresh</button>
       </div>
     </div>
-    <div class="lora-card-grid" id="loraCardGrid" aria-live="polite"></div>
+    <div class="lora-card-grid asset-library-card-grid" id="loraCardGrid" aria-live="polite"></div>
+    <div class="asset-grid-progress" id="loraLoadStatus" aria-live="polite">Showing LoRA cards on demand.</div>
     <div class="lora-empty-state is-hidden" id="loraEmptyState">No LoRAs match the current search and filters.</div>
-    <div class="lora-pagination" id="loraPagination">
-      <button class="secondary-button compact-button" id="loraPreviousPageButton" type="button">‹ Previous</button>
-      <span id="loraPageStatus">Page 1 of 1</span>
-      <button class="secondary-button compact-button" id="loraNextPageButton" type="button">Next ›</button>
-      <label><span class="visually-hidden">LoRAs per page</span><select id="loraPageSizeSelect"><option value="8">8 / page</option><option value="12">12 / page</option><option value="16" selected>16 / page</option><option value="24">24 / page</option></select></label>
-    </div>
   </section>
 
   <aside class="lora-right-column" aria-label="Active LoRAs and LoRA details">

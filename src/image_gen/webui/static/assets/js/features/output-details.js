@@ -2,7 +2,7 @@ import { api } from "../api.js";
 import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
-import { renderCfgGraph } from "./cfg-lab.js?v=0.1.46-cfg-standard";
+import { renderCfgGraph } from "./cfg-lab.js?v=0.1.47-lightning-recommendation";
 
 let collectValues = () => ({});
 let applyValues = async () => ({});

@@ -21,7 +21,12 @@ from modules.ss_registry.samplers.kes_sampler.simple_kes_sampler.effective_guida
 from modules.sampler_state import SamplerState
 from modules.ss_registry.samplers.sampler_config_loader import prepare_sampler_config
 
-from modules.pipeline.conditioning_utils import resolve_step_conditioning
+from modules.pipeline.conditioning_utils import (
+    call_with_optional_model_conditioning,
+    resolve_step_conditioning,
+    resolve_step_model_conditioning,
+    select_step_model_conditioning_branch,
+)
 from modules.pipeline.regional_conditioning import get_regional_conditioning_resolver
 from modules.pipeline.sampler_trace_mixin import SamplerTraceMixin
 from modules.txt2img.seed_utils import create_torch_generator, offset_seed
@@ -432,6 +437,18 @@ class KESSampler(SamplerTraceMixin):
                 latents=x,
                 state=state,
             )
+            model_conditioning = resolve_step_model_conditioning(
+                conditioning=conditioning,
+                step_index=i,
+                latents=x,
+                request=request,
+            )
+            cond_model_kwargs = select_step_model_conditioning_branch(
+                model_conditioning, "conditional"
+            )
+            uncond_model_kwargs = select_step_model_conditioning_branch(
+                model_conditioning, "unconditional"
+            )
 
             active_regions = (
                 regional_resolver.resolve_regions(step_index=i, latents=x)
@@ -439,22 +456,30 @@ class KESSampler(SamplerTraceMixin):
                 else []
             )
             regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
-            noise_uncond = raw_model_fn(x, sigma, timestep, uncond)
+            noise_uncond = call_with_optional_model_conditioning(
+                raw_model_fn, x, sigma, timestep, uncond,
+                model_conditioning=uncond_model_kwargs,
+            )
             if active_regions:
                 regional_conditional = getattr(raw_model_fn, "predict_regional_conditional_noise", None)
                 if not callable(regional_conditional):
                     raise TypeError("The denoising system does not provide native regional conditional noise.")
-                noise_cond = regional_conditional(
+                noise_cond = call_with_optional_model_conditioning(
+                    regional_conditional,
                     x,
                     sigma,
                     timestep,
                     cond,
                     active_regions,
                     regional_resolver.overlap_policy,
+                    model_conditioning=cond_model_kwargs,
                     uncond_noise=noise_uncond,
                 )
             else:
-                noise_cond = raw_model_fn(x, sigma, timestep, cond)
+                noise_cond = call_with_optional_model_conditioning(
+                    raw_model_fn, x, sigma, timestep, cond,
+                    model_conditioning=cond_model_kwargs,
+                )
             guidance_delta = noise_cond - noise_uncond
 
             guidance_result = combine_guidance_outputs(
@@ -482,28 +507,48 @@ class KESSampler(SamplerTraceMixin):
                     latents=x_pred,
                     state=state,
                 )
+                model_conditioning_2 = resolve_step_model_conditioning(
+                    conditioning=conditioning,
+                    step_index=i + 1,
+                    latents=x_pred,
+                    request=request,
+                )
+                cond_model_kwargs_2 = select_step_model_conditioning_branch(
+                    model_conditioning_2, "conditional"
+                )
+                uncond_model_kwargs_2 = select_step_model_conditioning_branch(
+                    model_conditioning_2, "unconditional"
+                )
 
                 active_regions_2 = (
                     regional_resolver.resolve_regions(step_index=i + 1, latents=x_pred)
                     if regional_resolver is not None
                     else []
                 )
-                noise_uncond_2 = raw_model_fn(x_pred, sigma_next, timestep_next, uncond_2)
+                noise_uncond_2 = call_with_optional_model_conditioning(
+                    raw_model_fn, x_pred, sigma_next, timestep_next, uncond_2,
+                    model_conditioning=uncond_model_kwargs_2,
+                )
                 if active_regions_2:
                     regional_conditional = getattr(raw_model_fn, "predict_regional_conditional_noise", None)
                     if not callable(regional_conditional):
                         raise TypeError("The denoising system does not provide native regional conditional noise.")
-                    noise_cond_2 = regional_conditional(
+                    noise_cond_2 = call_with_optional_model_conditioning(
+                        regional_conditional,
                         x_pred,
                         sigma_next,
                         timestep_next,
                         cond_2,
                         active_regions_2,
                         regional_resolver.overlap_policy,
+                        model_conditioning=cond_model_kwargs_2,
                         uncond_noise=noise_uncond_2,
                     )
                 else:
-                    noise_cond_2 = raw_model_fn(x_pred, sigma_next, timestep_next, cond_2)
+                    noise_cond_2 = call_with_optional_model_conditioning(
+                        raw_model_fn, x_pred, sigma_next, timestep_next, cond_2,
+                        model_conditioning=cond_model_kwargs_2,
+                    )
                 guidance_delta_2 = noise_cond_2 - noise_uncond_2
 
                 guidance_result_2 = combine_guidance_outputs(

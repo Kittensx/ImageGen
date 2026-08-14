@@ -145,7 +145,23 @@ def apply_decay_tail(sigmas, device, decay_pattern='geometric', tail_steps=5):
 def blend_decay_tail(sigmas, device, decay_pattern='geometric', tail_steps=5):
     """
     Applies in-place blending on the last N steps using decay patterns.
+
+    Tail blending can never address more entries than exist in the current
+    schedule. Clamp defensively so short distilled schedules (for example four
+    steps with a five-step tail preference) degrade safely instead of indexing
+    past the beginning of the tensor.
     """
+    available_steps = len(sigmas)
+    if available_steps <= 0:
+        return sigmas
+    try:
+        requested_tail_steps = int(tail_steps or 0)
+    except (TypeError, ValueError):
+        requested_tail_steps = 0
+    tail_steps = max(0, min(requested_tail_steps, available_steps))
+    if tail_steps <= 0:
+        return sigmas
+
     for i in range(1, tail_steps + 1):
         idx = -i
         base_sigma = sigmas[idx]

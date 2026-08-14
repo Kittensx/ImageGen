@@ -6,6 +6,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 import torch
 
+from image_gen.contracts.model_conditioning import ModelConditioningKwargs
 from image_gen.contracts.runtime import (
     ConditioningOutput,
     GenerationRequest,
@@ -38,7 +39,7 @@ class GuidedModelFnProtocol(Protocol):
         cond: torch.Tensor,
         uncond: torch.Tensor,
         cfg_scale: float,
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> torch.Tensor:
         ...
 
@@ -53,7 +54,7 @@ class DenoisedModelFnProtocol(Protocol):
         cond: torch.Tensor,
         uncond: torch.Tensor,
         cfg_scale: float,
-        extra_cond_kwargs: dict[str, Any] | None = None,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
     ) -> torch.Tensor:
         """Return the canonical predicted clean latent in float32."""
         ...

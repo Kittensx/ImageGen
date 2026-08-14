@@ -412,6 +412,20 @@ class GenerationPipeline:
             self.state.extra["hires_upscaler_registry"] = registry
             self.state.extra["standalone_neural_upscaler"] = self.neural_upscaler
 
+    def _conditioning_required_components(self) -> set[str]:
+        required = {"text_encoder"}
+        if getattr(self.components, "text_encoder_2", None) is not None:
+            required.add("text_encoder_2")
+        return required
+
+    def _conditioning_preferred_components(self) -> set[str]:
+        # For SDXL CPU-first operation, never opportunistically pull the UNet
+        # onto an 8 GB card while both text encoders are active. Legacy single-
+        # encoder models retain the historical balanced preference.
+        if getattr(self.components, "text_encoder_2", None) is not None:
+            return set()
+        return {"unet"}
+
     def prepare_latents(
         self,
         request: GenerationRequest,
@@ -881,8 +895,8 @@ class GenerationPipeline:
                     "encode",
                     lambda: self.memory_manager.run_stage(
                         stage="conditioning",
-                        required={"text_encoder"},
-                        preferred={"unet"},
+                        required=self._conditioning_required_components(),
+                        preferred=self._conditioning_preferred_components(),
                         operation=lambda: self.systems.conditioning.encode(
                             self.components, conditioning_request, self.state
                         ),
@@ -1260,6 +1274,11 @@ class GenerationPipeline:
                 guided_model_fn,
                 "denoising_contract",
                 self.systems.denoising.guided_epsilon_contract_metadata,
+            )
+            setattr(
+                guided_model_fn,
+                "model_prediction_contract",
+                self.systems.denoising.contract_metadata,
             )
 
             def _base_sampling_operation(attempt_latents: torch.Tensor) -> Any:
@@ -1904,8 +1923,8 @@ class GenerationPipeline:
                     "encode_conditioning",
                     lambda: self.memory_manager.run_stage(
                         stage="conditioning",
-                        required={"text_encoder"},
-                        preferred={"unet"},
+                        required=self._conditioning_required_components(),
+                        preferred=self._conditioning_preferred_components(),
                         operation=lambda: performance.run(
                             "hires_conditioning",
                             lambda: self.systems.conditioning.encode(
@@ -2867,6 +2886,15 @@ class GenerationPipeline:
                 auxiliary_images=auxiliary_images,
                 metadata={
                     "model_prediction_type": self.systems.denoising.prediction_type,
+                    "model_architecture": str(getattr(self.components, "architecture", "") or ""),
+                    "model_runtime_profile": dict(getattr(self.components, "model_runtime_profile", {}) or {}),
+                    "vae_scaling_factor": float(
+                        getattr(
+                            self.systems.decoding,
+                            "vae_scaling_factor",
+                            getattr(self.components, "vae_scaling_factor", 0.18215),
+                        )
+                    ),
                     "component_placement": self.components.placement_metadata(),
                     "attention_backend": attention_report,
                     "attention_performance": performance_summary,

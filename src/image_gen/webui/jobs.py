@@ -64,6 +64,7 @@ from image_gen.webui.randomization import (
 )
 from image_gen.webui.store import DEFAULT_FORCED_LIVE_PREVIEW_INTERVAL, FORCED_LIVE_PREVIEW_MODE
 from modules.project_context import ProjectContext
+from modules.sdxl_runtime_profile import profile_for_sdxl_filename, sdxl_profile_recommendation_warnings
 from modules.prompt_parsers import PromptProcessingPreflight, default_prompt_parser_registry
 from modules.prompt_shortcuts import PromptShortcutProfileDescriptor, default_prompt_shortcut_registry, validate_prompt_shortcut_profile
 
@@ -1733,9 +1734,22 @@ class GenerationJobManager:
         normalized = apply_vae_selection_policy(normalized, self._application_settings())
         return self.selections.strip_webui_metadata(normalized)
 
+    @staticmethod
+    def _model_profile_recommendation_warnings(request: Mapping[str, Any]) -> list[str]:
+        model_path = str(request.get("model_path") or "").strip()
+        if not model_path:
+            return []
+        profile = profile_for_sdxl_filename(Path(model_path).name)
+        if profile.family not in {"lightning", "turbo"}:
+            return []
+        return list(sdxl_profile_recommendation_warnings(dict(request), profile))
+
     def preflight_scheduler(self, request: dict[str, Any]) -> dict[str, Any]:
         normalized = self.normalize_generation_request(request)
         resolution = scheduler_resolution_from_payload(normalized)
+        warnings = list(resolution.get("validation_warnings") or [])
+        warnings.extend(self._model_profile_recommendation_warnings(normalized))
+        warnings = list(dict.fromkeys(warnings))
         return {
             "ok": True,
             "scheduler_name": normalized.get("scheduler_name"),
@@ -1744,8 +1758,8 @@ class GenerationJobManager:
             "requested_settings": dict(resolution.get("requested_settings") or {}),
             "effective_settings": dict(resolution.get("effective_settings") or {}),
             "compatibility_policy": dict(resolution.get("compatibility_policy") or {}),
-            "validation_warnings": list(resolution.get("validation_warnings") or []),
-            "validation_warning_count": int(resolution.get("validation_warning_count", 0) or 0),
+            "validation_warnings": warnings,
+            "validation_warning_count": len(warnings),
             "preset_reference": dict(resolution.get("preset_reference") or {}),
             "step_count_source": resolution.get("step_count_source"),
             "requested_hash": resolution.get("requested_hash"),
@@ -1798,20 +1812,17 @@ class GenerationJobManager:
         requested_generation = json.loads(json.dumps(request, ensure_ascii=False, allow_nan=False))
         normalized = self.normalize_generation_request(request)
         resolution = scheduler_resolution_from_payload(normalized)
-        warnings = list(resolution.get("validation_warnings") or [])
+        scheduler_warnings = list(resolution.get("validation_warnings") or [])
+        profile_warnings = self._model_profile_recommendation_warnings(normalized)
+        warnings = list(dict.fromkeys([*scheduler_warnings, *profile_warnings]))
         acknowledged = _coerce_boolean(
             request.get("_webui_scheduler_warnings_acknowledged", not warnings),
             default=not warnings,
         )
-        acknowledgement_required = _coerce_boolean(
-            request.get("_webui_scheduler_requires_warning_acknowledgement", False),
-            default=False,
-        )
-        if warnings and acknowledgement_required and not acknowledged:
-            raise ValueError(
-                "Scheduler settings produced warnings that must be acknowledged before queueing: "
-                + " | ".join(warnings)
-            )
+        # Warnings are advisory by contract. The interactive WebUI may ask the
+        # user to acknowledge them before it calls submit(), but the backend
+        # never upgrades a warning into a queue-time failure. Genuine invalid
+        # scheduler settings must be reported as validation errors instead.
         selected = dict(model_selection or {})
         job_root = self.context.data_root / "webui" / "jobs" / job_id
         job_root.mkdir(parents=True, exist_ok=True)

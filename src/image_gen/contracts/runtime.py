@@ -621,6 +621,11 @@ class PipelineComponents:
     tokenizer_2: Any = None
     prediction_type: str = "epsilon"
     prediction_type_source: str = "pipeline_components"
+    architecture: str = ""
+    model_runtime_profile: dict[str, Any] = field(default_factory=dict)
+    vae_scaling_factor: float = 0.18215
+    vae_force_upcast: bool = False
+    vae_execution_dtype: str = ""
     model_identity: str = ""
     model_hash: str = ""
     vae_provenance: dict[str, Any] = field(default_factory=dict)
@@ -647,6 +652,11 @@ class PipelineComponents:
             ),
             "prediction_type": self.prediction_type,
             "prediction_type_source": self.prediction_type_source,
+            "architecture": self.architecture,
+            "model_runtime_profile": _json_safe(self.model_runtime_profile),
+            "vae_scaling_factor": float(self.vae_scaling_factor),
+            "vae_force_upcast": bool(self.vae_force_upcast),
+            "vae_execution_dtype": str(self.vae_execution_dtype or ""),
             "model_identity": self.model_identity,
             "model_hash": self.model_hash,
             "vae_provenance": _json_safe(self.vae_provenance),

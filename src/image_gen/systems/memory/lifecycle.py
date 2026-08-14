@@ -170,6 +170,17 @@ class AdaptiveComponentMemoryManager:
             required_by_stages={"conditioning"},
             pinned_cpu_capable=self.settings.pinned_cpu_memory,
         )
+        text_encoder_2 = getattr(components, "text_encoder_2", None)
+        if text_encoder_2 is not None:
+            self.registry.register(
+                component_id="text_encoder_2",
+                component_kind="text_encoder",
+                model_identity=model_identity,
+                module=text_encoder_2,
+                preferred_dtype=self._module_dtype(text_encoder_2),
+                required_by_stages={"conditioning"},
+                pinned_cpu_capable=self.settings.pinned_cpu_memory,
+            )
         self.registry.register(
             component_id="unet",
             component_kind="unet",
@@ -528,6 +539,11 @@ class AdaptiveComponentMemoryManager:
                         self.settings.vae_device if component_id == "vae" else None
                     ),
                 })
+            self._prepare_component_for_target(
+                component_id,
+                target=target,
+                stage=stage,
+            )
 
         if plan.preview_image_decode_suspended:
             self.suspend_preview_image_decode(
@@ -536,6 +552,53 @@ class AdaptiveComponentMemoryManager:
             )
         self.capture(f"lease_ready_{stage}")
         return plan
+
+    def _prepare_component_for_target(
+        self,
+        component_id: str,
+        *,
+        target: str,
+        stage: str,
+    ) -> None:
+        """Apply execution-device initialization that cannot run during CPU hydration."""
+
+        if component_id != "unet" or not str(target).startswith("cuda"):
+            return
+        component = self.registry.get(component_id)
+        unet = component.module
+        if not bool(getattr(unet, "_image_gen_attention_configuration_deferred", False)):
+            return
+        from modules.attention_backend import (
+            attention_backend_report,
+            configure_unet_attention,
+            configure_unet_attention_slicing,
+        )
+        from modules.attention_runtime import (
+            build_model_attention_signature,
+            install_attention_layout_capture,
+        )
+
+        started = time.perf_counter()
+        signature = build_model_attention_signature(unet)
+        install_attention_layout_capture(unet, model_signature=signature)
+        report = configure_unet_attention(unet, model_signature=signature)
+        report = configure_unet_attention_slicing(unet, backend_report=report)
+        report = attention_backend_report(unet)
+        report["deferred"] = False
+        report["runtime_configuration_required"] = False
+        report["runtime_configuration_stage"] = str(stage)
+        report["runtime_configuration_duration_ms"] = round(
+            (time.perf_counter() - started) * 1000.0, 3
+        )
+        setattr(unet, "_image_gen_attention_backend_report", dict(report))
+        setattr(unet, "_image_gen_attention_configuration_deferred", False)
+        self.automatic_actions.append({
+            "stage": str(stage),
+            "action": "unet_attention_runtime_configuration",
+            "effective_backend": report.get("effective_backend"),
+            "validation_device": report.get("validation_device"),
+            "validation_dtype": report.get("validation_dtype"),
+        })
 
     @staticmethod
     def _device_matches(current: str, target: str) -> bool:

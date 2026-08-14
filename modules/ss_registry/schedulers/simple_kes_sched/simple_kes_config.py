@@ -776,6 +776,18 @@ def validate_simple_kes_settings(
 
     warnings: list[str] = list(validated.pop("_validation_warnings", []) or [])
 
+    # In-place tail blending addresses the final N existing sigma entries. A
+    # tail longer than the requested schedule is therefore invalid as an index
+    # range, but it is safe to normalize instead of failing generation.
+    if validated.get("decay_mode") == "blend" and validated.get("tail_steps", 0) > validated.get("steps", 0):
+        requested_tail_steps = int(validated["tail_steps"])
+        available_steps = max(1, int(validated.get("steps", 1)))
+        validated["tail_steps"] = available_steps
+        warnings.append(
+            f"tail_steps {requested_tail_steps} exceeds the {available_steps}-step schedule for in-place blend decay; "
+            f"it was clamped to {available_steps} instead of failing generation."
+        )
+
     if not policy["allow_step_expansion"]:
         if validated["allow_step_expansion"]:
             warnings.append(

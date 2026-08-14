@@ -11,7 +11,11 @@ from image_gen.systems.guidance import (
     requested_cfg_scale_for_step,
 )
 
-from modules.pipeline.conditioning_utils import resolve_step_conditioning
+from modules.pipeline.conditioning_utils import (
+    call_with_optional_model_conditioning,
+    resolve_step_conditioning,
+    resolve_step_model_conditioning,
+)
 from modules.pipeline.regional_conditioning import get_regional_conditioning_resolver
 from modules.pipeline.sampler_trace_mixin import SamplerTraceMixin
 
@@ -441,6 +445,12 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 latents=model_x,
                 state=state,
             )
+            model_conditioning = resolve_step_model_conditioning(
+                conditioning=conditioning,
+                step_index=i,
+                latents=model_x,
+                request=request,
+            )
 
             if i == 0:
                 conditioning_extra = getattr(conditioning, "extra", {}) or {}
@@ -498,7 +508,8 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         "DPM++ 2M requires the Phase 8C canonical predict_denoised callback."
                     )
                 if active_regions:
-                    denoised = predict_denoised(
+                    denoised = call_with_optional_model_conditioning(
+                        predict_denoised,
                         x,
                         sigma,
                         timestep,
@@ -507,15 +518,18 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         step_effective_cfg_scale,
                         active_regions,
                         regional_resolver.overlap_policy,
+                        model_conditioning=model_conditioning,
                     )
                 else:
-                    denoised = predict_denoised(
+                    denoised = call_with_optional_model_conditioning(
+                        predict_denoised,
                         x,
                         sigma,
                         timestep,
                         cond,
                         uncond,
                         step_effective_cfg_scale,
+                        model_conditioning=model_conditioning,
                     )
                 if denoised.dtype != torch.float32:
                     raise TypeError(
@@ -526,7 +540,8 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                     regional_guided = getattr(guided_model_fn, "predict_regional_guided_noise", None)
                     if not callable(regional_guided):
                         raise TypeError("The denoising system does not provide native regional guidance.")
-                    guided_epsilon = regional_guided(
+                    guided_epsilon = call_with_optional_model_conditioning(
+                        regional_guided,
                         x,
                         sigma,
                         timestep,
@@ -535,15 +550,18 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         step_effective_cfg_scale,
                         active_regions,
                         regional_resolver.overlap_policy,
+                        model_conditioning=model_conditioning,
                     )
                 else:
-                    guided_epsilon = guided_model_fn(
+                    guided_epsilon = call_with_optional_model_conditioning(
+                        guided_model_fn,
                         x,
                         sigma,
                         timestep,
                         cond,
                         uncond,
                         step_effective_cfg_scale,
+                        model_conditioning=model_conditioning,
                     )
                 sigma_value = torch.as_tensor(
                     sigma, device=x.device, dtype=torch.float32

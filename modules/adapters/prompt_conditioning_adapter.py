@@ -51,6 +51,7 @@ from modules.prompt_shortcuts import (
 )
 from modules.adapters.local_clip_conditioning_wrapper import LocalCLIPConditioningWrapper
 from modules.adapters.sd2_openclip_conditioning import SD2OpenCLIPConditioningRuntime
+from modules.adapters.sdxl_conditioning import SDXLConditioningRuntime
 from image_gen.systems.guidance import (
     PromptCFGScheduleError,
     finalize_prompt_cfg_payload,
@@ -83,7 +84,7 @@ class StepConditioningResolver:
         self,
         schedules: list[ScheduledPromptConditioning],
         step_index: int,
-    ) -> torch.Tensor:
+    ) -> Any:
         """
         step_index is expected to be 0-based from the sampler loop.
         Prompt scheduling in your parser is effectively 1-based, so we convert here.
@@ -103,6 +104,8 @@ class StepConditioningResolver:
         self,
         multicond: MulticondLearnedConditioning,
         step_index: int,
+        *,
+        value_key: str | None = None,
     ) -> torch.Tensor:
         """
         Resolves the active conditioning tensor for a given step.
@@ -131,7 +134,20 @@ class StepConditioningResolver:
                 ):
                     schedules = schedules[0].cond
 
-                cond_tensor = self._select_schedule_cond(schedules, step_index)
+                resolved_value = self._select_schedule_cond(schedules, step_index)
+                if isinstance(resolved_value, dict):
+                    selected_key = value_key or "cross_attention"
+                    if selected_key not in resolved_value:
+                        raise KeyError(
+                            f"Structured conditioning is missing required field {selected_key!r}."
+                        )
+                    cond_tensor = resolved_value[selected_key]
+                else:
+                    if value_key not in (None, "cross_attention"):
+                        raise TypeError(
+                            f"Conditioning field {value_key!r} was requested from an unstructured tensor schedule."
+                        )
+                    cond_tensor = resolved_value
 
                 if not isinstance(cond_tensor, torch.Tensor):
                     raise TypeError(
@@ -168,8 +184,21 @@ class StepConditioningResolver:
         return torch.stack(batch_outputs, dim=0)
 
     def resolve(self, step_index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        cond = self._resolve_multicond_for_step(self.positive_multicond, step_index)
-        uncond = self._resolve_multicond_for_step(self.negative_multicond, step_index)
+        cond = self._resolve_multicond_for_step(
+            self.positive_multicond, step_index, value_key="cross_attention"
+        )
+        uncond = self._resolve_multicond_for_step(
+            self.negative_multicond, step_index, value_key="cross_attention"
+        )
+        return cond, uncond
+
+    def resolve_pooled(self, step_index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        cond = self._resolve_multicond_for_step(
+            self.positive_multicond, step_index, value_key="pooled"
+        )
+        uncond = self._resolve_multicond_for_step(
+            self.negative_multicond, step_index, value_key="pooled"
+        )
         return cond, uncond
 
 
@@ -199,6 +228,21 @@ class PromptConditioningAdapter(PromptAdapter):
             hidden_size = int(getattr(config, "hidden_size", 0) or 0)
             hidden_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
             architecture = str(getattr(text_encoder, "_image_gen_architecture", "") or "").strip().lower()
+            is_sdxl = architecture in {"sdxl", "stable-diffusion-xl", "stable-diffusion-xl-base"}
+            if is_sdxl:
+                text_encoder_2 = getattr(components, "text_encoder_2", None)
+                tokenizer_2 = getattr(components, "tokenizer_2", None)
+                if text_encoder_2 is None or tokenizer_2 is None:
+                    raise ValueError(
+                        "Qualified SDXL conditioning requires text_encoder_2 and tokenizer_2."
+                    )
+                return SDXLConditioningRuntime(
+                    text_encoder=text_encoder,
+                    tokenizer=tokenizer,
+                    text_encoder_2=text_encoder_2,
+                    tokenizer_2=tokenizer_2,
+                )
+
             is_sd2 = architecture in {"sd2", "sd2.1", "sd2.x", "stable-diffusion-2.x"}
             if is_sd2:
                 if hidden_size != 1024 or hidden_layers != 23:
@@ -1010,6 +1054,14 @@ class PromptConditioningAdapter(PromptAdapter):
 
         # Initial tensors for step 0 so the pipeline has direct cond/uncond fields.
         cond0, uncond0 = resolver.resolve(step_index=0)
+        pooled_cond0 = None
+        pooled_uncond0 = None
+        if isinstance(cond_model, SDXLConditioningRuntime):
+            # Pooled SDXL conditioning follows the same parsed prompt schedules
+            # and composable weights as token conditioning. Regional guidance
+            # remains spatially applied to cross-attention; the global pooled
+            # branch is resolved from the base prompt schedule.
+            pooled_cond0, pooled_uncond0 = base_resolver.resolve_pooled(step_index=0)
 
         prompt_schedules = {
             "positive": list(pos_result.conditioning_source.flat_list),
@@ -1179,14 +1231,16 @@ class PromptConditioningAdapter(PromptAdapter):
             cond=cond0,
             uncond=uncond0,
             prompt_schedules=prompt_schedules,
-            pooled_cond=None,
-            pooled_uncond=None,
+            pooled_cond=pooled_cond0,
+            pooled_uncond=pooled_uncond0,
             extra={
                 "positive_parsed": pos_result.conditioning_source,
                 "negative_parsed": neg_result.conditioning_source,
                 "positive_parse_result": pos_result,
                 "negative_parse_result": neg_result,
                 "resolver": resolver,
+                "pooled_resolver": base_resolver if isinstance(cond_model, SDXLConditioningRuntime) else None,
+                "conditioning_architecture": "sdxl" if isinstance(cond_model, SDXLConditioningRuntime) else "legacy",
                 "prompt_parser": parser_metadata,
                 "prompt_shortcut_profile": shortcut_profile_metadata,
                 "prompt_translation": prompt_translation,

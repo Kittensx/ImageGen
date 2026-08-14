@@ -1,7 +1,7 @@
 import { state } from "../state.js";
 import { $, shortText } from "../utils.js";
 import { openLiveLightbox, syncLiveLightbox } from "./lightbox.js";
-import { renderCfgGraph } from "./cfg-lab.js?v=0.1.46-cfg-standard";
+import { renderCfgGraph } from "./cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { renderMemoryStatus } from "./memory-status.js?v=status-lights1";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 import { setActionIcon } from "../components/action-icons.js?v=0.1.0";

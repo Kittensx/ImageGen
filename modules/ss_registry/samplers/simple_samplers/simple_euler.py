@@ -12,7 +12,11 @@ from typing import Any, Optional
 
 from modules.contracts import SamplerCapabilities, SamplerOutput
 
-from modules.pipeline.conditioning_utils import resolve_step_conditioning
+from modules.pipeline.conditioning_utils import (
+    call_with_optional_model_conditioning,
+    resolve_step_conditioning,
+    resolve_step_model_conditioning,
+)
 from modules.pipeline.regional_conditioning import get_regional_conditioning_resolver
 from modules.pipeline.sampler_trace_mixin import SamplerTraceMixin
 
@@ -133,6 +137,12 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 latents=x,
                 state=state,
             )
+            model_conditioning = resolve_step_model_conditioning(
+                conditioning=conditioning,
+                step_index=i,
+                latents=x,
+                request=request,
+            )
 
             if i == 0:
                 resolver = getattr(conditioning, "extra", {}).get("resolver", None)
@@ -186,7 +196,8 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 regional_guided = getattr(guided_model_fn, "predict_regional_guided_noise", None)
                 if not callable(regional_guided):
                     raise TypeError("The denoising system does not provide native regional guidance.")
-                noise = regional_guided(
+                noise = call_with_optional_model_conditioning(
+                    regional_guided,
                     x,
                     sigma,
                     timestep,
@@ -195,15 +206,18 @@ class SimpleEulerSampler(SamplerTraceMixin):
                     step_effective_cfg_scale,
                     active_regions,
                     regional_resolver.overlap_policy,
+                    model_conditioning=model_conditioning,
                 )
             else:
-                noise = guided_model_fn(
+                noise = call_with_optional_model_conditioning(
+                    guided_model_fn,
                     x,
                     sigma,
                     timestep,
                     cond,
                     uncond,
                     step_effective_cfg_scale,
+                    model_conditioning=model_conditioning,
                 )
             predicted_x0 = x - sigma * noise
 
@@ -263,6 +277,15 @@ class SimpleEulerSampler(SamplerTraceMixin):
         regional_runtime = (
             regional_resolver.runtime_snapshot() if regional_resolver is not None else {}
         )
+        model_prediction_type = "epsilon"
+        prediction_contract = getattr(guided_model_fn, "model_prediction_contract", None)
+        if callable(prediction_contract):
+            try:
+                model_prediction_type = str(
+                    dict(prediction_contract() or {}).get("prediction_type") or "epsilon"
+                )
+            except Exception:
+                model_prediction_type = "epsilon"
         if regional_runtime and isinstance(getattr(request, "diagnostics", None), dict):
             request.diagnostics["regional_runtime"] = regional_runtime
             passes = request.diagnostics.setdefault("regional_runtime_passes", {})
@@ -277,7 +300,7 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 "requested_steps": requested_steps,
                 "effective_steps": effective_steps,
                 "integration_mode_used": self.SAMPLER_NAME,
-                "model_prediction_type": "epsilon",
+                "model_prediction_type": model_prediction_type,
                 "integration_prediction_type": "epsilon",
                 "schedule_transitions": int(sigmas.numel() - 1),
                 "stepwise_conditioning_used": stepwise_conditioning_used,
