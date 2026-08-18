@@ -1,0 +1,339 @@
+{
+  "schema_version": 1,
+  "support_id": "stable-diffusion-3-family-runtime-and-shared-encoders",
+  "sources": {
+    "sd3_medium_runtime": {
+      "repo_id": "stabilityai/stable-diffusion-3-medium-diffusers",
+      "revision": "main"
+    },
+    "sd3_5_medium_runtime": {
+      "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+      "revision": "main"
+    },
+    "sd3_shared_text_encoders": {
+      "repo_id": "stabilityai/stable-diffusion-3-medium",
+      "revision": "main",
+      "fallback_repo_ids": [
+        "stabilityai/stable-diffusion-3.5-medium"
+      ]
+    }
+  },
+  "text_encoder_policy": {
+    "destination": "models/StableDiffusion/TextEncoders",
+    "clip_l": "clip/clip_l.safetensors",
+    "clip_g": "clip/clip_g.safetensors",
+    "t5": "t5/t5xxl_fp8_e4m3fn.safetensors",
+    "note": "CLIP weights are shared under TextEncoders/clip and T5 weights under TextEncoders/t5. FP8 T5-XXL is preferred for the current 8 GB-oriented SD3 bring-up. Main model checkpoints are never downloaded."
+  },
+  "files": [
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "scheduler/scheduler_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "scheduler/scheduler_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "transformer/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "transformer/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "vae/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "vae/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "text_encoder/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "text_encoder/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "text_encoder_2/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "text_encoder_2/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "text_encoder_3/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "text_encoder_3/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer/vocab.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer/vocab.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer/merges.txt",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer/merges.txt",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_2/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_2/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_2/vocab.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_2/vocab.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_2/merges.txt",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_2/merges.txt",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_2/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_2/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_3/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_3/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_3/tokenizer.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_3/tokenizer.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_3/spiece.model",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_3/spiece.model",
+      "required": true
+    },
+    {
+      "source_id": "sd3_medium_runtime",
+      "remote_path": "tokenizer_3/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3-medium",
+      "destination_path": "tokenizer_3/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "scheduler/scheduler_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "scheduler/scheduler_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "transformer/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "transformer/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "vae/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "vae/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "text_encoder/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "text_encoder/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "text_encoder_2/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "text_encoder_2/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "text_encoder_3/config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "text_encoder_3/config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer/vocab.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer/vocab.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer/merges.txt",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer/merges.txt",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_2/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_2/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_2/vocab.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_2/vocab.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_2/merges.txt",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_2/merges.txt",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_2/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_2/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_3/tokenizer_config.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_3/tokenizer_config.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_3/tokenizer.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_3/tokenizer.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_3/spiece.model",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_3/spiece.model",
+      "required": true
+    },
+    {
+      "source_id": "sd3_5_medium_runtime",
+      "remote_path": "tokenizer_3/special_tokens_map.json",
+      "destination_kind": "runtime",
+      "profile_id": "sd3.5-medium",
+      "destination_path": "tokenizer_3/special_tokens_map.json",
+      "required": true
+    },
+    {
+      "source_id": "sd3_shared_text_encoders",
+      "remote_path": "text_encoders/clip_g.safetensors",
+      "destination_kind": "text_encoder",
+      "destination_path": "clip/clip_g.safetensors",
+      "required": true
+    },
+    {
+      "source_id": "sd3_shared_text_encoders",
+      "remote_path": "text_encoders/clip_l.safetensors",
+      "destination_kind": "text_encoder",
+      "destination_path": "clip/clip_l.safetensors",
+      "required": true
+    },
+    {
+      "source_id": "sd3_shared_text_encoders",
+      "remote_path": "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+      "destination_kind": "text_encoder",
+      "destination_path": "t5/t5xxl_fp8_e4m3fn.safetensors",
+      "required": true
+    }
+  ]
+}
