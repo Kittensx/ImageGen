@@ -26,6 +26,7 @@ class JobQueueControlMixin:
         for job in self.jobs.values():
             if job.status != "queued":
                 continue
+            self._remove_queued_job_id(job.job_id)
             timestamp = self._transition_job(job, status="cancelled", worker_stage="cancelled")
             job.completed_at = timestamp
             job.error = reason
@@ -34,6 +35,7 @@ class JobQueueControlMixin:
             self._publish_terminal_once(job, "job-cancelled")
             report["cleared_job_ids"].append(job.job_id)
         report["cleared_count"] = len(report["cleared_job_ids"])
+        self._queue_persistence.save(self)
         return report
 
     def dismiss_terminal_jobs(self) -> dict[str, Any]:
@@ -59,6 +61,7 @@ class JobQueueControlMixin:
             completed = self._transition_job(job, status="cancelled", worker_stage="cancelled")
             job.completed_at = completed
             self._persist_job(job)
+            self._queue_persistence.save(self)
             self._publish_terminal_once(job, "job-cancelled")
         elif job.status in _CANCELLABLE_JOB_STATUSES:
             was_paused = job.status == "paused"
@@ -101,6 +104,7 @@ class JobQueueControlMixin:
         else:
             self._queue.append(job_id)
         self._queue_available.set()
+        self._queue_persistence.save(self)
 
     def _remove_queued_job_id(self, job_id: str) -> bool:
         removed = False
@@ -115,6 +119,8 @@ class JobQueueControlMixin:
         self._queue = kept
         if not self._queue:
             self._queue_available.clear()
+        if removed:
+            self._queue_persistence.save(self)
         return removed
 
     def _queued_order(self) -> list[str]:
@@ -138,6 +144,7 @@ class JobQueueControlMixin:
             order.insert(target, job_id)
             self._queue = _ReorderableJobQueue(order)
             self._queue_available.set()
+            self._queue_persistence.save(self)
         return self.status()
 
     async def pause_job(self, job_id: str) -> dict[str, Any]:
@@ -151,6 +158,7 @@ class JobQueueControlMixin:
             job.paused_at = job.pause_requested_at
             self._transition_job(job, status="paused", worker_stage="paused_in_queue")
             self._persist_job(job)
+            self._queue_persistence.save(self)
             self._publish_event(job, "job-paused", paused_at=job.paused_at, queue_item_paused=True)
             return self.status()
         active = self._active_generation_job()
@@ -207,6 +215,7 @@ class JobQueueControlMixin:
                 self._queue_pause_requested_at = _utc_now()
                 self._queue_pause_owner_job_id = None
                 self._queue_resume_event.clear()
+                self._queue_persistence.save(self)
             return self.status()
         if active.status in {"finalizing", "cancelling"}:
             raise ValueError("The active generation can no longer be paused between images.")
@@ -222,6 +231,7 @@ class JobQueueControlMixin:
         self._resume_event_for_job(active.job_id).clear()
         self._transition_job(active, worker_stage="pause_after_current_requested")
         self._persist_job(active)
+        self._queue_persistence.save(self)
         self._publish_event(
             active,
             "job-progress",
@@ -279,6 +289,7 @@ class JobQueueControlMixin:
         self._queue_pause_owner_job_id = None
         # Kept set for compatibility with older diagnostics that inspect this event.
         self._queue_resume_event.set()
+        self._queue_persistence.save(self)
         return self.status()
 
     async def skip_current(self, job_id: str) -> GenerationJob:

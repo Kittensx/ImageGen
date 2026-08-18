@@ -26,11 +26,11 @@ _REQUIRED_DOCUMENTATION = {
     "target_vram_diagnostics_reference": "docs/testing/PHASE_14K-17_TARGET_VRAM_DIAGNOSTICS.md",
 }
 _REQUIRED_VALIDATION_FILES = (
-    "tests/phase14/test_phase14k17_delivery_requirements.py",
-    "scripts/validation/phase14k17_delivery.py",
-    "test_validations/phase14k17_static_delivery_validation.bat",
-    "test_validations/phase14k17_delivery_from_reports.bat",
-    "test_validations/phase14k17_all_validation.bat",
+    "testing/tests/runtime/test_phase14k17_delivery_requirements.py",
+    "testing/test_validations/historical/runtime/phase14k17_delivery.py",
+    "testing/test_validations/historical/runtime/phase14k17_static_delivery_validation.bat",
+    "testing/test_validations/historical/runtime/phase14k17_delivery_from_reports.bat",
+    "testing/test_validations/historical/runtime/phase14k17_all_validation.bat",
 )
 
 

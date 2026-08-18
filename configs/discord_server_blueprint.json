@@ -1,0 +1,91 @@
+{
+  "schema": "image-gen-discord-server-blueprint-v1",
+  "guild_id": "1535734882494316746",
+  "provisioning": {
+    "mode": "plan_only",
+    "bot_phase": "pending"
+  },
+  "community": {
+    "default_mode": "sfw",
+    "mature_content_mode": "optional_age_restricted_category",
+    "mature_access_role_is_age_verification": false
+  },
+  "roles": [
+    {"key": "administrator", "name": "Administrator", "managed": false},
+    {"key": "moderator", "name": "Moderator", "managed": false},
+    {"key": "imagegen_bot", "name": "ImageGen Bot", "managed": true},
+    {"key": "contributor", "name": "Contributor", "managed": true},
+    {"key": "bug_reporter", "name": "Bug Reporter", "managed": true},
+    {"key": "imagegen_linked", "name": "ImageGen Linked", "managed": true},
+    {"key": "mature_access", "name": "Mature Access", "managed": true, "purpose": "opt_in_preference_only"}
+  ],
+  "categories": [
+    {
+      "name": "START HERE",
+      "channels": [
+        {"name": "welcome", "type": "text", "read_only": true},
+        {"name": "rules", "type": "text", "read_only": true},
+        {"name": "announcements", "type": "announcement", "read_only": true},
+        {"name": "introductions", "type": "text", "intro_card_target": true}
+      ]
+    },
+    {
+      "name": "COMMUNITY",
+      "channels": [
+        {"name": "general", "type": "text", "sfw_only": true},
+        {"name": "showcase-sfw", "type": "text", "sfw_only": true},
+        {"name": "workflows-and-prompts", "type": "text", "sfw_only": true},
+        {"name": "models-and-hardware", "type": "text", "sfw_only": true}
+      ]
+    },
+    {
+      "name": "SUPPORT",
+      "channels": [
+        {"name": "help", "type": "text", "sfw_only": true},
+        {"name": "bug-report-help", "type": "text", "canonical_bug_tracker": "github"},
+        {"name": "feature-requests", "type": "text", "sfw_only": true}
+      ]
+    },
+    {
+      "name": "MATURE - OPTIONAL",
+      "optional": true,
+      "channels": [
+        {"name": "mature-access", "type": "text", "sfw_only": true, "access_request_target": true},
+        {"name": "mature-rules", "type": "text", "required_role": "mature_access", "read_only": true},
+        {"name": "mature-showcase", "type": "text", "required_role": "mature_access", "age_restricted": true},
+        {"name": "mature-chat", "type": "text", "required_role": "mature_access", "age_restricted": true}
+      ]
+    },
+    {
+      "name": "STAFF",
+      "private": true,
+      "channels": [
+        {"name": "automod-alerts", "type": "text", "automod_alert_target": true},
+        {"name": "mod-log", "type": "text", "moderation_log_target": true},
+        {"name": "bot-ops", "type": "text", "bot_log_target": true}
+      ]
+    }
+  ],
+  "safety": {
+    "explicit_image_filter": "all_members_in_non_age_restricted_channels",
+    "automod": {
+      "commonly_flagged_words": ["sexual_content", "insults_and_slurs"],
+      "optional_commonly_flagged_words": ["severe_profanity"],
+      "exempt_categories_from_sexual_content_rule": ["MATURE - OPTIONAL"],
+      "block_spam_content": true,
+      "block_mention_spam": true,
+      "alert_channel": "automod-alerts"
+    },
+    "mature_channels_require_native_age_restriction": true,
+    "mature_role_is_additional_consent_gate": true
+  },
+  "bot_next_phase": {
+    "verify_guild_membership": true,
+    "verify_profile_link": true,
+    "assign_imagegen_linked_role": true,
+    "publish_opt_in_intro_card_once": true,
+    "sync_verified_bug_reporter_role": true,
+    "manage_mature_access_preference": true,
+    "store_prompts_or_generated_images": false
+  }
+}

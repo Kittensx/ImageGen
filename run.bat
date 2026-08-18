@@ -72,7 +72,7 @@ goto :select_or_run
 :scan_loras
 echo.
 echo Scanning LoRAs before launch (mode=%LORA_SCAN_MODE%)...
-"%PYTHON_EXE%" "%~dp0test_validations\scan_loras.py" --project-root "%~dp0" --mode "%LORA_SCAN_MODE%"
+"%PYTHON_EXE%" "%~dp0scripts\assets\scan_loras.py" --project-root "%~dp0" --mode "%LORA_SCAN_MODE%"
 if errorlevel 1 (
     set "EXIT_CODE=%ERRORLEVEL%"
     echo.

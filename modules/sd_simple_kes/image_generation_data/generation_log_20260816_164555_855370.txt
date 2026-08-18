@@ -1,0 +1,100 @@
+[Scheduler parameters] steps=4, sigma_min=0.02, sigma_max=50.0, rho=7.0, decay_pattern=soft_landing, blending_mode=weights
+[Randomization] sigma_min: No randomization applied. Using default value: 0.02
+[Randomization] sigma_max: No randomization applied. Using default value: 50.0
+[Randomization] start_blend: No randomization applied. Using default value: 0.05
+[Randomization] end_blend: No randomization applied. Using default value: 0.4
+[Randomization] sharpness: No randomization applied. Using default value: 0.85
+[Randomization] early_stopping_threshold: No randomization applied. Using default value: 0.06
+[Randomization] initial_step_size: No randomization applied. Using default value: 0.9
+[Randomization] final_step_size: No randomization applied. Using default value: 0.2
+[Randomization] initial_noise_scale: No randomization applied. Using default value: 1.25
+[Randomization] final_noise_scale: No randomization applied. Using default value: 0.8
+[Randomization] smooth_blend_factor: No randomization applied. Using default value: 5.0
+[Randomization] step_size_factor: No randomization applied. Using default value: 0.80814932869181
+[Randomization] noise_scale_factor: No randomization applied. Using default value: 0.8113992828873163
+[Randomization] rho: No randomization applied. Using default value: 7.0
+Final sigmas: sigma_min=0.02, sigma_max=50.0
+[Raw scheduler harmonic] count=4, first=23.0468750000, last=5.0000047684
+[Raw scheduler euler_advanced] count=4, first=46.0937461853, last=0.0100049963
+Loaded sigma schedules for blend methods: ['harmonic', 'euler_advanced'] using mode: None
+All sigma sequences aligned to length: 4
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+
+==========
+[Start of Sigma Sequence Logging]
+==========
+[First Step - Step 0/4]
+Step Size: 0.898174
+Dynamic Blend Factor: 0.050000
+Noise Scale: 1.250000
+Smooth Blend: 0.095349
+Blended Sigma: 31.748006
+Final Sigma: 35.644051
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[Middle Step - Step 2/4]
+Step Size: 0.249646
+Dynamic Blend Factor: 0.283333
+Noise Scale: 0.849413
+Smooth Blend: 0.252876
+Blended Sigma: 4.612376
+Final Sigma: 0.978065
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[Last Step - Step 3/4]
+Step Size: 0.163456
+Dynamic Blend Factor: 0.400000
+Noise Scale: 0.649119
+Smooth Blend: 0.377541
+Blended Sigma: 3.116077
+Final Sigma: 0.330623
+
+==========
+[End of Sigma Sequence Logging]
+==========
+Using device: cpu
+[Raw scheduler harmonic] count=4, first=23.0468750000, last=5.0000047684
+[Raw scheduler euler_advanced] count=4, first=46.0937461853, last=0.0100049963
+Loaded sigma schedules for blend methods: ['harmonic', 'euler_advanced'] using mode: final
+All sigma sequences aligned to length: 4
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+
+==========
+[Start of Sigma Sequence Logging]
+==========
+[First Step - Step 0/4]
+Step Size: 0.898174
+Dynamic Blend Factor: 0.050000
+Noise Scale: 1.250000
+Smooth Blend: 0.095349
+Blended Sigma: 31.748006
+Final Sigma: 35.644051
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[Middle Step - Step 2/4]
+Step Size: 0.249646
+Dynamic Blend Factor: 0.283333
+Noise Scale: 0.849413
+Smooth Blend: 0.252876
+Blended Sigma: 4.612376
+Final Sigma: 0.978065
+[DEBUG]sigma sequence shape: torch.Size([4])
+[DEBUG]sigma sequence shape: torch.Size([4])
+[Last Step - Step 3/4]
+Step Size: 0.163456
+Dynamic Blend Factor: 0.400000
+Noise Scale: 0.649119
+Smooth Blend: 0.377541
+Blended Sigma: 3.116077
+Final Sigma: 0.330623
+
+==========
+[End of Sigma Sequence Logging]
+==========
+[Sharpen Mask] Full sharpening applied at steps: []

@@ -80,6 +80,7 @@ from image_gen.webui.job_request_normalization import (
     normalize_generation_request,
 )
 from image_gen.webui.job_store import JobStoreMixin, _ACTIVE_JOB_STATUSES, _utc_now
+from image_gen.webui.job_queue_persistence import JobQueuePersistence
 from image_gen.webui.job_preview import JobPreviewMixin
 from image_gen.webui.job_runtime_events import (
     JobRuntimeEventsMixin,
@@ -355,6 +356,8 @@ class GenerationJobManager(
         self._job_resume_events: dict[str, asyncio.Event] = {}
         self._queue_pause_requested_at: str | None = None
         self._queue_pause_owner_job_id: str | None = None
+        self._queue_persistence = JobQueuePersistence(context)
+        self._last_queue_restore_report: dict[str, Any] = {}
         self.runtime_startup_options: dict[str, Any] = {}
         self._last_cleanup_report: dict[str, Any] = {}
         self._last_job_cache_report: dict[str, Any] = {}
@@ -657,8 +660,10 @@ class GenerationJobManager(
 
 
     async def start(self) -> None:
+        if not self._started:
+            self._last_queue_restore_report = self._queue_persistence.restore(self, GenerationJob)
+            self.clear_job_cache(preserve_active=True, startup=True)
         self._started = True
-        self.clear_job_cache(preserve_active=True, startup=True)
         self.cleanup_preview_directories()
         self._watchdog_settings()
         if self._worker_task is None or self._worker_task.done():
@@ -670,6 +675,7 @@ class GenerationJobManager(
     async def stop(self) -> None:
         self._started = False
         self._stopping = True
+        self._queue_persistence.mark_shutdown_recovery(self)
         self._queue_resume_event.set()
         self._queue_available.set()
         for resume_event in self._job_resume_events.values():
@@ -911,6 +917,8 @@ class GenerationJobManager(
             "sse_clients_connected": sum(job.sse_clients_connected for job in self.jobs.values()),
             "preview_cleanup": dict(self._last_cleanup_report),
             "job_cache_cleanup": dict(self._last_job_cache_report),
+            "queue_persistence": self._queue_persistence.status(),
+            "queue_restore": dict(self._last_queue_restore_report),
             "watchdog": dict(self._watchdog_report),
             "model_runtime": self.model_runtime.status(),
         }
@@ -1007,6 +1015,7 @@ class GenerationJobManager(
                     break
             if not self._queue:
                 self._queue_available.clear()
+            self._queue_persistence.save(self)
             if job_id is None:
                 await asyncio.sleep(0)
                 continue
