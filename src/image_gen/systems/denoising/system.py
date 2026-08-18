@@ -14,31 +14,237 @@ from image_gen.contracts.model_conditioning import (
 from image_gen.systems.guidance import apply_canonical_cfg_rescale
 
 
+class DenoiserAdapter:
+    """Adapter contract for denoiser-family model invocation."""
+
+    denoiser_kind = "generic"
+    owner_label = "Denoiser"
+    model_input_preconditioning = "adapter_defined"
+
+    def __init__(self, module: torch.nn.Module) -> None:
+        self.module = module
+
+    def prepare_model_input(
+        self,
+        system: "DenoisingSystem",
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        model_dtype = system._model_dtype(self.module, sample.dtype)
+        model_sample = sample.to(dtype=model_dtype)
+        sigma_model = system._normalize_sigma(model_sample, sigma, dtype=model_dtype)
+        return model_sample, sigma_model
+
+    def invoke_model(
+        self,
+        *,
+        system: "DenoisingSystem",
+        model_input: torch.Tensor,
+        sigma_model: torch.Tensor,
+        timestep: torch.Tensor,
+        conditioning: torch.Tensor,
+        extra_cond_kwargs: dict[str, Any],
+    ) -> Any:
+        raise NotImplementedError("Denoiser adapters must implement invoke_model().")
+
+
+class SD3TransformerDenoiserAdapter(DenoiserAdapter):
+    """SD3 MMDiT invocation contract for flow-matching inference.
+
+    Unlike the UNet adapter, SD3 receives the current latent tensor directly.
+    No VP/Karras ``sample / sqrt(sigma^2 + 1)`` preconditioning is applied.
+    """
+
+    denoiser_kind = "transformer"
+    owner_label = "SD3 Transformer"
+    model_input_preconditioning = "identity (flow_match)"
+
+    @staticmethod
+    def _config_value(module: torch.nn.Module, key: str, default: Any = None) -> Any:
+        config = getattr(module, "config", None)
+        if config is None:
+            return default
+        if isinstance(config, dict):
+            return config.get(key, default)
+        return getattr(config, key, default)
+
+    def prepare_model_input(
+        self,
+        system: "DenoisingSystem",
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        model_sample, sigma_model = DenoiserAdapter.prepare_model_input(
+            self, system, sample, sigma
+        )
+        if model_sample.ndim != 4:
+            raise ValueError(
+                "SD3 transformer latents must be rank-4 [batch, channels, height, width]."
+            )
+        expected_channels = int(self._config_value(self.module, "in_channels", 16) or 16)
+        actual_channels = int(model_sample.shape[1])
+        if actual_channels != expected_channels:
+            raise ValueError(
+                "SD3 transformer latent-channel mismatch: "
+                f"expected {expected_channels}, got {actual_channels}."
+            )
+        return model_sample, sigma_model
+
+    def invoke_model(
+        self,
+        *,
+        system: "DenoisingSystem",
+        model_input: torch.Tensor,
+        sigma_model: torch.Tensor,
+        timestep: torch.Tensor,
+        conditioning: torch.Tensor,
+        extra_cond_kwargs: dict[str, Any],
+    ) -> Any:
+        if conditioning.ndim != 3:
+            raise ValueError(
+                "SD3 encoder_hidden_states must be rank-3 [batch, sequence, width]."
+            )
+        expected_joint_width = int(
+            self._config_value(self.module, "joint_attention_dim", conditioning.shape[-1])
+        )
+        actual_joint_width = int(conditioning.shape[-1])
+        if actual_joint_width != expected_joint_width:
+            raise ValueError(
+                "SD3 conditioning-width mismatch: "
+                f"expected {expected_joint_width}, got {actual_joint_width}."
+            )
+
+        pooled = extra_cond_kwargs.get("pooled_projections")
+        if pooled is None:
+            raise ValueError(
+                "SD3 transformer conditioning is missing pooled_projections."
+            )
+        if not torch.is_tensor(pooled) or pooled.ndim != 2:
+            raise ValueError(
+                "SD3 pooled_projections must be a rank-2 tensor [batch, width]."
+            )
+        expected_pooled_width = int(
+            self._config_value(self.module, "pooled_projection_dim", pooled.shape[-1])
+        )
+        actual_pooled_width = int(pooled.shape[-1])
+        if actual_pooled_width != expected_pooled_width:
+            raise ValueError(
+                "SD3 pooled-projection width mismatch: "
+                f"expected {expected_pooled_width}, got {actual_pooled_width}."
+            )
+        if int(conditioning.shape[0]) != int(model_input.shape[0]):
+            raise ValueError(
+                "SD3 conditioning batch does not match latent batch."
+            )
+        if int(pooled.shape[0]) != int(model_input.shape[0]):
+            raise ValueError(
+                "SD3 pooled-projection batch does not match latent batch."
+            )
+
+        pooled = pooled.to(device=model_input.device, dtype=model_input.dtype)
+        encoder_hidden_states = conditioning.to(
+            device=model_input.device, dtype=model_input.dtype
+        )
+        joint_attention_kwargs = extra_cond_kwargs.get("joint_attention_kwargs")
+        unknown = set(extra_cond_kwargs) - {"pooled_projections", "joint_attention_kwargs"}
+        if unknown:
+            raise ValueError(
+                "Unknown SD3 transformer conditioning kwarg(s): " + ", ".join(sorted(unknown))
+            )
+        return self.module(
+            hidden_states=model_input,
+            timestep=timestep,
+            encoder_hidden_states=encoder_hidden_states,
+            pooled_projections=pooled,
+            joint_attention_kwargs=joint_attention_kwargs,
+            return_dict=False,
+        )
+
+
+class UNetDenoiserAdapter(DenoiserAdapter):
+    denoiser_kind = "unet"
+    owner_label = "UNet"
+    model_input_preconditioning = "sample / sqrt(sigma^2 + 1)"
+
+    def prepare_model_input(
+        self,
+        system: "DenoisingSystem",
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        model_sample, sigma_model = super().prepare_model_input(system, sample, sigma)
+        return system.scale_model_input(model_sample, sigma_model), sigma_model
+
+    def invoke_model(
+        self,
+        *,
+        system: "DenoisingSystem",
+        model_input: torch.Tensor,
+        sigma_model: torch.Tensor,
+        timestep: torch.Tensor,
+        conditioning: torch.Tensor,
+        extra_cond_kwargs: dict[str, Any],
+    ) -> Any:
+        return self.module(
+            sample=model_input,
+            timestep=timestep,
+            encoder_hidden_states=conditioning.to(
+                device=model_input.device, dtype=model_input.dtype
+            ),
+            **extra_cond_kwargs,
+        )
+
+
 class DenoisingSystem:
     """Canonical model-output interpretation boundary.
 
-    The denoising system owns model-input preconditioning, UNet invocation,
+    The denoising system owns model invocation through a denoiser-role adapter,
     classifier-free guidance, optional guidance rescaling, prediction-type
     conversion, and the float32 predicted-clean-latent boundary required by
     denoised-space solvers such as DPM++ 2M.
     """
 
     SUPPORTED_PREDICTION_TYPES = {"epsilon", "v_prediction", "sample"}
-    MODEL_INPUT_PRECONDITIONING = "sample / sqrt(sigma^2 + 1)"
+    MODEL_INPUT_PRECONDITIONING = UNetDenoiserAdapter.model_input_preconditioning
 
     def __init__(
         self,
-        unet: torch.nn.Module,
+        denoiser: torch.nn.Module,
         *,
+        denoiser_kind: str = "unet",
+        adapter: DenoiserAdapter | None = None,
         prediction_type: str = "epsilon",
         prediction_type_source: str = "pipeline_components",
     ) -> None:
-        self.unet = unet
-        self.prediction_type = self.normalize_prediction_type(prediction_type)
+        self.denoiser = denoiser
+        self.denoiser_kind = str(denoiser_kind or "unet").strip().lower() or "unet"
+        self.adapter = adapter or self._build_adapter(denoiser, self.denoiser_kind)
+        self.unet = denoiser if self.denoiser_kind == "unet" else None
+        prediction_token = str(prediction_type or "").strip().lower().replace("-", "_")
+        self.is_flow_match = bool(
+            self.denoiser_kind == "transformer"
+            and prediction_token in {"flow_match", "not_applicable_flow_match", "flow"}
+        )
+        self.prediction_type = (
+            "flow_match" if self.is_flow_match else self.normalize_prediction_type(prediction_type)
+        )
         self.prediction_type_source = str(prediction_type_source or "unspecified")
         self._cfg_rescale = 0.0
         self._guidance_trace_enabled = False
         self._last_guidance_trace: dict[str, Any] | None = None
+
+    @staticmethod
+    def _build_adapter(denoiser: torch.nn.Module, denoiser_kind: str) -> DenoiserAdapter:
+        if denoiser_kind == "unet":
+            return UNetDenoiserAdapter(denoiser)
+        if denoiser_kind == "transformer":
+            return SD3TransformerDenoiserAdapter(denoiser)
+        raise NotImplementedError(
+            f"No built-in adapter is registered for denoiser kind {denoiser_kind!r}."
+        )
+
+    def _model_input_preconditioning_label(self) -> str:
+        return str(getattr(self.adapter, "model_input_preconditioning", self.MODEL_INPUT_PRECONDITIONING))
 
     @classmethod
     def normalize_prediction_type(cls, value: str | None) -> str:
@@ -66,15 +272,21 @@ class DenoisingSystem:
         value = 0.0 if cfg_rescale is None else float(cfg_rescale)
         if not 0.0 <= value <= 1.0:
             raise ValueError("cfg_rescale must be between 0.0 and 1.0.")
+        if self.is_flow_match and value != 0.0:
+            raise ValueError(
+                "cfg_rescale is not qualified for the SD3 flow-matching path in SD3-08."
+            )
         self._cfg_rescale = value
 
     def contract_metadata(self) -> dict[str, Any]:
-        model_dtype = self._model_dtype(self.unet, torch.float32)
+        model_dtype = self._model_dtype(self.denoiser, torch.float32)
         return {
+            "denoiser_kind": self.denoiser_kind,
+            "denoiser_owner": getattr(self.adapter, "owner_label", "Denoiser"),
             "prediction_type": self.prediction_type,
             "prediction_type_source": self.prediction_type_source,
             "prediction_conversion": self._prediction_conversion_label(),
-            "model_input_preconditioning": self.MODEL_INPUT_PRECONDITIONING,
+            "model_input_preconditioning": self._model_input_preconditioning_label(),
             "cfg_rescale": float(self._cfg_rescale),
             "cfg_rescale_applied": bool(float(self._cfg_rescale) > 0.0),
             "guidance_owner": "pipeline",
@@ -107,13 +319,37 @@ class DenoisingSystem:
         }
         return lookup.get(str(value).strip().lower())
 
-    def guided_epsilon_contract_metadata(self) -> dict[str, Any]:
-        model_dtype = self._model_dtype(self.unet, torch.float32)
+    def flow_match_contract_metadata(self) -> dict[str, Any]:
+        if not self.is_flow_match:
+            raise RuntimeError("Flow-match metadata is only available for flow-matching denoisers.")
+        model_dtype = self._model_dtype(self.denoiser, torch.float32)
         return {
+            "denoiser_kind": self.denoiser_kind,
+            "denoiser_owner": getattr(self.adapter, "owner_label", "Denoiser"),
+            "prediction_type": "flow_match",
+            "prediction_type_source": self.prediction_type_source,
+            "prediction_conversion": "none; scheduler consumes transformer output directly",
+            "model_input_preconditioning": self._model_input_preconditioning_label(),
+            "guidance_owner": "pipeline",
+            "guidance_mode": "ordinary_cfg",
+            "cfg_rescale": 0.0,
+            "model_dtype": str(model_dtype),
+            "scheduler_domain": "flow_match",
+        }
+
+    def guided_epsilon_contract_metadata(self) -> dict[str, Any]:
+        if self.is_flow_match:
+            raise RuntimeError(
+                "Guided-epsilon conversion is not defined for the SD3 flow-matching denoiser."
+            )
+        model_dtype = self._model_dtype(self.denoiser, torch.float32)
+        return {
+            "denoiser_kind": self.denoiser_kind,
+            "denoiser_owner": getattr(self.adapter, "owner_label", "Denoiser"),
             "prediction_type": "epsilon",
             "prediction_type_source": f"guided_epsilon_adapter_from_{self.prediction_type_source}",
             "prediction_conversion": "x0 = solver_sample - sigma * guided_epsilon",
-            "model_input_preconditioning": self.MODEL_INPUT_PRECONDITIONING,
+            "model_input_preconditioning": self._model_input_preconditioning_label(),
             "cfg_rescale": float(self._cfg_rescale),
             "cfg_rescale_applied": bool(float(self._cfg_rescale) > 0.0),
             "guidance_owner": "pipeline",
@@ -131,7 +367,11 @@ class DenoisingSystem:
         *,
         model_call_dtype: torch.dtype | None = None,
     ):
-        selected_model_dtype = model_call_dtype or self._model_dtype(self.unet, torch.float32)
+        if self.is_flow_match:
+            raise RuntimeError(
+                "Guided-epsilon denoiser construction is not valid for SD3 flow matching."
+            )
+        selected_model_dtype = model_call_dtype or self._model_dtype(self.denoiser, torch.float32)
 
         def predict_denoised(
             sample: torch.Tensor,
@@ -179,6 +419,8 @@ class DenoisingSystem:
         return predict_denoised
 
     def _prediction_conversion_label(self) -> str:
+        if self.is_flow_match:
+            return "flow model output is consumed directly by FlowMatchEulerDiscreteScheduler.step"
         if self.prediction_type == "epsilon":
             return "x0 = solver_sample - sigma * guided_epsilon"
         if self.prediction_type == "v_prediction":
@@ -189,9 +431,9 @@ class DenoisingSystem:
         return "x0 = guided_model_output"
 
     @staticmethod
-    def _model_dtype(unet: torch.nn.Module, fallback: torch.dtype) -> torch.dtype:
+    def _model_dtype(module: torch.nn.Module, fallback: torch.dtype) -> torch.dtype:
         try:
-            return next(unet.parameters()).dtype
+            return next(module.parameters()).dtype
         except (StopIteration, AttributeError):
             return fallback
 
@@ -288,10 +530,7 @@ class DenoisingSystem:
         sample: torch.Tensor,
         sigma: torch.Tensor | float,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        model_dtype = self._model_dtype(self.unet, sample.dtype)
-        model_sample = sample.to(dtype=model_dtype)
-        sigma_model = self._normalize_sigma(model_sample, sigma, dtype=model_dtype)
-        return self.scale_model_input(model_sample, sigma_model), sigma_model
+        return self.adapter.prepare_model_input(self, sample, sigma)
 
     @staticmethod
     def _prepare_extra_cond_kwargs(
@@ -322,27 +561,28 @@ class DenoisingSystem:
         conditioning: torch.Tensor,
         extra_cond_kwargs: dict[str, Any] | None = None,
     ) -> torch.Tensor:
-        model_input, _ = self._prepare_model_input(sample, sigma)
+        model_input, sigma_model = self._prepare_model_input(sample, sigma)
         timestep_tensor = self._normalize_timestep(model_input, timestep)
         prepared_extra_cond_kwargs = self._prepare_extra_cond_kwargs(
             model_input, extra_cond_kwargs
         )
-        model_out = self.unet(
-            sample=model_input,
+        model_out = self.adapter.invoke_model(
+            system=self,
+            model_input=model_input,
+            sigma_model=sigma_model,
             timestep=timestep_tensor,
-            encoder_hidden_states=conditioning.to(
-                device=model_input.device, dtype=model_input.dtype
-            ),
-            **prepared_extra_cond_kwargs,
+            conditioning=conditioning,
+            extra_cond_kwargs=prepared_extra_cond_kwargs,
         )
-        prediction = self.extract_model_tensor(model_out, owner="UNet")
+        owner = getattr(self.adapter, "owner_label", "Denoiser")
+        prediction = self.extract_model_tensor(model_out, owner=owner)
         if prediction.shape != sample.shape:
             raise ValueError(
-                f"UNet prediction shape {tuple(prediction.shape)} does not match "
+                f"{owner} prediction shape {tuple(prediction.shape)} does not match "
                 f"sample shape {tuple(sample.shape)}."
             )
         if not torch.isfinite(prediction).all():
-            raise ValueError("UNet returned non-finite values.")
+            raise ValueError(f"{owner} returned non-finite values.")
         return prediction
 
     @classmethod
@@ -354,6 +594,12 @@ class DenoisingSystem:
         model_output: torch.Tensor,
         prediction_type: str,
     ) -> torch.Tensor:
+        if str(prediction_type or "").strip().lower().replace("-", "_") in {
+            "flow_match", "not_applicable_flow_match", "flow"
+        }:
+            raise ValueError(
+                "Flow-matching transformer output must not be converted through VP epsilon/x0 semantics."
+            )
         normalized = cls.normalize_prediction_type(prediction_type)
         sample32 = solver_sample.to(dtype=torch.float32)
         output32 = model_output.to(device=sample32.device, dtype=torch.float32)
@@ -384,6 +630,12 @@ class DenoisingSystem:
         model_output: torch.Tensor,
         prediction_type: str,
     ) -> torch.Tensor:
+        if str(prediction_type or "").strip().lower().replace("-", "_") in {
+            "flow_match", "not_applicable_flow_match", "flow"
+        }:
+            raise ValueError(
+                "Flow-matching transformer output must not be converted through VP epsilon/x0 semantics."
+            )
         normalized = cls.normalize_prediction_type(prediction_type)
         if normalized == "epsilon":
             return model_output
@@ -528,7 +780,13 @@ class DenoisingSystem:
                 metadata = getattr(region, "metadata", None)
                 if isinstance(metadata, dict):
                     telemetry = metadata.get("_regional_telemetry")
-                if telemetry is not None and hasattr(telemetry, "record_unet_call"):
+                if telemetry is not None and hasattr(telemetry, "record_denoiser_call"):
+                    telemetry.record_denoiser_call(
+                        slot_index=slot,
+                        region_index=int(region.region_index),
+                        duration_ms=(time.perf_counter() - started) * 1000.0,
+                    )
+                elif telemetry is not None and hasattr(telemetry, "record_unet_call"):
                     telemetry.record_unet_call(
                         slot_index=slot,
                         region_index=int(region.region_index),
@@ -733,6 +991,104 @@ class DenoisingSystem:
         )
         return denoised.to(dtype=torch.float32)
 
+    @staticmethod
+    def _repeat_flow_batch_value(
+        value: torch.Tensor | float,
+        *,
+        source_batch: int,
+        repeats: int,
+    ) -> torch.Tensor | float:
+        if not torch.is_tensor(value):
+            return value
+        if value.ndim == 0 or value.numel() == 1:
+            return value
+        if int(value.shape[0]) == source_batch:
+            return torch.cat([value] * repeats, dim=0)
+        return value
+
+    def predict_flow_model_output(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        conditioning: torch.Tensor,
+        extra_cond_kwargs: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        if not self.is_flow_match:
+            raise RuntimeError(
+                "predict_flow_model_output is only valid for an SD3 flow-matching denoiser."
+            )
+        return self.predict_model_output(
+            sample, sigma, timestep, conditioning, extra_cond_kwargs
+        )
+
+    def predict_guided_flow(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        cond: torch.Tensor,
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        extra_cond_kwargs: ModelConditioningKwargs = None,
+    ) -> torch.Tensor:
+        """Return the SD3 flow-model prediction with Diffusers-compatible CFG.
+
+        Diffusers treats CFG as active only when guidance_scale > 1. When active,
+        negative and positive branches are concatenated and evaluated in one
+        transformer call. At CFG <= 1 only the conditional branch is evaluated.
+        """
+        if not self.is_flow_match:
+            raise RuntimeError(
+                "predict_guided_flow is only valid for an SD3 flow-matching denoiser."
+            )
+        scale = float(cfg_scale)
+        cond_kwargs = select_model_conditioning_branch(extra_cond_kwargs, "conditional") or {}
+        if scale <= 1.0:
+            return self.predict_flow_model_output(
+                sample, sigma, timestep, cond, cond_kwargs
+            )
+
+        uncond_kwargs = select_model_conditioning_branch(extra_cond_kwargs, "unconditional") or {}
+        pooled_cond = cond_kwargs.get("pooled_projections")
+        pooled_uncond = uncond_kwargs.get("pooled_projections")
+        if pooled_cond is None or pooled_uncond is None:
+            raise ValueError(
+                "SD3 classifier-free guidance requires conditional and unconditional pooled_projections."
+            )
+        cond_joint = cond_kwargs.get("joint_attention_kwargs")
+        uncond_joint = uncond_kwargs.get("joint_attention_kwargs")
+        if cond_joint != uncond_joint:
+            raise ValueError(
+                "SD3 CFG requires shared joint_attention_kwargs for conditional and unconditional branches."
+            )
+
+        batch = int(sample.shape[0])
+        model_sample = torch.cat([sample, sample], dim=0)
+        model_cond = torch.cat([uncond, cond], dim=0)
+        model_pooled = torch.cat([pooled_uncond, pooled_cond], dim=0)
+        model_sigma = self._repeat_flow_batch_value(
+            sigma, source_batch=batch, repeats=2
+        )
+        model_timestep = self._repeat_flow_batch_value(
+            timestep, source_batch=batch, repeats=2
+        )
+        combined = self.predict_flow_model_output(
+            model_sample,
+            model_sigma,
+            model_timestep,
+            model_cond,
+            {
+                "pooled_projections": model_pooled,
+                "joint_attention_kwargs": cond_joint,
+            },
+        )
+        output_uncond, output_cond = combined.chunk(2, dim=0)
+        guided = output_uncond + scale * (output_cond - output_uncond)
+        if not torch.isfinite(guided).all():
+            raise ValueError("SD3 classifier-free guidance produced non-finite flow output.")
+        return guided
+
     def _guided_model_output(
         self,
         sample: torch.Tensor,
@@ -771,6 +1127,10 @@ class DenoisingSystem:
         conditioning: torch.Tensor,
         extra_cond_kwargs: dict[str, Any] | None = None,
     ) -> torch.Tensor:
+        if self.is_flow_match:
+            raise RuntimeError(
+                "SD3 flow-matching output is not epsilon and cannot use the VP/Karras noise path."
+            )
         output = self.predict_model_output(
             sample, sigma, timestep, conditioning, extra_cond_kwargs
         )
@@ -919,7 +1279,7 @@ class DenoisingSystem:
             "prediction_type": self.prediction_type,
             "prediction_type_source": self.prediction_type_source,
             "prediction_conversion": self._prediction_conversion_label(),
-            "model_input_preconditioning": self.MODEL_INPUT_PRECONDITIONING,
+            "model_input_preconditioning": self._model_input_preconditioning_label(),
             "guidance_owner": "pipeline",
             "guidance_mode": "flat",
             "guidance_math_version": "phase11g_shared_guidance_v1",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 
 from image_gen.systems.denoising import DenoisingSystem
@@ -10,11 +12,20 @@ from image_gen.systems.decoding.vae_memory import VAEExecutionController
 class DecodingSystem:
     """Own latent-to-image tensor conversion; never writes files."""
 
-    def __init__(self, vae: torch.nn.Module, *, vae_scaling_factor: float = 0.18215) -> None:
+    def __init__(
+        self,
+        vae: torch.nn.Module,
+        *,
+        vae_scaling_factor: float = 0.18215,
+        vae_shift_factor: float = 0.0,
+    ) -> None:
         self.vae = vae
         self.vae_scaling_factor = float(vae_scaling_factor)
+        self.vae_shift_factor = float(vae_shift_factor)
         if self.vae_scaling_factor <= 0:
             raise ValueError("vae_scaling_factor must be positive.")
+        if not math.isfinite(self.vae_shift_factor):
+            raise ValueError("vae_shift_factor must be finite.")
         self._last_decode_report: dict[str, object] | None = None
         self._output_quality_diagnostics_enabled = False
         self._vae_memory = VAEExecutionController(vae)
@@ -26,7 +37,7 @@ class DecodingSystem:
     def decode_with_diagnostics(
         self, latents: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, object]]:
-        raw_images = self._vae_memory.decode(latents / self.vae_scaling_factor)
+        raw_images = self._vae_memory.decode(self.to_vae_latents(latents))
         raw_images = DenoisingSystem.extract_model_tensor(raw_images, owner="VAE decoder")
         if raw_images.ndim != 4:
             raise ValueError(f"VAE decoder must return BCHW data, got {tuple(raw_images.shape)}.")
@@ -42,6 +53,7 @@ class DecodingSystem:
             raw_vae_output=raw_images,
             normalized_images=images,
             vae_scaling_factor=self.vae_scaling_factor,
+            vae_shift_factor=self.vae_shift_factor,
         )
         report["vae_memory_controls"] = self._vae_memory.report()
         self._last_decode_report = dict(report)
@@ -53,7 +65,7 @@ class DecodingSystem:
             images, _report = self.decode_with_diagnostics(latents)
             return images
 
-        raw_images = self._vae_memory.decode(latents / self.vae_scaling_factor)
+        raw_images = self._vae_memory.decode(self.to_vae_latents(latents))
         raw_images = DenoisingSystem.extract_model_tensor(raw_images, owner="VAE decoder")
         if raw_images.ndim != 4:
             raise ValueError(f"VAE decoder must return BCHW data, got {tuple(raw_images.shape)}.")
@@ -74,6 +86,25 @@ class DecodingSystem:
         }
         return images
 
+
+    def to_vae_latents(self, sampling_latents: torch.Tensor) -> torch.Tensor:
+        """Reverse the sampler-space scale/shift before VAE decode."""
+
+        if not torch.is_tensor(sampling_latents):
+            raise TypeError("sampling_latents must be a torch.Tensor.")
+        return (
+            sampling_latents / float(self.vae_scaling_factor)
+            + float(self.vae_shift_factor)
+        )
+
+    def from_vae_latents(self, vae_latents: torch.Tensor) -> torch.Tensor:
+        """Map VAE posterior latents into the sampler/model latent domain."""
+
+        if not torch.is_tensor(vae_latents):
+            raise TypeError("vae_latents must be a torch.Tensor.")
+        return (
+            vae_latents - float(self.vae_shift_factor)
+        ) * float(self.vae_scaling_factor)
 
     def configure_memory_controls(
         self,

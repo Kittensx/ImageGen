@@ -153,11 +153,19 @@ function renderDiscord(profile) {
   }
 }
 
-function renderWelcomeGreeting() {
+function linkedProfileGreeting(profile) {
+  const discord = profile?.discord || {};
+  if (!discord.linked) return "";
+  const name = String(discord.display_name || discord.username || "").trim();
+  return name ? `Hello, ${name}.` : "";
+}
+
+function renderWelcomeGreeting(profile) {
   const greeting = $("#homeWelcomeGreeting");
   if (!greeting) return;
-  greeting.hidden = true;
-  greeting.textContent = "";
+  const text = linkedProfileGreeting(profile);
+  greeting.textContent = text;
+  greeting.hidden = !text;
 }
 
 function renderProfile(profile) {

@@ -135,7 +135,7 @@ def audit_phase14k_architecture(project_root: str | Path) -> dict[str, Any]:
 
 
     command_contracts = {
-        "src/image_gen/webui/app.py": (
+        "src/image_gen/webui/routes/settings.py": (
             '/api/runtime/command',
             'build_runtime_command_from_status',
         ),

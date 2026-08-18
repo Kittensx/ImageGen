@@ -1,2 +1,7 @@
-from image_gen.systems.denoising.system import DenoisingSystem
-__all__ = ["DenoisingSystem"]
+from image_gen.systems.denoising.system import (
+    DenoiserAdapter,
+    DenoisingSystem,
+    UNetDenoiserAdapter,
+)
+
+__all__ = ["DenoiserAdapter", "DenoisingSystem", "UNetDenoiserAdapter"]

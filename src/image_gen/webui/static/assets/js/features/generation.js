@@ -1,4 +1,4 @@
-import { api } from "../api.js?v=0.1.75";
+import { api } from "../api.js?v=cancel-controls1";
 import { state } from "../state.js";
 import { $, shortText, formatTime, notify } from "../utils.js";
 import {
@@ -678,12 +678,17 @@ function updateActiveState() {
   document.querySelectorAll('.site-nav-icon[data-icon="generate"]').forEach((icon) => {
     icon.classList.toggle("is-generating", generationMotionActive);
   });
+  const cancelAvailable = jobCanBeCancelled(running);
+  const cancelGroup = $("#cancelGenerationGroup");
+  cancelGroup?.classList.toggle("is-hidden", !cancelAvailable);
   const cancelButton = $("#cancelButton");
-  cancelButton?.classList.toggle("is-hidden", !jobCanBeCancelled(running));
   if (cancelButton) {
-    cancelButton.setAttribute("aria-label", "Cancel active generation");
-    cancelButton.title = "Cancel active generation";
+    cancelButton.disabled = !cancelAvailable;
+    cancelButton.setAttribute("aria-label", "Stop current batch");
+    cancelButton.title = "Stop current batch";
   }
+  const cancelMenuButton = $("#cancelMenuButton");
+  if (cancelMenuButton) cancelMenuButton.disabled = !cancelAvailable;
   const pauseButton = $("#pauseGenerationButton");
   if (pauseButton) {
     pauseButton.classList.toggle("is-active", queuePauseRequested);
@@ -699,6 +704,8 @@ function updateActiveState() {
     skipButton.classList.toggle("is-working", Boolean(running?.skip_current_requested));
     setActionIcon(skipButton, "skip-next", { label: skipLabel, title: skipLabel });
   }
+  const cancelMenuSkipButton = $("#cancelMenuSkipImage");
+  if (cancelMenuSkipButton) cancelMenuSkipButton.disabled = !canSkip;
   const infinityButton = $("#infinityButton");
   infinityButton?.classList.toggle("is-active", forever);
   const infinityLabel = $("#infinityButtonLabel");
@@ -730,13 +737,30 @@ function updateActiveState() {
   renderLivePreviewJob(job);
 }
 
+function queueDisplayRank(job) {
+  const status = String(job?.status || "");
+  if (ACTIVE_JOB_STATUSES.has(status) && status !== "paused") return 0;
+  if (status === "queued") return 1;
+  if (status === "paused") return 2;
+  return 3;
+}
+
+export function mergeQueueJobState(currentJobs, updatedJob) {
+  if (!updatedJob?.job_id) return Array.isArray(currentJobs) ? currentJobs : [];
+  const existing = new Map((currentJobs || []).map((job) => [job.job_id, job]));
+  existing.set(updatedJob.job_id, { ...(existing.get(updatedJob.job_id) || {}), ...updatedJob });
+  return [...existing.values()]
+    .map((job, stableIndex) => ({ job, stableIndex }))
+    .sort((left, right) => {
+      const rankDifference = queueDisplayRank(left.job) - queueDisplayRank(right.job);
+      return rankDifference || left.stableIndex - right.stableIndex;
+    })
+    .map(({ job }) => job);
+}
+
 function upsertJob(updatedJob) {
   if (!updatedJob?.job_id) return;
-  const existing = new Map(state.jobs.map((job) => [job.job_id, job]));
-  existing.set(updatedJob.job_id, { ...(existing.get(updatedJob.job_id) || {}), ...updatedJob });
-  const values = [...existing.values()];
-  values.sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
-  state.jobs = values;
+  state.jobs = mergeQueueJobState(state.jobs, updatedJob);
 }
 
 async function refreshOutputsForLatest() {
@@ -1001,20 +1025,28 @@ async function submit(unlimited) {
       if (!accepted) return;
       values._webui_scheduler_warnings_acknowledged = true;
     }
-    setSubmissionBusy(true, "activating_model", "Activating model selection…");
-    const activeModel = await ensureModelReady();
-    if (!activeModel || activeModel.resolved_path !== values.model_path) {
-      throw new Error("The selected checkpoint was not activated by the backend. Select the model again before generating.");
+    if (values.advanced_models_enabled) {
+      setSubmissionBusy(true, "resolving_components", "Resolving model components…");
+      values._webui_model_selection_id = "";
+    } else {
+      setSubmissionBusy(true, "authorizing_model", "Authorizing checkpoint selection…");
+      if (!String(values.model_path || "").trim()) {
+        throw new Error("Choose a checkpoint model first.");
+      }
+      values._webui_model_selection_id = state.activeModel?.resolved_path === values.model_path
+        ? (state.activeModel.selection_id || values._webui_model_selection_id || "")
+        : "";
     }
-    values._webui_model_selection_id = activeModel.selection_id || values._webui_model_selection_id || "";
     setSubmissionBusy(true, "queueing", "Queueing…");
     const job = await api.submitJob(values);
-    const modelWillActivateOnWorker = !state.activeModel || state.activeModel.resolved_path !== values.model_path;
+    const modelWillActivateOnWorker = values.advanced_models_enabled || !state.activeModel || state.activeModel.resolved_path !== values.model_path;
     const message = unlimited
       ? "Generate forever started."
-      : modelWillActivateOnWorker
-        ? "Generation added to the queue. The worker will activate the selected checkpoint and then load it for the run."
-        : "Generation added to the queue.";
+      : values.advanced_models_enabled
+        ? "Generation added to the queue. The worker will assemble the selected component composition."
+        : modelWillActivateOnWorker
+          ? "Generation added to the queue. The worker will activate the selected checkpoint and then load it for the run."
+          : "Generation added to the queue.";
     await acceptQueuedJob(
       { ...job, request: job.request || values },
       { message },
@@ -1033,29 +1065,34 @@ async function submit(unlimited) {
   }
 }
 
-async function cancelActive() {
+async function stopCurrentBatch() {
   const active = activeJob();
   if (String(active?.status || "") === "finalizing") {
     notify("Generation is complete and the output is being saved. Saving will continue.", "warning");
     return;
   }
-  const job = (active && jobCanBeCancelled(active))
-    ? active
-    : state.jobs.find((item) => item.status === "queued") || null;
-  if (!job) {
-    notify("There is no active or queued generation to cancel.", "warning");
+  if (!active || !jobCanBeCancelled(active)) {
+    notify("There is no active batch to stop.", "warning");
     return;
   }
   try {
-    const mode = state.settings.cancel_generation_mode || "immediate";
-    if (mode === "after_current_run") {
-      const queued = state.jobs.filter((item) => item.status === "queued");
-      await Promise.all(queued.map((item) => api.cancelJob(item.job_id).catch(() => null)));
-      notify("Current run will continue. Remaining queued items were cancelled.");
-    } else {
-      await api.cancelJob(job.job_id);
-      notify("Cancellation requested.");
-    }
+    await api.cancelJob(active.job_id);
+    notify("Stop requested for the current batch.");
+    await pollJobs();
+  } catch (error) {
+    notify(error.message, "error");
+  }
+}
+
+async function forceStopGeneration() {
+  if (!window.confirm("Force stop the active generation and clear all queued jobs?")) return;
+  try {
+    const response = await api.forceStopGeneration();
+    state.jobs = response.jobs || state.jobs;
+    renderWorker(response.worker || workerState || {});
+    renderQueue(state.jobs);
+    updateActiveState();
+    notify("Generation worker stopped and queued jobs cleared.", "warning");
     await pollJobs();
   } catch (error) {
     notify(error.message, "error");
@@ -1102,7 +1139,7 @@ export function bindGeneration(options) {
   collectValues = options.collectValues;
   refreshOutputs = options.refreshOutputs;
   ensureModelReady = options.ensureModelReady || ensureModelReady;
-  bindLivePreview({ cancelActive });
+  bindLivePreview({ cancelActive: stopCurrentBatch });
   setSubsystemStatus({
     id: "workerConnectionStatusLight",
     host: "#workerStatusLights",
@@ -1136,10 +1173,10 @@ export function bindGeneration(options) {
   $("#generateButton")?.addEventListener("click", submitNow);
   $("#infinityButton").addEventListener("click", () => {
     const job = activeJob();
-    if (job?.request?.unlimited) cancelActive();
+    if (job?.request?.unlimited) stopCurrentBatch();
     else submit(true);
   });
-  $("#cancelButton").addEventListener("click", cancelActive);
+  $("#cancelButton")?.addEventListener("click", stopCurrentBatch);
   $("#pauseGenerationButton")?.addEventListener("click", togglePauseQueue);
   $("#skipGenerationButton")?.addEventListener("click", skipCurrentImage);
 
@@ -1154,12 +1191,38 @@ export function bindGeneration(options) {
     const mode = event.target.dataset.generationMode;
     if (mode === "once") submit(false);
     if (mode === "forever") submit(true);
-    if (mode === "cancel") cancelActive();
+    if (mode === "cancel") stopCurrentBatch();
     menu.classList.add("is-hidden");
   });
   document.addEventListener("click", (event) => {
     if (!menu.contains(event.target) && event.target !== $("#generateMenuButton")) {
       menu.classList.add("is-hidden");
+    }
+  });
+
+  const cancelMenu = $("#cancelGenerationMenu");
+  const cancelMenuButton = $("#cancelMenuButton");
+  cancelMenuButton?.addEventListener("click", (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    cancelMenu.style.left = `${Math.max(8, rect.right - 220)}px`;
+    cancelMenu.style.top = `${rect.bottom + 6}px`;
+    const opening = cancelMenu.classList.contains("is-hidden");
+    cancelMenu.classList.toggle("is-hidden");
+    cancelMenuButton.setAttribute("aria-expanded", opening ? "true" : "false");
+  });
+  cancelMenu?.addEventListener("click", async (event) => {
+    const action = event.target?.dataset?.cancelAction;
+    if (!action) return;
+    cancelMenu.classList.add("is-hidden");
+    cancelMenuButton?.setAttribute("aria-expanded", "false");
+    if (action === "batch") await stopCurrentBatch();
+    if (action === "skip") await skipCurrentImage();
+    if (action === "force") await forceStopGeneration();
+  });
+  document.addEventListener("click", (event) => {
+    if (!cancelMenu?.contains(event.target) && event.target !== cancelMenuButton) {
+      cancelMenu?.classList.add("is-hidden");
+      cancelMenuButton?.setAttribute("aria-expanded", "false");
     }
   });
 

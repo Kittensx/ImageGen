@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import threading
 import uuid
@@ -12,6 +13,7 @@ from modules.asset_discovery import resolve_nested_asset
 from modules.checkpoint_inspector import CheckpointInspector
 from modules.project_context import ProjectContext
 from modules.sdxl_runtime_profile import profile_for_sdxl_filename
+from modules.sd3_runtime_profile import profile_from_checkpoint_variant
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
 from image_gen.systems.sd21_support import SD21SupportManager
 from image_gen.systems.validation.capabilities import capability_for
@@ -44,6 +46,7 @@ class ActiveModelSelection:
     source: str = "webui"
     status: str = "ready"
     architecture: str = ""
+    architecture_variant: str = ""
     prediction_type: str = ""
     conditioning_dimension: int | None = None
     architecture_summary: str = ""
@@ -67,6 +70,7 @@ class ActiveModelSelection:
             "source": self.source,
             "status": self.status,
             "architecture": self.architecture,
+            "architecture_variant": self.architecture_variant,
             "prediction_type": self.prediction_type,
             "conditioning_dimension": self.conditioning_dimension,
             "architecture_summary": self.architecture_summary,
@@ -170,10 +174,19 @@ class WebUIModelSelectionState:
         payload: dict[str, Any] = {}
         if path.suffix.lower() == ".safetensors":
             try:
-                report = self._inspector.inspect(str(path))
+                inspect_method = self._inspector.inspect
+                try:
+                    parameters = inspect.signature(inspect_method).parameters
+                except (TypeError, ValueError):
+                    parameters = {}
+                if "compute_sha256" in parameters:
+                    report = inspect_method(str(path), compute_sha256=False)
+                else:
+                    report = inspect_method(str(path))
                 contract = report.architecture_contract.to_dict()
                 payload = {
                     "architecture": report.architecture,
+                    "architecture_variant": str(getattr(report, "architecture_variant", "") or ""),
                     "prediction_type": report.prediction_type,
                     "conditioning_dimension": report.model_dimension,
                     "architecture_summary": report.architecture_summary,
@@ -205,8 +218,13 @@ class WebUIModelSelectionState:
             stat_mtime_ns=int(stat.st_mtime_ns),
         )
         runtime_profile: dict[str, Any] = {}
-        if str(inspection.get("architecture") or "").strip().casefold() == "sdxl":
+        architecture = str(inspection.get("architecture") or "").strip().casefold()
+        if architecture == "sdxl":
             runtime_profile = profile_for_sdxl_filename(path.name).to_dict()
+        elif architecture == "sd3.x":
+            profile = profile_from_checkpoint_variant(str(inspection.get("architecture_variant") or ""))
+            if profile is not None:
+                runtime_profile = profile.to_dict()
         return ActiveModelSelection(
             selection_id=uuid.uuid4().hex[:16],
             requested_path=str(model_path),
@@ -220,6 +238,7 @@ class WebUIModelSelectionState:
             selected_at=_utc_now(),
             source=str(source or "webui"),
             architecture=str(inspection.get("architecture") or ""),
+            architecture_variant=str(inspection.get("architecture_variant") or ""),
             prediction_type=str(inspection.get("prediction_type") or ""),
             conditioning_dimension=inspection.get("conditioning_dimension"),
             architecture_summary=str(inspection.get("architecture_summary") or ""),
@@ -240,6 +259,15 @@ class WebUIModelSelectionState:
                     f"{capability.reason}"
                 )
             # Runtime profiles describe/recommend settings; they do not authorize generation.
+        if architecture == "sd3.x":
+            capability = capability_for("sd3.x")
+            if not capability.generation_supported:
+                raise ValueError(
+                    "Stable Diffusion 3 normal generation is not enabled in this IMAGE_GEN build. "
+                    f"{capability.reason}"
+                )
+            # SD3 profiles provide recommendations/defaults only. Mathematical
+            # compatibility remains enforced by the selected sampler/scheduler plugins.
         if architecture == "sd2.x":
             support = self._sd21_support_manager().ensure_for_architecture(
                 selection.architecture,

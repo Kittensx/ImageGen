@@ -287,6 +287,10 @@ class ResidentModelRuntimeClient:
             finally:
                 self._current_command_id = None
                 self._current_job_id = None
+                # A completed/cancelled command cannot continue owning the resident
+                # checkpoint. Clear the cached worker field too so status() never
+                # revives a stale job id after the private field is released.
+                self._status["current_job_id"] = None
                 if not self._cancel_requested:
                     self._cancel_reason = None
             return completion
@@ -384,6 +388,7 @@ class ResidentModelRuntimeClient:
                 "current_model_path": None,
                 "cpu_loaded": False,
                 "gpu_loaded": False,
+                "current_job_id": None,
                 "last_error": error,
             }
         )

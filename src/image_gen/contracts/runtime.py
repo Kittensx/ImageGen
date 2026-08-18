@@ -613,36 +613,66 @@ class GenerationRequest:
 
 @dataclass
 class PipelineComponents:
-    unet: torch.nn.Module
+    unet: torch.nn.Module | None
     vae: torch.nn.Module
     text_encoder: torch.nn.Module
     tokenizer: Any = None
     text_encoder_2: torch.nn.Module | None = None
     tokenizer_2: Any = None
+    text_encoder_3: torch.nn.Module | None = None
+    tokenizer_3: Any = None
     prediction_type: str = "epsilon"
     prediction_type_source: str = "pipeline_components"
     architecture: str = ""
     model_runtime_profile: dict[str, Any] = field(default_factory=dict)
+    latent_channels: int = 4
+    latent_scale_factor: int = 8
     vae_scaling_factor: float = 0.18215
+    vae_shift_factor: float = 0.0
     vae_force_upcast: bool = False
+    vae_use_quant_conv: bool | None = None
+    vae_use_post_quant_conv: bool | None = None
     vae_execution_dtype: str = ""
     model_identity: str = ""
     model_hash: str = ""
     vae_provenance: dict[str, Any] = field(default_factory=dict)
+    denoiser: torch.nn.Module | None = None
+    denoiser_kind: str = "unet"
+
+    def __post_init__(self) -> None:
+        if self.denoiser is None:
+            self.denoiser = self.unet
+        self.denoiser_kind = str(self.denoiser_kind or "unet").strip().lower() or "unet"
+        if self.denoiser_kind == "unet" and self.unet is None:
+            self.unet = self.denoiser
 
     def placement_metadata(self) -> dict[str, dict[str, Any]]:
         payload = {
-            "unet": component_placement_report(self.unet),
+            "denoiser": component_placement_report(self.denoiser) if self.denoiser is not None else {},
             "vae": component_placement_report(self.vae),
             "text_encoder": component_placement_report(self.text_encoder),
         }
+        if self.unet is not None:
+            payload["unet"] = component_placement_report(self.unet)
         if self.text_encoder_2 is not None:
             payload["text_encoder_2"] = component_placement_report(self.text_encoder_2)
+        if self.text_encoder_3 is not None:
+            payload["text_encoder_3"] = component_placement_report(self.text_encoder_3)
         return payload
 
     def describe(self) -> dict[str, Any]:
         return {
-            "unet": f"{type(self.unet).__module__}.{type(self.unet).__qualname__}",
+            "denoiser": (
+                f"{type(self.denoiser).__module__}.{type(self.denoiser).__qualname__}"
+                if self.denoiser is not None
+                else None
+            ),
+            "denoiser_kind": self.denoiser_kind,
+            "unet": (
+                f"{type(self.unet).__module__}.{type(self.unet).__qualname__}"
+                if self.unet is not None
+                else None
+            ),
             "vae": f"{type(self.vae).__module__}.{type(self.vae).__qualname__}",
             "text_encoder": f"{type(self.text_encoder).__module__}.{type(self.text_encoder).__qualname__}",
             "text_encoder_2": (
@@ -650,12 +680,22 @@ class PipelineComponents:
                 if self.text_encoder_2 is not None
                 else None
             ),
+            "text_encoder_3": (
+                f"{type(self.text_encoder_3).__module__}.{type(self.text_encoder_3).__qualname__}"
+                if self.text_encoder_3 is not None
+                else None
+            ),
             "prediction_type": self.prediction_type,
             "prediction_type_source": self.prediction_type_source,
             "architecture": self.architecture,
             "model_runtime_profile": _json_safe(self.model_runtime_profile),
+            "latent_channels": int(self.latent_channels),
+            "latent_scale_factor": int(self.latent_scale_factor),
             "vae_scaling_factor": float(self.vae_scaling_factor),
+            "vae_shift_factor": float(self.vae_shift_factor),
             "vae_force_upcast": bool(self.vae_force_upcast),
+            "vae_use_quant_conv": self.vae_use_quant_conv,
+            "vae_use_post_quant_conv": self.vae_use_post_quant_conv,
             "vae_execution_dtype": str(self.vae_execution_dtype or ""),
             "model_identity": self.model_identity,
             "model_hash": self.model_hash,
@@ -669,6 +709,11 @@ class PipelineComponents:
             "tokenizer_2": (
                 f"{type(self.tokenizer_2).__module__}.{type(self.tokenizer_2).__qualname__}"
                 if self.tokenizer_2 is not None
+                else None
+            ),
+            "tokenizer_3": (
+                f"{type(self.tokenizer_3).__module__}.{type(self.tokenizer_3).__qualname__}"
+                if self.tokenizer_3 is not None
                 else None
             ),
         }

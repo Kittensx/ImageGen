@@ -115,6 +115,38 @@ export const api = {
     body: JSON.stringify({ mode, ...(selectedFile ? { selected_file: selectedFile } : {}) }),
   }),
   modelRuntimeStatus: () => request("/api/models/runtime-status"),
+  advancedModelComponents: (baseComponentSha256 = "") => request(`/api/models/components${baseComponentSha256 ? `?base_component_sha256=${encodeURIComponent(baseComponentSha256)}` : ""}`),
+  advancedModelRegistryStatus: (accessibleOnly = false) => request(`/api/models/components/registry-status?accessible_only=${accessibleOnly ? "1" : "0"}`),
+  componentRegistryBrowser: ({ family = "", role = "", accessibleOnly = false, search = "", limit = 500 } = {}) => {
+    const params = new URLSearchParams();
+    if (family) params.set("family", family);
+    if (role) params.set("role", role);
+    if (accessibleOnly) params.set("accessible_only", "1");
+    if (search) params.set("q", search);
+    params.set("limit", String(limit));
+    return request(`/api/models/components/browser?${params.toString()}`);
+  },
+  componentRegistryEvidence: (componentSha256) => request(`/api/models/components/${encodeURIComponent(componentSha256)}/evidence`),
+  setComponentPolicy: (values = {}) => request("/api/models/components/policy", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
+  clearComponentPolicy: (values = {}) => request("/api/models/components/policy", {
+    method: "DELETE",
+    body: JSON.stringify(values || {}),
+  }),
+  recordComponentValidation: (values = {}) => request("/api/models/components/validation", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
+  clearComponentValidation: (values = {}) => request("/api/models/components/validation", {
+    method: "DELETE",
+    body: JSON.stringify(values || {}),
+  }),
+  refreshAdvancedModelRegistry: ({ force = false, strength = "structural" } = {}) => request("/api/models/components/refresh", {
+    method: "POST",
+    body: JSON.stringify({ force: Boolean(force), strength }),
+  }),
   activateModel: (modelPath) => request("/api/models/activate", {
     method: "POST",
     body: JSON.stringify({ model_path: modelPath }),
@@ -257,6 +289,7 @@ export const api = {
     method: "POST",
     body: JSON.stringify(payload),
   }),
+  forceStopGeneration: () => request("/api/maintenance/generation/force-stop", { method: "POST" }),
   openOutputFolder: (path = "") => request("/api/outputs/open-folder", {
     method: "POST",
     body: JSON.stringify({ path }),

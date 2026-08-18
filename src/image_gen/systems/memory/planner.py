@@ -31,6 +31,11 @@ class MemoryEstimator:
         available_bytes: int | None,
         safety_margin_bytes: int,
         stage: str = "sampling",
+        latent_channels: int = 4,
+        conditioning_sequence_length: int | None = None,
+        conditioning_width: int | None = None,
+        pooled_width: int | None = None,
+        conditioning_component_ids: Iterable[str] = (),
     ) -> MemoryEstimate:
         batch = max(1, int(getattr(request, "batch_size", 1) or 1))
         width = int(getattr(dimension_plan, "generation_width", getattr(request, "width", 512)))
@@ -39,15 +44,29 @@ class MemoryEstimator:
         latent_width = int(math.ceil(width / latent_scale))
         latent_height = int(math.ceil(height / latent_scale))
         scalar_bytes = _dtype_bytes(dtype)
-        latent_bytes = batch * 4 * latent_width * latent_height * scalar_bytes
+        effective_latent_channels = max(1, int(latent_channels or 4))
+        latent_bytes = batch * effective_latent_channels * latent_width * latent_height * scalar_bytes
         sampler = str(sampler_name or "").lower()
         history_multiplier = 3 if "dpmpp" in sampler or "2m" in sampler else 2
         sampler_history = latent_bytes * history_multiplier
-        is_sdxl = "text_encoder_2" in component_bytes
-        conditioning_width = 2048 if is_sdxl else 1024
-        pooled_width = 1280 if is_sdxl else 0
-        conditioning_bytes = batch * 2 * 77 * conditioning_width * scalar_bytes
-        pooled_conditioning_bytes = batch * 2 * pooled_width * scalar_bytes
+        has_second_encoder = "text_encoder_2" in component_bytes
+        effective_conditioning_width = int(
+            conditioning_width if conditioning_width is not None else (2048 if has_second_encoder else 1024)
+        )
+        effective_pooled_width = int(
+            pooled_width if pooled_width is not None else (1280 if has_second_encoder else 0)
+        )
+        effective_sequence_length = int(
+            conditioning_sequence_length if conditioning_sequence_length is not None else 77
+        )
+        conditioning_bytes = batch * 2 * effective_sequence_length * effective_conditioning_width * scalar_bytes
+        pooled_conditioning_bytes = batch * 2 * effective_pooled_width * scalar_bytes
+        encoder_ids = tuple(dict.fromkeys(str(item) for item in conditioning_component_ids))
+        if not encoder_ids:
+            encoder_ids = tuple(
+                item for item in ("text_encoder", "text_encoder_2", "text_encoder_3")
+                if item in component_bytes
+            )
         vae_decode_output = batch * 3 * width * height * 4
         preview_long_edge = max(64, int(getattr(request, "live_preview_width", 384) or 384))
         preview_frame = batch * 3 * preview_long_edge * preview_long_edge * 4
@@ -62,14 +81,17 @@ class MemoryEstimator:
             "preview_frame": int(preview_runtime),
         }
         if stage == "conditioning":
-            contributors["text_encoder_parameters"] = int(component_bytes.get("text_encoder", 0))
-            if is_sdxl:
-                contributors["text_encoder_2_parameters"] = int(component_bytes.get("text_encoder_2", 0))
+            for component_id in encoder_ids:
+                contributors[f"{component_id}_parameters"] = int(component_bytes.get(component_id, 0))
         elif stage == "final_decode":
             contributors["vae_parameters"] = int(component_bytes.get("vae", 0))
             contributors["decode_workspace"] = int(max(vae_decode_output, latent_bytes * 4))
         else:
-            contributors["unet_parameters"] = int(component_bytes.get("unet", 0))
+            denoiser_bytes = int(component_bytes.get("denoiser", component_bytes.get("unet", 0)))
+            if "denoiser" in component_bytes:
+                contributors["denoiser_parameters"] = denoiser_bytes
+            else:
+                contributors["unet_parameters"] = denoiser_bytes
             if str(preview_mode).lower() in {"balanced", "accurate"}:
                 contributors["vae_preview_parameters"] = int(component_bytes.get("vae", 0))
 
@@ -80,12 +102,11 @@ class MemoryEstimator:
             + conditioning_bytes
             + pooled_conditioning_bytes
             + (
-                component_bytes.get("text_encoder", 0)
-                + component_bytes.get("text_encoder_2", 0)
+                sum(component_bytes.get(item, 0) for item in encoder_ids)
                 if stage == "conditioning"
                 else component_bytes.get("vae", 0)
                 if stage == "final_decode"
-                else component_bytes.get("unet", 0)
+                else component_bytes.get("denoiser", component_bytes.get("unet", 0))
             )
         )
         safety_adjusted = int(expected + max(0, safety_margin_bytes))

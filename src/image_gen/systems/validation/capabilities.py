@@ -45,6 +45,23 @@ _CAPABILITIES = {
             "generation-qualified SDXL runtime profile",
         ),
     ),
+    "sd3.x": ArchitectureCapability(
+        architecture="sd3.x",
+        status="supported",
+        generation_supported=True,
+        validation_supported=True,
+        reason=(
+            "SD3 Medium and SD3.5 Medium txt2img are generation-qualified through the real 20-step "
+            "SD3-11 image matrix, including embedded/external CLIP sourcing, Flow Match/Flow Euler, "
+            "16-channel VAE decode, and staged low-VRAM component residency."
+        ),
+        requirements=(
+            "full SD3 Medium or SD3.5 Medium safetensors checkpoint",
+            "matching local SD3 runtime assets",
+            "CLIP-L and CLIP-G either embedded or available in the shared TextEncoders library",
+            "sampler/scheduler combination compatible with the model's flow-match mathematical domain",
+        ),
+    ),
     "sd1.x_or_sd2.x": ArchitectureCapability(
         architecture="sd1.x_or_sd2.x",
         status="unresolved",

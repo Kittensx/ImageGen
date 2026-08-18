@@ -64,12 +64,12 @@ def post_stage_offload_candidates(profile: str, stage: str) -> set[str]:
         return set()
     if effective == "balanced":
         if stage == "conditioning":
-            return {"text_encoder", "text_encoder_2"}
+            return {"text_encoder", "text_encoder_2", "text_encoder_3"}
         if stage == "sampling":
-            return {"text_encoder", "text_encoder_2", "unet"}
+            return {"text_encoder", "text_encoder_2", "text_encoder_3", "unet"}
         if stage == "final_decode":
-            return {"text_encoder", "text_encoder_2"}
+            return {"text_encoder", "text_encoder_2", "text_encoder_3"}
         return set()
     if effective in {"low_vram", "cpu_fallback"}:
-        return {"text_encoder", "text_encoder_2", "unet", "vae", "preview_decoder", "upscaler"}
+        return {"text_encoder", "text_encoder_2", "text_encoder_3", "unet", "vae", "preview_decoder", "upscaler"}
     return set()

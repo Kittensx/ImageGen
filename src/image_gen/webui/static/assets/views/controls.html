@@ -19,6 +19,45 @@
       <small id="modelArchitectureStatus" class="field-status subtle">Architecture: waiting for activation.</small>
     </div>
 
+    <div class="field-block advanced-models-block">
+      <label class="checkbox-row">
+        <input type="checkbox" id="advancedModelsEnabled" name="advanced_models_enabled">
+        <span>Use Advanced Models</span>
+      </label>
+      <small id="advancedModelsStatus" class="field-status subtle">Whole-checkpoint generation is active. Enable Advanced Models to compose compatible registered components.</small>
+      <div id="advancedModelsEditor" hidden>
+        <label class="field-block">
+          <span>Model Family</span>
+          <select id="advancedModelFamily" name="advanced_model_family" aria-label="Advanced model family"></select>
+          <small class="field-status subtle">Choose a family first, then freely assemble compatible registered components from that family.</small>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="advancedModelAllowDigitalComponents" name="advanced_model_allow_digital_components" checked>
+          <span>Allow digital checkpoint components</span>
+        </label>
+        <small id="advancedModelSourcePolicyStatus" class="field-status subtle">Physical, standalone, and digital checkpoint sources are all eligible.</small>
+        <div class="inline-actions advanced-model-registry-actions">
+          <button class="secondary-button compact-button" id="advancedModelScanLibraryButton" type="button">Scan Model Library</button>
+          <button class="secondary-button compact-button" id="advancedModelRegistryBrowserButton" type="button">Registry Browser</button>
+          <label class="checkbox-row">
+            <input type="checkbox" id="advancedModelShowUnavailableSources">
+            <span>Show unavailable registered components</span>
+          </label>
+        </div>
+        <small id="advancedModelRegistryStatus" class="field-status subtle">Registry status has not been loaded yet.</small>
+        <div id="advancedModelComponents"></div>
+        <label class="field-block is-hidden" id="advancedModelT5DeviceBlock" hidden>
+          <span>T5 / T5XXL Device</span>
+          <select id="advancedModelT5Device" name="advanced_model_t5_device" aria-label="T5 execution device">
+            <option value="cpu">CPU — qualified low-VRAM path</option>
+            <option value="cuda">CUDA — explicit high-VRAM path</option>
+            <option value="auto">Auto — CUDA for high-VRAM profile, otherwise CPU</option>
+          </select>
+          <small class="field-status subtle">Component selection and device placement are independent. Selecting T5 enables it; this setting chooses where T5 conditioning runs.</small>
+        </label>
+      </div>
+    </div>
+
     <div class="field-block">
       <span>VAE</span>
       <select id="vaePath" name="vae_path" aria-label="VAE"></select>
@@ -578,7 +617,7 @@
       <label><span>CFG Scale</span><input id="cfgScale" name="cfg_scale" type="number" min="0" max="30" step="0.1"></label>
     </div>
 
-    <section id="sdxlRecommendationControls" class="sdxl-recommendation-controls is-hidden" aria-label="SDXL model recommendations">
+    <section id="sdxlRecommendationControls" class="sdxl-recommendation-controls is-hidden" aria-label="Model recommendations">
       <div class="sdxl-recommendation-heading">
         <strong>Model recommended defaults</strong>
         <span id="sdxlRecommendationProfile" class="field-status subtle"></span>
@@ -594,8 +633,11 @@
         </label>
       </div>
       <small class="field-status subtle">
-        Fields always remain editable. When a recommendation is checked, that recommended value is used for generation; if the visible field differs, IMAGE_GEN warns instead of failing. Uncheck the recommendation to make your custom field value authoritative. Lightning's recommended CFG also selects its recommended CFG Lab preset when enabled or when the profile activates.
+        Fields always remain editable. When a recommendation is checked, that recommended value is used for generation; if the visible field differs, IMAGE_GEN warns instead of failing. Uncheck the recommendation to make your custom field value authoritative. When a model profile recommends a CFG Lab preset, enabling its CFG recommendation also selects that preset on activation.
       </small>
+      <div id="sdxlRecommendedSamplerScheduler" class="field-status subtle">
+        Recommended sampler/scheduler will appear when a model profile provides them.
+      </div>
       <div id="sdxlRecommendationStatus" class="field-status subtle" role="status">
         The current settings match this model's recommendations.
       </div>
@@ -830,6 +872,14 @@
       <button class="ui-action-button ui-icon-control is-hidden" id="pauseGenerationButton" type="button" aria-label="Pause after current image" title="Pause after current image"><span class="ui-icon" data-icon="pause" aria-hidden="true"></span></button>
       <button class="ui-action-button ui-icon-control is-hidden" id="skipGenerationButton" type="button" aria-label="Skip current image" title="Skip current image"><span class="ui-icon" data-icon="skip-next" aria-hidden="true"></span></button>
     </div>
-    <button class="ui-action-button ui-icon-control is-critical is-hidden" id="cancelButton" type="button" aria-label="Cancel active generation" title="Cancel active generation"><span class="ui-icon" data-icon="stop" aria-hidden="true"></span></button>
+    <div class="cancel-generation-group is-hidden" id="cancelGenerationGroup">
+      <button class="danger-button cancel-generation-button ui-icon-control" id="cancelButton" type="button" aria-label="Stop current batch" title="Stop current batch">
+        <span class="ui-icon" data-icon="stop" aria-hidden="true"></span>
+        <span>Stop Batch</span>
+      </button>
+      <button class="danger-button cancel-generation-menu-button split-arrow ui-icon-control" id="cancelMenuButton" type="button" aria-label="More stop options" title="More stop options" aria-haspopup="menu" aria-expanded="false">
+        <span class="ui-icon" data-icon="chevron-down" aria-hidden="true"></span>
+      </button>
+    </div>
   </form>
 </aside>

@@ -18,10 +18,15 @@ class SamplerCapabilities:
     requires_requested_step_schedule: bool = True
     strict_validation: bool = True
     forced_pipeline_mode: Optional[str] = None
+    schedule_domain: str = "vp_sigma"
 
     def __post_init__(self) -> None:
         if self.guidance_owner not in {"pipeline", "sampler"}:
             raise ValueError("guidance_owner must be 'pipeline' or 'sampler'.")
+        normalized_domain = str(self.schedule_domain or "vp_sigma").strip().lower().replace("-", "_")
+        if normalized_domain not in {"vp_sigma", "flow_match"}:
+            raise ValueError("schedule_domain must be 'vp_sigma' or 'flow_match'.")
+        object.__setattr__(self, "schedule_domain", normalized_domain)
         if self.guidance_owner == "sampler":
             if not self.uses_raw_model_fn or self.uses_guided_model_fn:
                 raise ValueError(
@@ -61,6 +66,7 @@ class SamplerCapabilities:
             "requires_requested_step_schedule": self.requires_requested_step_schedule,
             "strict_validation": self.strict_validation,
             "forced_pipeline_mode": self.forced_pipeline_mode,
+            "schedule_domain": self.schedule_domain,
         }
 
 

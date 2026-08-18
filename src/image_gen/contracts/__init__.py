@@ -14,6 +14,7 @@ from image_gen.contracts.hires_diagnostics import (
     format_hires_failure,
     hires_failure_stage_label,
 )
+from image_gen.contracts.latent_vae import LatentVAEContract, resolve_latent_vae_contract
 from image_gen.contracts.model_conditioning import (
     BranchModelConditioningKwargs,
     ModelConditioningKwargs,
@@ -51,6 +52,7 @@ __all__ = [
     "ConditioningOutput",
     "BranchModelConditioningKwargs",
     "ModelConditioningKwargs",
+    "LatentVAEContract",
     "GenerationRequest",
     "GenerationResult",
     "HIRES_CORRECTION_FINGERPRINT_VERSION",
@@ -80,4 +82,5 @@ __all__ = [
     "check_adapter_conformance",
     "select_model_conditioning_branch",
     "require_adapter_conformance",
+    "resolve_latent_vae_contract",
 ]

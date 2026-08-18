@@ -368,6 +368,7 @@ class GenerationPipeline:
         dtype: torch.dtype,
         latent_scale_factor: int = 8,
         vae_scaling_factor: float = 0.18215,
+        vae_shift_factor: float = 0.0,
         memory_manager: AdaptiveComponentMemoryManager | None = None,
     ) -> None:
         self.components = components
@@ -377,6 +378,7 @@ class GenerationPipeline:
         self.dtype = dtype
         self.latent_scale_factor = int(latent_scale_factor)
         self.vae_scaling_factor = float(vae_scaling_factor)
+        self.vae_shift_factor = float(vae_shift_factor)
         self.memory_manager = memory_manager or AdaptiveComponentMemoryManager.from_state(
             target_device=self.device,
             state=self.state,
@@ -416,6 +418,8 @@ class GenerationPipeline:
         required = {"text_encoder"}
         if getattr(self.components, "text_encoder_2", None) is not None:
             required.add("text_encoder_2")
+        if getattr(self.components, "text_encoder_3", None) is not None:
+            required.add("text_encoder_3")
         return required
 
     def _conditioning_preferred_components(self) -> set[str]:
@@ -1260,21 +1264,35 @@ class GenerationPipeline:
                 "predict_regional_denoised",
                 regional_denoised_fn,
             )
-            guided_denoiser_adapter = self.systems.denoising.build_guided_epsilon_denoiser(
-                guided_model_fn,
-            )
-            denoised_model_fn = diagnostics.wrap_callable(
-                session,
-                "denoising",
-                "predict_denoised",
-                guided_denoiser_adapter,
-            )
-            setattr(guided_model_fn, "predict_denoised", denoised_model_fn)
-            setattr(
-                guided_model_fn,
-                "denoising_contract",
-                self.systems.denoising.guided_epsilon_contract_metadata,
-            )
+            if bool(getattr(self.systems.denoising, "is_flow_match", False)):
+                guided_flow_fn = diagnostics.wrap_callable(
+                    session,
+                    "denoising",
+                    "predict_guided_flow",
+                    self.systems.denoising.predict_guided_flow,
+                )
+                setattr(guided_model_fn, "predict_guided_flow", guided_flow_fn)
+                setattr(
+                    guided_model_fn,
+                    "denoising_contract",
+                    self.systems.denoising.flow_match_contract_metadata,
+                )
+            else:
+                guided_denoiser_adapter = self.systems.denoising.build_guided_epsilon_denoiser(
+                    guided_model_fn,
+                )
+                denoised_model_fn = diagnostics.wrap_callable(
+                    session,
+                    "denoising",
+                    "predict_denoised",
+                    guided_denoiser_adapter,
+                )
+                setattr(guided_model_fn, "predict_denoised", denoised_model_fn)
+                setattr(
+                    guided_model_fn,
+                    "denoising_contract",
+                    self.systems.denoising.guided_epsilon_contract_metadata,
+                )
             setattr(
                 guided_model_fn,
                 "model_prediction_contract",
@@ -3031,6 +3049,7 @@ class CustomSDPipeline(GenerationPipeline):
             state=state,
             device=root.device,
             dtype=root.dtype,
-            latent_scale_factor=latent_scale_factor,
-            vae_scaling_factor=vae_scaling_factor,
+            latent_scale_factor=root.latent_scale_factor,
+            vae_scaling_factor=root.vae_scaling_factor,
+            vae_shift_factor=root.vae_shift_factor,
         )

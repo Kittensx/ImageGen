@@ -44,6 +44,13 @@ export function collectGenerationValues(selectionMetadata = {}) {
     negative_prompt: $("#negativePrompt").value,
     model_path: $("#modelPath").value,
     vae_path: $("#vaePath")?.value || null,
+    advanced_models_enabled: Boolean($("#advancedModelsEnabled")?.checked),
+    advanced_model_family: $("#advancedModelFamily")?.value || "",
+    advanced_model_components: Object.fromEntries(
+      Array.from(document.querySelectorAll("[data-advanced-component-role]")).map((node) => [node.dataset.advancedComponentRole, node.value]),
+    ),
+    advanced_model_allow_digital_components: Boolean($("#advancedModelAllowDigitalComponents")?.checked ?? true),
+    advanced_model_t5_device: $("#advancedModelT5Device")?.value || "cpu",
     sd2_runtime_profile_override: $("#sd2RuntimeProfileOverride")?.value || null,
     sd2_dedicated_generation: Boolean($("#sd2DedicatedGeneration")?.checked),
     width: numberValue($("#width"), 640),
@@ -52,6 +59,8 @@ export function collectGenerationValues(selectionMetadata = {}) {
     cfg_scale: numberValue($("#cfgScale"), 7),
     sdxl_enforce_recommended_steps: Boolean($("#sdxlEnforceRecommendedSteps")?.checked),
     sdxl_enforce_recommended_cfg: Boolean($("#sdxlEnforceRecommendedCfg")?.checked),
+    model_enforce_recommended_steps: Boolean($("#sdxlEnforceRecommendedSteps")?.checked),
+    model_enforce_recommended_cfg: Boolean($("#sdxlEnforceRecommendedCfg")?.checked),
     cfg_rescale: cfgLab.cfg_rescale,
     seed: seedValues.seed,
     batch_size: numberValue($("#batchSize"), 1),
@@ -242,11 +251,19 @@ export function applyGenerationValues(values = {}) {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
   });
-  if ($("#sdxlEnforceRecommendedSteps") && "sdxl_enforce_recommended_steps" in values) {
-    $("#sdxlEnforceRecommendedSteps").checked = Boolean(values.sdxl_enforce_recommended_steps);
+  if ($("#sdxlEnforceRecommendedSteps")) {
+    if ("model_enforce_recommended_steps" in values) {
+      $("#sdxlEnforceRecommendedSteps").checked = Boolean(values.model_enforce_recommended_steps);
+    } else if ("sdxl_enforce_recommended_steps" in values) {
+      $("#sdxlEnforceRecommendedSteps").checked = Boolean(values.sdxl_enforce_recommended_steps);
+    }
   }
-  if ($("#sdxlEnforceRecommendedCfg") && "sdxl_enforce_recommended_cfg" in values) {
-    $("#sdxlEnforceRecommendedCfg").checked = Boolean(values.sdxl_enforce_recommended_cfg);
+  if ($("#sdxlEnforceRecommendedCfg")) {
+    if ("model_enforce_recommended_cfg" in values) {
+      $("#sdxlEnforceRecommendedCfg").checked = Boolean(values.model_enforce_recommended_cfg);
+    } else if ("sdxl_enforce_recommended_cfg" in values) {
+      $("#sdxlEnforceRecommendedCfg").checked = Boolean(values.sdxl_enforce_recommended_cfg);
+    }
   }
   if ($("#outpaintPrototypeEnabled")) {
     $("#outpaintPrototypeEnabled").checked = Boolean(values.outpaint_prototype_enabled);
@@ -272,6 +289,11 @@ export function applyGenerationValues(values = {}) {
   if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(values.hires_correction_fingerprint_enabled);
   if ($("#hiresSaveUpscaledPreDenoise")) $("#hiresSaveUpscaledPreDenoise").checked = Boolean(values.hires_save_upscaled_pre_denoise);
   if ($("#hiresSaveVaeRoundtrip")) $("#hiresSaveVaeRoundtrip").checked = Boolean(values.hires_save_vae_roundtrip);
+  if ($("#advancedModelsEnabled")) $("#advancedModelsEnabled").checked = Boolean(values.advanced_models_enabled);
+  if ($("#advancedModelAllowDigitalComponents")) {
+    $("#advancedModelAllowDigitalComponents").checked = values.advanced_model_allow_digital_components !== false;
+  }
+  if ($("#advancedModelT5Device")) $("#advancedModelT5Device").value = String(values.advanced_model_t5_device || "cpu");
   if ($("#sd2DedicatedGeneration")) $("#sd2DedicatedGeneration").checked = Boolean(values.sd2_dedicated_generation);
   if ($("#saveTxt")) $("#saveTxt").checked = Boolean(values.save_txt);
   if ($("#saveJson")) $("#saveJson").checked = values.save_json !== false;
@@ -284,4 +306,5 @@ export function applyGenerationValues(values = {}) {
   if ($("#hiresPromptParserKwargs")) $("#hiresPromptParserKwargs").value = JSON.stringify(values.hires_prompt_parser_kwargs || values.prompt_parser_kwargs || {});
   if ($("#hiresShortcutProfileSnapshot")) $("#hiresShortcutProfileSnapshot").value = JSON.stringify(values.hires_shortcut_profile_snapshot || {});
   applyCfgLabValues(values);
+  window.dispatchEvent(new CustomEvent("image-gen-generation-values-applied", { detail: { values } }));
 }

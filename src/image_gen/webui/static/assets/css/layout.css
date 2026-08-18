@@ -277,6 +277,40 @@
   display: none;
 }
 
+/* Keep the Live Preview restore control reachable after the panel is collapsed
+   in a narrow dock column. Nonessential heading actions are hidden until the
+   panel is expanded again so the restore toggle cannot be clipped off-screen. */
+.live-preview-panel.is-collapsed > .panel-heading {
+  gap: 8px;
+}
+
+.live-preview-panel.is-collapsed .live-preview-title-group {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.live-preview-panel.is-collapsed .live-stream-status {
+  display: none;
+}
+
+.live-preview-panel.is-collapsed .live-preview-heading-actions {
+  min-width: max-content;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.live-preview-panel.is-collapsed .live-preview-heading-actions > :not(#livePreviewToggle) {
+  display: none !important;
+}
+
+.live-preview-panel.is-collapsed #livePreviewToggle {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  visibility: visible;
+  opacity: 1;
+}
+
 .utility-panel {
   min-width: 0;
   padding: 10px;

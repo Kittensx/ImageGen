@@ -322,6 +322,25 @@ class OutputSystem:
             manifest.base_model.was_used_for_generation = True
             manifest.base_model.is_required_for_rerun = True
         manifest.extra.update(json_safe(extras))
+        for field_name in (
+            "sd3_runtime_profile_override",
+            "sd3_text_encoder_source",
+            "advanced_models_enabled",
+            "advanced_model_family",
+            "advanced_model_components",
+            "advanced_model_allow_digital_components",
+            "advanced_model_composition_sha256",
+            "advanced_model_t5_device",
+            "text_encoder_3_device",
+            "model_enforce_recommended_steps",
+            "model_enforce_recommended_cfg",
+        ):
+            if field_name in extras:
+                manifest.optional_for_rerun.extra[field_name] = json_safe(extras.get(field_name))
+        if "_advanced_model_resolved" in extras:
+            manifest.optional_for_rerun.extra["advanced_model_resolved"] = json_safe(
+                extras.get("_advanced_model_resolved")
+            )
         if hires_enabled:
             manifest.extra["base_dimensions"] = {
                 "width": int(request.width),

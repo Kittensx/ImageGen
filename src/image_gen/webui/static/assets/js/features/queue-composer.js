@@ -3,7 +3,7 @@ import { state } from "../state.js";
 import { $, shortText, notify } from "../utils.js";
 
 const CORE_OVERRIDE_FIELDS = [
-  "model_path", "vae_path", "sd2_runtime_profile_override", "sd2_dedicated_generation", "width", "height", "steps", "cfg_scale",
+  "model_path", "vae_path", "sd2_runtime_profile_override", "sd3_runtime_profile_override", "sd3_text_encoder_source", "advanced_models_enabled", "advanced_model_family", "advanced_model_components", "advanced_model_allow_digital_components", "advanced_model_composition_sha256", "advanced_model_t5_device", "text_encoder_3_device", "model_enforce_recommended_steps", "model_enforce_recommended_cfg", "sd2_dedicated_generation", "width", "height", "steps", "cfg_scale",
   "sampler_name", "scheduler_name", "batch_count",
 ];
 

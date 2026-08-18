@@ -3,15 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 import inspect
 from typing import Any, TYPE_CHECKING
+from types import SimpleNamespace
 from pathlib import Path
 
 import torch
 
-from image_gen.contracts import PipelineComponents
+from image_gen.contracts import PipelineComponents, resolve_latent_vae_contract
 from image_gen.systems.validation.capabilities import capability_for
 from image_gen.systems.memory.telemetry import MemoryTelemetry
 from image_gen.contracts.vae_provenance import attach_vae_provenance
 from image_gen.systems.model_loading.vae_override import apply_external_vae_override
+from modules.advanced_model_composition import apply_advanced_component_composition
 
 if TYPE_CHECKING:
     from modules.load_safetensors_model import LoadModel
@@ -52,6 +54,8 @@ class ModelLoadingSystem:
                 "SD2 prediction type is unresolved. IMAGE_GEN no longer guesses v_prediction for all SD2 checkpoints; "
                 "the checkpoint must provide metadata or resolve through a qualified SD2 runtime profile."
             )
+        if architecture == "sd3.x":
+            return "not_applicable_flow_match", "sd3_flow_match_contract"
         if architecture == "sdxl":
             sdxl_contract = getattr(plan, "sdxl_contract", None)
             resolved = str(getattr(sdxl_contract, "prediction_type", "") or "")
@@ -86,15 +90,33 @@ class ModelLoadingSystem:
             extras.get("sdxl_phase08_validation")
             or extras.get("sdxl_dedicated_generation")
         )
-        allow_validation_generation = bool(allow_sd2_validation or allow_sdxl_validation)
+        allow_sd3_validation = bool(extras.get("sd3_phase04_validation"))
+        allow_validation_generation = bool(allow_sd2_validation or allow_sdxl_validation or allow_sd3_validation)
         explicit_sd2_profile = str(extras.get("sd2_runtime_profile_override") or "").strip() or None
         explicit_sdxl_profile = str(extras.get("sdxl_runtime_profile_override") or "").strip() or None
+        explicit_sd3_profile = str(extras.get("sd3_runtime_profile_override") or "").strip() or None
         plan = self.loader.prepare_load_plan(
             model_path,
             require_generation_support=not allow_validation_generation,
             explicit_sd2_runtime_profile=explicit_sd2_profile,
             explicit_sdxl_runtime_profile=explicit_sdxl_profile,
+            explicit_sd3_runtime_profile=explicit_sd3_profile,
         )
+        advanced_composition = apply_advanced_component_composition(
+            plan,
+            extras.get("_advanced_model_resolved"),
+            inspector=getattr(self.loader, "inspector", None),
+            mapper=getattr(self.loader, "mapper", None),
+        )
+        # Preserve SD3-12 whole-checkpoint behavior: embedded T5 is optional and
+        # remains disabled unless the user explicitly selects a T5 component in
+        # Advanced Models. The builder can hydrate T5, but selection is authoritative.
+        if (
+            not advanced_composition
+            and str(getattr(getattr(plan, "report", None), "architecture", "") or "").strip().lower() == "sd3.x"
+            and getattr(plan, "mapped_state", None) is not None
+        ):
+            plan.mapped_state.text_encoder_3 = {}
         checkpoint_report = getattr(plan, "report", None)
         if checkpoint_report is not None:
             capability = capability_for(getattr(checkpoint_report, "architecture", "unknown"))
@@ -104,6 +126,8 @@ class ModelLoadingSystem:
                     architecture == "sd2.x" and allow_sd2_validation
                 ) or (
                     architecture == "sdxl" and allow_sdxl_validation
+                ) or (
+                    architecture == "sd3.x" and allow_sd3_validation
                 )
                 if not allowed:
                     raise RuntimeError(
@@ -128,52 +152,89 @@ class ModelLoadingSystem:
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in parameters.values()
         )
+        accepts_request_extras = "request_extras" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        build_kwargs: dict[str, Any] = {"dtype": dtype}
         if accepts_device:
-            built = build_method(plan, dtype=dtype, device=load_device)
-        else:
-            built = build_method(plan, dtype=dtype)
+            build_kwargs["device"] = load_device
+        if accepts_request_extras:
+            build_kwargs["request_extras"] = extras
+        built = build_method(plan, **build_kwargs)
         failures = []
+        denoiser_kind = str(getattr(built, "denoiser_kind", "unet") or "unet").strip().lower()
+        denoiser_result = getattr(built, "denoiser_result", None) or getattr(built, "unet_result", None)
         component_results = [
-            ("UNet", built.unet_result),
+            ("Transformer" if denoiser_kind == "transformer" else "UNet", denoiser_result),
             ("Text encoder", built.text_encoder_result),
             ("VAE", built.vae_result),
         ]
         text_encoder_2_result = getattr(built, "text_encoder_2_result", None)
         if text_encoder_2_result is not None:
             component_results.append(("Text encoder 2", text_encoder_2_result))
+        text_encoder_3_result = getattr(built, "text_encoder_3_result", None)
+        if text_encoder_3_result is not None:
+            component_results.append(("Text encoder 3 / T5", text_encoder_3_result))
         for label, result in component_results:
+            if result is None:
+                failures.append(f"{label} failed: no component load result was produced")
+                continue
             if not result.success:
                 failures.append(f"{label} failed: {result.error}")
         if failures:
             raise RuntimeError("; ".join(failures))
         prediction_type, prediction_type_source = self._prediction_contract(plan)
+        composition_sha256 = str(advanced_composition.get("composition_sha256") or "")
         model_identity = str(
-            getattr(checkpoint_report, "sha256", "")
+            (f"advanced:{composition_sha256}" if composition_sha256 else "")
+            or getattr(checkpoint_report, "sha256", "")
             or getattr(checkpoint_report, "model_path", "")
             or getattr(checkpoint_report, "file_name", "")
             or model_path
         )
-        checkpoint_hash = str(getattr(checkpoint_report, "sha256", "") or "")
+        checkpoint_hash = composition_sha256 or str(getattr(checkpoint_report, "sha256", "") or "")
         checkpoint_path = str(
             getattr(checkpoint_report, "model_path", "")
             or getattr(checkpoint_report, "path", "")
             or model_path
         )
-        vae_provenance = attach_vae_provenance(
-            built.vae,
-            {
-                "source_kind": "embedded_checkpoint",
-                "source_path": checkpoint_path,
-                "sha256": checkpoint_hash,
-                "identity": f"embedded_checkpoint:{checkpoint_hash}" if checkpoint_hash else f"embedded_checkpoint:{checkpoint_path}",
-                "display_name": f"Embedded VAE ({getattr(checkpoint_report, 'file_name', '') or Path(checkpoint_path).name})",
-                "embedded_in_checkpoint": True,
-            },
-        )
+        advanced_vae = dict((advanced_composition.get("components") or {}).get("vae") or {})
+        if advanced_vae:
+            advanced_vae_path = str(advanced_vae.get("source_path") or "")
+            advanced_vae_hash = str(advanced_vae.get("component_sha256") or "")
+            advanced_vae_embedded = str(advanced_vae.get("source_asset_type") or "") == "checkpoint"
+            vae_provenance = attach_vae_provenance(
+                built.vae,
+                {
+                    "source_kind": "advanced_component",
+                    "source_path": advanced_vae_path,
+                    "sha256": advanced_vae_hash,
+                    "identity": f"component_sha256:{advanced_vae_hash}",
+                    "display_name": f"Advanced VAE ({advanced_vae_hash[:8]})",
+                    "embedded_in_checkpoint": advanced_vae_embedded,
+                },
+            )
+        else:
+            vae_provenance = attach_vae_provenance(
+                built.vae,
+                {
+                    "source_kind": "embedded_checkpoint",
+                    "source_path": checkpoint_path,
+                    "sha256": checkpoint_hash,
+                    "identity": f"embedded_checkpoint:{checkpoint_hash}" if checkpoint_hash else f"embedded_checkpoint:{checkpoint_path}",
+                    "display_name": f"Embedded VAE ({getattr(checkpoint_report, 'file_name', '') or Path(checkpoint_path).name})",
+                    "embedded_in_checkpoint": True,
+                },
+            )
         override_path = str(extras.get("vae_path") or "").strip()
         active_vae = built.vae
         if override_path:
-            override = apply_external_vae_override(built.vae, override_path)
+            override = apply_external_vae_override(
+                built.vae,
+                override_path,
+                project_context=getattr(self.loader, "context", None),
+            )
             active_vae = override.vae
             vae_provenance = override.provenance
             # Keep the compatibility view aligned with the effective runtime
@@ -189,12 +250,26 @@ class ModelLoadingSystem:
         built_tokenizer = getattr(built, "tokenizer", None)
         built_tokenizer_2 = getattr(built, "tokenizer_2", None)
         sdxl_contract = getattr(plan, "sdxl_contract", None)
-        model_runtime_profile = (
-            dict(sdxl_contract.profile.to_dict()) if sdxl_contract is not None else {}
-        )
+        sd3_contract = getattr(plan, "sd3_contract", None)
+        if sd3_contract is not None:
+            model_runtime_profile = dict(sd3_contract.profile.to_dict())
+            model_runtime_profile["text_encoder_sources"] = dict(
+                getattr(built, "sd3_text_encoder_sources", {}) or {}
+            )
+            if advanced_composition:
+                model_runtime_profile["advanced_model_composition"] = dict(advanced_composition)
+                model_runtime_profile["t5_device"] = str(advanced_composition.get("t5_device") or "off")
+        elif sdxl_contract is not None:
+            model_runtime_profile = dict(sdxl_contract.profile.to_dict())
+        else:
+            model_runtime_profile = {}
         vae_scaling_factor = float(
-            getattr(sdxl_contract, "vae_scaling_factor", 0.18215)
-            if sdxl_contract is not None else 0.18215
+            sd3_contract.assets.vae_payload().get("scaling_factor", 1.5305)
+            if sd3_contract is not None
+            else (
+                getattr(sdxl_contract, "vae_scaling_factor", 0.18215)
+                if sdxl_contract is not None else 0.18215
+            )
         )
         vae_force_upcast = bool(
             getattr(sdxl_contract, "vae_force_upcast", False)
@@ -208,6 +283,27 @@ class ModelLoadingSystem:
             active_vae.to(dtype=torch.float32)
             setattr(active_vae, "_image_gen_vae_force_upcast", True)
             setattr(active_vae, "_image_gen_vae_execution_dtype", "torch.float32")
+
+        latent_vae_contract = resolve_latent_vae_contract(
+            SimpleNamespace(
+                vae=active_vae,
+                latent_channels=(
+                    int(getattr(sd3_contract, "latent_channels", 16))
+                    if sd3_contract is not None
+                    else 4
+                ),
+                latent_scale_factor=8,
+                vae_scaling_factor=vae_scaling_factor,
+                vae_shift_factor=(
+                    float(sd3_contract.assets.vae_payload().get("shift_factor", 0.0609))
+                    if sd3_contract is not None
+                    else 0.0
+                ),
+                vae_force_upcast=vae_force_upcast,
+            )
+        )
+        setattr(active_vae, "_image_gen_latent_vae_contract", latent_vae_contract.to_serializable_dict())
+
         architecture = str(getattr(checkpoint_report, "architecture", "") or "")
         return LoadedModel(
             components=PipelineComponents(
@@ -217,16 +313,25 @@ class ModelLoadingSystem:
                 tokenizer=built_tokenizer if built_tokenizer is not None else tokenizer,
                 text_encoder_2=getattr(built, "text_encoder_2", None),
                 tokenizer_2=built_tokenizer_2,
+                text_encoder_3=getattr(built, "text_encoder_3", None),
+                tokenizer_3=getattr(built, "tokenizer_3", None),
                 prediction_type=prediction_type,
                 prediction_type_source=prediction_type_source,
                 architecture=architecture,
                 model_runtime_profile=model_runtime_profile,
-                vae_scaling_factor=vae_scaling_factor,
-                vae_force_upcast=vae_force_upcast,
+                latent_channels=latent_vae_contract.latent_channels,
+                latent_scale_factor=latent_vae_contract.latent_scale_factor,
+                vae_scaling_factor=latent_vae_contract.scaling_factor,
+                vae_shift_factor=latent_vae_contract.shift_factor,
+                vae_force_upcast=latent_vae_contract.force_upcast,
+                vae_use_quant_conv=latent_vae_contract.use_quant_conv,
+                vae_use_post_quant_conv=latent_vae_contract.use_post_quant_conv,
                 vae_execution_dtype=vae_execution_dtype,
                 model_identity=model_identity,
                 model_hash=checkpoint_hash,
                 vae_provenance=vae_provenance,
+                denoiser=getattr(built, "denoiser", None),
+                denoiser_kind=str(getattr(built, "denoiser_kind", "unet") or "unet"),
             ),
             load_plan=plan,
             built_components=built,

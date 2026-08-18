@@ -184,6 +184,7 @@ def build_output_quality_report(
     raw_vae_output: torch.Tensor,
     normalized_images: torch.Tensor,
     vae_scaling_factor: float,
+    vae_shift_factor: float = 0.0,
 ) -> dict[str, Any]:
     classification = classify_normalized_images(normalized_images)
     return {
@@ -192,9 +193,10 @@ def build_output_quality_report(
         "classification": str(classification.get("classification") or "unknown"),
         "reasons": list(classification.get("reasons") or []),
         "vae_scaling_factor": float(vae_scaling_factor),
+        "vae_shift_factor": float(vae_shift_factor),
         "final_latents": summarize_tensor(final_latents),
         "scaled_latents_entering_vae": summarize_tensor(
-            final_latents / float(vae_scaling_factor)
+            final_latents / float(vae_scaling_factor) + float(vae_shift_factor)
         ),
         "raw_vae_output": summarize_tensor(raw_vae_output),
         "normalized_images": dict(classification.get("summary") or {}),

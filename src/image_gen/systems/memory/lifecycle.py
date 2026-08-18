@@ -136,6 +136,14 @@ class AdaptiveComponentMemoryManager:
         self.external_stage_telemetry: list[dict[str, Any]] = []
         self._oom_attention_context_factory: Callable[[str], Any] | None = None
         self._oom_vae_memory_configurator: Callable[..., Any] | None = None
+        self._denoiser_component_id = "unet"
+        self._denoiser_kind = "unet"
+        self._architecture = ""
+        self._latent_channels = 4
+        self._conditioning_sequence_length: int | None = None
+        self._conditioning_width: int | None = None
+        self._pooled_width: int | None = None
+        self._conditioning_component_ids: tuple[str, ...] = ("text_encoder",)
 
     @classmethod
     def from_state(
@@ -154,6 +162,26 @@ class AdaptiveComponentMemoryManager:
             event_callback=callback if callable(callback) else None,
         )
 
+    def _resolve_denoiser_registration(self, components: Any) -> tuple[str, str, torch.nn.Module]:
+        denoiser_kind = str(getattr(components, "denoiser_kind", "unet") or "unet").strip().lower() or "unet"
+        denoiser = getattr(components, "denoiser", None)
+        if denoiser is None:
+            denoiser = getattr(components, "unet", None)
+        if denoiser is None:
+            raise ValueError("Pipeline components are missing a denoiser module.")
+        if denoiser_kind == "unet":
+            return "unet", "unet", denoiser
+        return "denoiser", "denoiser", denoiser
+
+    def _map_component_id(self, component_id: str) -> str:
+        component_name = str(component_id)
+        if component_name == "unet":
+            return self._denoiser_component_id
+        return component_name
+
+    def _map_component_ids(self, component_ids: Iterable[str]) -> set[str]:
+        return {self._map_component_id(component_id) for component_id in component_ids}
+
     def register_core_components(self, components: Any) -> None:
         model_identity = str(
             getattr(components, "model_identity", "")
@@ -161,6 +189,18 @@ class AdaptiveComponentMemoryManager:
             or "active_checkpoint"
         )
         self.registry.invalidate_incompatible(model_identity)
+        self._architecture = str(getattr(components, "architecture", "") or "").strip().lower()
+        self._latent_channels = max(1, int(getattr(components, "latent_channels", 4) or 4))
+        self._denoiser_kind = str(getattr(components, "denoiser_kind", "unet") or "unet").strip().lower() or "unet"
+        is_sd3 = self._architecture in {"sd3", "sd3.x", "sd3.5", "stable-diffusion-3", "stable-diffusion-3.x"}
+        if is_sd3:
+            self._conditioning_sequence_length = 333
+            self._conditioning_width = 4096
+            self._pooled_width = 2048
+        else:
+            self._conditioning_sequence_length = None
+            self._conditioning_width = None
+            self._pooled_width = None
         self.registry.register(
             component_id="text_encoder",
             component_kind="text_encoder",
@@ -170,6 +210,7 @@ class AdaptiveComponentMemoryManager:
             required_by_stages={"conditioning"},
             pinned_cpu_capable=self.settings.pinned_cpu_memory,
         )
+        conditioning_ids = ["text_encoder"]
         text_encoder_2 = getattr(components, "text_encoder_2", None)
         if text_encoder_2 is not None:
             self.registry.register(
@@ -181,12 +222,28 @@ class AdaptiveComponentMemoryManager:
                 required_by_stages={"conditioning"},
                 pinned_cpu_capable=self.settings.pinned_cpu_memory,
             )
+            conditioning_ids.append("text_encoder_2")
+        text_encoder_3 = getattr(components, "text_encoder_3", None)
+        if text_encoder_3 is not None:
+            self.registry.register(
+                component_id="text_encoder_3",
+                component_kind="text_encoder",
+                model_identity=model_identity,
+                module=text_encoder_3,
+                preferred_dtype=self._module_dtype(text_encoder_3),
+                required_by_stages={"conditioning"},
+                pinned_cpu_capable=self.settings.pinned_cpu_memory,
+            )
+            conditioning_ids.append("text_encoder_3")
+        self._conditioning_component_ids = tuple(conditioning_ids)
+        denoiser_component_id, denoiser_component_kind, denoiser_module = self._resolve_denoiser_registration(components)
+        self._denoiser_component_id = denoiser_component_id
         self.registry.register(
-            component_id="unet",
-            component_kind="unet",
+            component_id=denoiser_component_id,
+            component_kind=denoiser_component_kind,
             model_identity=model_identity,
-            module=components.unet,
-            preferred_dtype=self._module_dtype(components.unet),
+            module=denoiser_module,
+            preferred_dtype=self._module_dtype(denoiser_module),
             required_by_stages={"sampling", "hires_second_pass"},
             pinned_cpu_capable=self.settings.pinned_cpu_memory,
         )
@@ -366,7 +423,7 @@ class AdaptiveComponentMemoryManager:
         # the resident-model retention pass after generation.
         candidates = {"vae"}
         if self._effective_profile == "low_vram":
-            candidates.add("unet")
+            candidates.add(self._denoiser_component_id)
 
         moved = False
         for component_id in candidates:
@@ -403,6 +460,11 @@ class AdaptiveComponentMemoryManager:
                 else self.settings.safety_margin_bytes
             ),
             stage=stage,
+            latent_channels=self._latent_channels,
+            conditioning_sequence_length=self._conditioning_sequence_length,
+            conditioning_width=self._conditioning_width,
+            pooled_width=self._pooled_width,
+            conditioning_component_ids=self._conditioning_component_ids,
         )
         payload = estimate.to_dict()
         self.estimates.append(payload)
@@ -445,6 +507,9 @@ class AdaptiveComponentMemoryManager:
         requested_profile_override: str | None,
         safety_margin_bytes_override: int | None,
     ) -> ResidencyPlan:
+        required = tuple(dict.fromkeys(self._map_component_id(item) for item in required))
+        preferred = tuple(dict.fromkeys(self._map_component_id(item) for item in preferred))
+        optional = tuple(dict.fromkeys(self._map_component_id(item) for item in optional))
         self.active_stage = stage
         self.telemetry.reset_peak()
         snapshot = self.capture(f"before_{stage}")
@@ -518,6 +583,20 @@ class AdaptiveComponentMemoryManager:
                         if self.target_device.type == "cuda"
                         else "cuda"
                     )
+            elif component_id == "text_encoder_3":
+                requested_t5_device = str(self.settings.text_encoder_3_device or "auto").lower()
+                if requested_t5_device == "cpu":
+                    target = "cpu"
+                elif requested_t5_device == "cuda":
+                    if not torch.cuda.is_available():
+                        raise RuntimeError(
+                            "T5 device cuda was requested, but CUDA is unavailable."
+                        )
+                    target = str(self.target_device) if self.target_device.type == "cuda" else "cuda"
+                elif requested_t5_device == "auto":
+                    # Keep the validated low-VRAM behavior unless the active memory
+                    # policy has enough headroom to choose high-VRAM residency.
+                    target = str(self.target_device) if plan.effective_profile == "high_vram" else "cpu"
             component = self.registry.get(component_id)
             if not self._device_matches(component.current_device, target):
                 self.registry.move(
@@ -527,6 +606,8 @@ class AdaptiveComponentMemoryManager:
                     reason=(
                         f"VAE device override {self.settings.vae_device}"
                         if component_id == "vae" and self.settings.vae_device != "auto"
+                        else f"T5 device policy {self.settings.text_encoder_3_device}"
+                        if component_id == "text_encoder_3"
                         else "required by stage lease" if component_id in required else "retained by stage plan"
                     ),
                 )
@@ -537,6 +618,9 @@ class AdaptiveComponentMemoryManager:
                     "target_device": target,
                     "vae_device_override": (
                         self.settings.vae_device if component_id == "vae" else None
+                    ),
+                    "text_encoder_3_device": (
+                        self.settings.text_encoder_3_device if component_id == "text_encoder_3" else None
                     ),
                 })
             self._prepare_component_for_target(
@@ -645,15 +729,19 @@ class AdaptiveComponentMemoryManager:
         effective_profile = (
             plan.effective_profile if plan is not None else self._effective_profile
         )
-        candidates = post_stage_offload_candidates(effective_profile, stage)
+        candidates = self._map_component_ids(post_stage_offload_candidates(effective_profile, stage))
         # Retention is a between-job promise, not a requirement to keep every
         # component on the GPU during every stage. Keep the sampling-critical
         # UNet resident when requested, but allow the text encoder and VAE to be
         # staged temporarily so an 8 GiB card does not page through system RAM.
         if self.settings.retain_checkpoint_between_jobs:
-            candidates.discard("unet")
+            # Retention keeps the checkpoint object available between jobs, but
+            # transformer denoisers on balanced/low-VRAM profiles must still
+            # leave CUDA after sampling so the VAE can stage independently.
+            if self._denoiser_kind == "unet" or effective_profile == "high_vram":
+                candidates.discard(self._denoiser_component_id)
         elif stage == "final_decode":
-            candidates.add("unet")
+            candidates.add(self._denoiser_component_id)
         if stage == "final_decode":
             if self.settings.retain_vae_between_jobs:
                 candidates.discard("vae")
@@ -1258,6 +1346,11 @@ class AdaptiveComponentMemoryManager:
         latest_cuda = dict((self.latest_snapshot or {}).get("cuda") or {})
         return {
             "requested_policy": self.settings.policy,
+            "architecture": self._architecture,
+            "denoiser_kind": self._denoiser_kind,
+            "denoiser_component_id": self._denoiser_component_id,
+            "latent_channels": self._latent_channels,
+            "conditioning_component_ids": list(self._conditioning_component_ids),
             "effective_policy": self._effective_profile,
             "active_stage": self.active_stage,
             "latest_snapshot": self.latest_snapshot,

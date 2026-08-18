@@ -1,7 +1,13 @@
 <div class="menu-popover is-hidden" id="generateMenu">
   <button type="button" data-generation-mode="once">Generate Once</button>
   <button type="button" data-generation-mode="forever">Generate Forever</button>
-  <button type="button" data-generation-mode="cancel">Cancel Active Generation</button>
+  <button type="button" data-generation-mode="cancel">Stop Current Batch</button>
+</div>
+
+<div class="menu-popover is-hidden" id="cancelGenerationMenu" role="menu" aria-label="Generation stop options">
+  <button type="button" id="cancelMenuStopBatch" data-cancel-action="batch" role="menuitem">Stop Current Batch</button>
+  <button type="button" id="cancelMenuSkipImage" data-cancel-action="skip" role="menuitem">Skip Current Image</button>
+  <button type="button" id="cancelMenuForceStop" data-cancel-action="force" role="menuitem">Force Stop All</button>
 </div>
 
 <dialog id="settingsDialog" class="settings-dialog">
@@ -1093,5 +1099,60 @@
       <button class="secondary-button" id="cancelDefaultAssetsDialogButton" type="button">Cancel</button>
       <button class="primary-button" id="saveDefaultAssetsDialogButton" type="button">Save Defaults</button>
     </footer>
+  </div>
+</dialog>
+
+<dialog id="componentRegistryDialog" class="settings-dialog component-registry-dialog" aria-labelledby="componentRegistryDialogTitle">
+  <div class="component-registry-shell">
+    <header class="dialog-heading component-registry-heading">
+      <div>
+        <h2 id="componentRegistryDialogTitle">Model / Component Registry</h2>
+        <p>Inspect fingerprinted component identities separately from their current file locations, validation evidence, and user policy.</p>
+      </div>
+      <button class="secondary-button compact-button" id="componentRegistryCloseButton" type="button">Close</button>
+    </header>
+
+    <div class="component-registry-toolbar">
+      <input id="componentRegistrySearch" type="search" placeholder="Search fingerprint, filename, or path…" autocomplete="off">
+      <select id="componentRegistryFamilyFilter" aria-label="Registry family filter">
+        <option value="">All families</option>
+      </select>
+      <select id="componentRegistryRoleFilter" aria-label="Registry role filter">
+        <option value="">All roles</option>
+      </select>
+      <label class="checkbox-row">
+        <input id="componentRegistryAccessibleOnly" type="checkbox" checked>
+        <span>Accessible sources only</span>
+      </label>
+      <button class="secondary-button compact-button" id="componentRegistryRefreshButton" type="button">Refresh Registry</button>
+    </div>
+    <small class="field-status subtle" id="componentRegistrySummary">Registry data has not been loaded yet.</small>
+
+    <div class="component-registry-layout">
+      <section class="component-registry-pane">
+        <div class="component-registry-pane-heading">
+          <h3>Registered models</h3>
+          <span class="status-badge" id="componentRegistryModelCount">0</span>
+        </div>
+        <div class="component-registry-list" id="componentRegistryModels"></div>
+      </section>
+
+      <section class="component-registry-pane component-registry-components-pane">
+        <div class="component-registry-pane-heading">
+          <h3>Fingerprint components</h3>
+          <span class="status-badge" id="componentRegistryComponentCount">0</span>
+        </div>
+        <div class="component-registry-list" id="componentRegistryComponents"></div>
+      </section>
+
+      <section class="component-registry-pane component-registry-detail-pane">
+        <div class="component-registry-pane-heading">
+          <h3>Component evidence</h3>
+        </div>
+        <div id="componentRegistryDetail" class="component-registry-detail">
+          <p class="field-status subtle">Select a component to inspect its locations, policies, validations, and analytical relationships.</p>
+        </div>
+      </section>
+    </div>
   </div>
 </dialog>

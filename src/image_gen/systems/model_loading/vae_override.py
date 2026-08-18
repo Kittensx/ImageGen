@@ -282,7 +282,12 @@ def _load_external_vae_for_diffusers_runtime(
     return shell, source_format
 
 
-def apply_external_vae_override(base_vae: "Module", vae_path: str | Path) -> ExternalVAELoadResult:
+def apply_external_vae_override(
+    base_vae: "Module",
+    vae_path: str | Path,
+    *,
+    project_context: Any | None = None,
+) -> ExternalVAELoadResult:
     """Load an external VAE without changing the working embedded-VAE path.
 
     The external boundary adapts to the active runtime component type:
@@ -300,15 +305,34 @@ def apply_external_vae_override(base_vae: "Module", vae_path: str | Path) -> Ext
     else:
         shell, source_format = _load_external_vae_for_diffusers_runtime(base_vae, path)
 
+    source_sha256 = _sha256_file(path)
+    registry_refresh = None
+    if project_context is not None and path.suffix.lower() == ".safetensors":
+        # Keep the shared asset registry synchronized with assets that actually
+        # cross the runtime load boundary. The targeted refresher is cache-aware,
+        # so a complete/current VAE does not re-hash on every generation.
+        from modules.registry.component_refresh import ComponentRegistryRefresher
+
+        refresher = ComponentRegistryRefresher(project_context)
+        registry_refresh = refresher.ensure_path(
+            path,
+            explicit_kind="vae",
+            source="external_vae_load",
+        )
+        registered = refresher.registry.get_asset_by_path(str(path))
+        if registered is not None:
+            refresher.registry.update_asset_sha256(registered.id, source_sha256)
+
     provenance = {
         "source_kind": "external_vae_override",
         "source_path": str(path),
-        "sha256": _sha256_file(path),
+        "sha256": source_sha256,
         "identity": f"external_vae_override:{path}",
         "display_name": path.name,
         "embedded_in_checkpoint": False,
         "override_applied": True,
         "source_format": source_format,
+        "component_registry_refresh": registry_refresh,
     }
     attach_vae_provenance(shell, provenance)
     return ExternalVAELoadResult(

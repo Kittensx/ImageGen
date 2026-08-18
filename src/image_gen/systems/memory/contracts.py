@@ -153,6 +153,7 @@ class MemoryManagerSettings:
     vae_tiling: bool = False
     vae_slicing: bool = False
     vae_device: str = "auto"
+    text_encoder_3_device: str = "auto"
     oom_retry_profile: str = "cleanup"
     oom_retry_limit: int = 1
 
@@ -177,6 +178,9 @@ class MemoryManagerSettings:
         vae_device = str(raw.get("vae_device", "auto") or "auto").strip().lower()
         if vae_device not in {"auto", "cuda", "cpu"}:
             raise ValueError("vae_device must be one of: auto, cuda, cpu.")
+        text_encoder_3_device = str(raw.get("text_encoder_3_device", "auto") or "auto").strip().lower()
+        if text_encoder_3_device not in {"auto", "cuda", "cpu", "off"}:
+            raise ValueError("text_encoder_3_device must be one of: auto, cuda, cpu, off.")
         return cls(
             policy=policy,
             safety_margin_mb=max(
@@ -199,6 +203,7 @@ class MemoryManagerSettings:
             vae_tiling=bool(raw.get("vae_tiling", False)),
             vae_slicing=bool(raw.get("vae_slicing", False)),
             vae_device=vae_device,
+            text_encoder_3_device=text_encoder_3_device,
             oom_retry_profile=normalize_oom_recovery_profile(
                 raw.get("oom_retry_profile", "cleanup")
             ),

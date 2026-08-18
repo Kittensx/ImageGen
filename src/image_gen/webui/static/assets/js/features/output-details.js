@@ -175,6 +175,19 @@ const SECTION_DEFINITIONS = [
     ],
   },
   {
+    title: "Advanced Models",
+    fields: [
+      ["Advanced Models enabled", "replay.advanced_models_enabled", "advanced_models_enabled"],
+      ["Family", "replay.advanced_model_family", "advanced_model_family"],
+      ["Requested components", "replay.advanced_model_components", "advanced_model_components", "json"],
+      ["Allow digital components", "replay.advanced_model_allow_digital_components", "advanced_model_allow_digital_components"],
+      ["Recorded composition hash", "replay.advanced_model_composition_sha256", "advanced_model_composition_sha256"],
+      ["Recorded T5 device", "replay.advanced_model_t5_device", "advanced_model_t5_device"],
+      ["Recorded text encoder 3 device", "replay.text_encoder_3_device", "text_encoder_3_device"],
+      ["Recorded resolved composition", "replay.advanced_model_resolved", "advanced_model_resolved", "json"],
+    ],
+  },
+  {
     title: "Sampling",
     fields: [
       ["Sampler", "replay.sampler_name", "sampler_name"],

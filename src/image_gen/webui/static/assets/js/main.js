@@ -1,14 +1,14 @@
 import { loadFragments } from "./fragments.js";
 import { configureBranding, productName } from "./branding.js?v=brand1";
 
-import { api } from "./api.js?v=asset-card-latency1";
+import { api } from "./api.js?v=cancel-controls1";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js?v=svg-profile2";
 import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
 import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=sdxl-cfg-recommendations4";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=sdxl-cfg-recommendations4";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=queue-active-pin1";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=responsive-action-bar1";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
@@ -42,6 +42,7 @@ import { bindUserConfigEditor } from "./features/user-config-editor.js?v=qol1";
 import { bindParameterRanges } from "./features/parameter-ranges.js?v=qol2";
 import { bindSeedControls } from "./features/seed-controls.js?v=qol-seed-ui5";
 import { bindOutpaintPrototype } from "./features/outpaint-prototype.js?v=0.1.84";
+import { bindAdvancedModels } from "./features/advanced-models.js?v=component-phase05";
 
 const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
 
@@ -71,6 +72,7 @@ let schedulerPresetPluginId = "";
 let schedulerPresetName = "";
 let schedulerPresetSource = "";
 let refreshOutputsPromise = null;
+let startupActivationScheduled = false;
 
 function pluginValue(descriptors, requested, fallback = "") {
   const resolve = (value) => {
@@ -222,6 +224,7 @@ function modelRuntimeIsReady(status, requestedPath) {
   const currentPath = normalizedModelPath(status?.current_model_path);
   const requested = normalizedModelPath(requestedPath);
   if (!currentPath || !requested || currentPath !== requested) return false;
+  if (status?.generation_ready === true) return true;
   if (status?.cuda_available !== false) return status?.gpu_loaded === true;
   return status?.cpu_loaded === true;
 }
@@ -257,13 +260,15 @@ function setModelReadyState(ready, message, kind = "") {
     },
     diagnosticTarget: "#modelLoadStatus",
   });
+  const allowQueueWhileLoading = !ready && isTransitioning;
+  const shouldDisableGeneration = !ready && !allowQueueWhileLoading;
   ["#generateButton", "#generateMenuButton", "#infinityButton"].forEach((selector) => {
     const button = $(selector);
-    if (button) button.disabled = !ready;
+    if (button) button.disabled = shouldDisableGeneration;
   });
 }
 
-function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = false, applyField = "all" } = {}) {
+function renderModelRecommendationControls(activeModel = null, { applyDefaults = false, applyField = "all" } = {}) {
   const panel = $("#sdxlRecommendationControls");
   const stepsToggle = $("#sdxlEnforceRecommendedSteps");
   const cfgToggle = $("#sdxlEnforceRecommendedCfg");
@@ -276,14 +281,14 @@ function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = 
   const profile = activeModel?.runtime_profile || {};
   const profileId = String(profile.profile_id || "").trim();
   const family = String(profile.family || "").trim().toLowerCase();
-  const acceleratedProfile = family === "lightning" || family === "turbo";
+  const recommendationProfile = Boolean(profile.recommendation_ui_enabled) || family === "lightning" || family === "turbo";
   const previousProfileId = String(panel.dataset.profileId || "");
   const profileChanged = Boolean(profileId && previousProfileId !== profileId);
 
   stepsInput.disabled = false;
   cfgInput.disabled = false;
 
-  if (!acceleratedProfile) {
+  if (!recommendationProfile) {
     panel.classList.add("is-hidden");
     panel.classList.remove("is-experimental");
     panel.dataset.profileId = profileId || "non-accelerated-sdxl";
@@ -318,6 +323,7 @@ function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = 
   const cfgLabel = $("#sdxlRecommendedCfgLabel");
   const profileLabel = $("#sdxlRecommendationProfile");
   const status = $("#sdxlRecommendationStatus");
+  const samplerSchedulerStatus = $("#sdxlRecommendedSamplerScheduler");
   if (stepsLabel) {
     const label = recommendedSteps.length ? recommendedSteps.join(", ") : (preferredSteps > 0 ? String(preferredSteps) : "model default");
     stepsLabel.textContent = `Use recommended steps (${label})`;
@@ -327,6 +333,16 @@ function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = 
     cfgLabel.textContent = recommendedCfgPreset ? `${cfgText} + recommended CFG Lab preset` : cfgText;
   }
   if (profileLabel) profileLabel.textContent = profileId;
+  if (samplerSchedulerStatus) {
+    const recommendedSampler = String(profile.sampler_name || "").trim();
+    const recommendedScheduler = String(profile.scheduler_name || "").trim();
+    if (recommendedSampler || recommendedScheduler) {
+      const pair = [recommendedSampler || "model choice", recommendedScheduler || "model choice"].join(" / ");
+      samplerSchedulerStatus.textContent = `Recommended sampler / scheduler: ${pair}. These are advisory and are never selected or enforced by the model profile.`;
+    } else {
+      samplerSchedulerStatus.textContent = "This model profile does not declare a sampler/scheduler recommendation.";
+    }
+  }
 
   const warnings = [];
   const requestedSteps = Number(stepsInput.value);
@@ -357,7 +373,7 @@ function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = 
     const activeRules = [];
     if (stepsToggle.checked) activeRules.push(`recommended steps${Number.isFinite(preferredSteps) && preferredSteps > 0 ? ` ${preferredSteps}` : ""}`);
     if (cfgToggle.checked) activeRules.push(`recommended CFG${Number.isFinite(recommendedCfg) ? ` ${recommendedCfg}` : ""}`);
-    if (cfgToggle.checked && recommendedCfgPreset) activeRules.push("the SDXL Lightning Recommended CFG Lab preset on activation/enable");
+    if (cfgToggle.checked && recommendedCfgPreset) activeRules.push("the recommended CFG Lab preset on activation/enable");
     const ruleText = activeRules.length
       ? ` Enabled recommendation${activeRules.length === 1 ? "" : "s"}: ${activeRules.join(", ")}. Fields remain editable; uncheck a recommendation to make that field value authoritative for generation.`
       : " All model recommendations are advisory; the values you enter will be used.";
@@ -367,7 +383,11 @@ function renderSdxlRecommendationControls(activeModel = null, { applyDefaults = 
     status.className = `field-status subtle${warnings.length ? " warning" : ""}`;
   }
 
-}
+ }
+
+// Backwards-compatible internal alias for SDXL-focused tests/extensions.
+// The implementation is now model-profile generic and also serves SD3.x.
+const renderSdxlRecommendationControls = renderModelRecommendationControls;
 
 function renderModelArchitectureStatus(activeModel = null) {
   const status = $("#modelArchitectureStatus");
@@ -377,23 +397,26 @@ function renderModelArchitectureStatus(activeModel = null) {
     status.textContent = "Architecture: waiting for activation.";
     status.className = "field-status subtle";
     applySd2RuntimePolicy({ activeModel: selectedModelRecord(), autoEnable: true });
-    renderSdxlRecommendationControls(null);
+    renderModelRecommendationControls(null);
     return;
   }
   if (summary) {
     status.textContent = `Architecture: ${summary}`;
     status.className = "field-status ready subtle";
     applySd2RuntimePolicy({ activeModel, autoEnable: true });
-    renderSdxlRecommendationControls(activeModel);
+    renderModelRecommendationControls(activeModel);
     return;
   }
   status.textContent = "Architecture: unknown for the current checkpoint.";
   status.className = "field-status subtle";
   applySd2RuntimePolicy({ activeModel, autoEnable: true });
-  renderSdxlRecommendationControls(activeModel);
+  renderModelRecommendationControls(activeModel);
 }
 
 async function activateSelectedModel({ quiet = false } = {}) {
+  if ($("#advancedModelsEnabled")?.checked) {
+    throw new Error("Advanced Models is enabled. Disable it before activating a whole checkpoint.");
+  }
   const requestedPath = $("#modelPath").value;
   if (!requestedPath) {
     state.activeModel = null;
@@ -510,7 +533,15 @@ async function applyStartupModelBehavior(bootstrap, current = {}) {
   modelRuntimeReadyPath = "";
   renderModelArchitectureStatus(state.activeModel);
   if (preload) {
-    await activateSelectedModel({ quiet: true });
+    setModelReadyState(true, "Loading remembered startup checkpoint in the background…", "subtle");
+    if (!startupActivationScheduled) {
+      startupActivationScheduled = true;
+      window.setTimeout(() => {
+        void activateSelectedModel({ quiet: true }).finally(() => {
+          startupActivationScheduled = false;
+        });
+      }, 0);
+    }
     return;
   }
   setModelReadyState(true, "Selected model will load on demand when generation starts.", "subtle");
@@ -520,9 +551,15 @@ function applyVaeSelectionPolicy() {
   const select = $("#vaePath");
   const status = $("#vaeSelectionStatus");
   if (!select || !status) return;
-  select.disabled = false;
+  const advancedModelsEnabled = Boolean($("#advancedModelsEnabled")?.checked);
+  select.disabled = advancedModelsEnabled;
   const civitaiButton = $("#vaeFetchCivitaiButton");
-  if (civitaiButton) civitaiButton.disabled = !select.value;
+  if (civitaiButton) civitaiButton.disabled = advancedModelsEnabled || !select.value;
+  if (advancedModelsEnabled) {
+    status.textContent = "Advanced Models owns VAE selection; the whole-model VAE override is ignored.";
+    status.className = "field-status subtle";
+    return;
+  }
   if (!select.value) {
     status.textContent = "Automatic / checkpoint embedded.";
   } else {
@@ -1070,7 +1107,7 @@ async function start() {
       const control = $(selector);
       if (!control) return;
       control.addEventListener("change", () => {
-        renderSdxlRecommendationControls(state.activeModel, { applyDefaults: control.checked, applyField: field });
+        renderModelRecommendationControls(state.activeModel, { applyDefaults: control.checked, applyField: field });
         window.dispatchEvent(new CustomEvent("image-gen-cfg-recommendation-changed"));
         saveSessionSoon();
       });
@@ -1087,14 +1124,14 @@ async function start() {
         // Steps/CFG value to diverge. The recommendation panel will warn and
         // the checkbox remains available if the user wants to disable future
         // auto-application for that field.
-        renderSdxlRecommendationControls(state.activeModel);
+        renderModelRecommendationControls(state.activeModel);
         saveSessionSoon();
       });
     });
     ["#samplerName", "#schedulerName"].forEach((selector) => {
       const control = $(selector);
       if (!control) return;
-      control.addEventListener("change", () => renderSdxlRecommendationControls(state.activeModel));
+      control.addEventListener("change", () => renderModelRecommendationControls(state.activeModel));
     });
     applyVaeSelectionPolicy();
     initializePromptTools(current);
@@ -1109,6 +1146,10 @@ async function start() {
     let workspaceTabs = null;
     const checkpointWorkspace = bindCheckpointWorkspace({
       activateModelPath: async (modelPath) => {
+        if ($("#advancedModelsEnabled")?.checked) {
+          notify("Advanced Models is active. Disable it before activating a whole checkpoint.", "warning");
+          return null;
+        }
         if (!state.models.some((item) => normalizedModelPath(item.path) === normalizedModelPath(modelPath))) {
           state.models.push({ name: modelPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || modelPath, path: modelPath, size_mb: 0 });
           populateModels(collectCurrentValues());
@@ -1162,6 +1203,7 @@ async function start() {
     bindUserConfigEditor();
     window.addEventListener("image-gen-parameter-ranges-changed", saveSessionSoon);
     bindOutpaintPrototype(saveSessionSoon);
+    await bindAdvancedModels({ values: current, saveSessionSoon });
     $("#vaePath")?.addEventListener("change", applyVaeSelectionPolicy);
     $("#sd2DedicatedGeneration")?.addEventListener("change", (event) => {
       event.currentTarget.dataset.userOverridden = "true";
@@ -1195,7 +1237,9 @@ async function start() {
     bindPanels();
 
     try {
-      await applyStartupModelBehavior(bootstrap, current);
+      if (!current.advanced_models_enabled) {
+        await applyStartupModelBehavior(bootstrap, current);
+      }
     } catch (error) {
       console.error("Initial model activation failed", error);
     }

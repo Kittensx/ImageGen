@@ -62,13 +62,16 @@ class _VAEBackend:
         latents: torch.Tensor,
         *,
         scaling_factor: float,
+        shift_factor: float = 0.0,
     ) -> torch.Tensor:
         if self.kind == "decoding_system":
             return self.owner.decode(latents)
         controller = self.owner if self.kind in {"execution_controller", "module_controller"} else None
         if controller is None:
             raise RuntimeError(f"Unsupported VAE backend kind: {self.kind}")
-        raw = controller.decode(latents / float(scaling_factor))
+        raw = controller.decode(
+            latents / float(scaling_factor) + float(shift_factor)
+        )
         raw = _extract_decode_tensor(raw)
         return (raw / 2.0 + 0.5).clamp(0.0, 1.0)
 
@@ -388,6 +391,7 @@ def vae_encode_for_sampling(
     image: torch.Tensor,
     vae: Any,
     scaling_factor: float,
+    shift_factor: float = 0.0,
     deterministic: bool = True,
     target_width: int | None = None,
     target_height: int | None = None,
@@ -408,8 +412,11 @@ def vae_encode_for_sampling(
 
     _validate_source(image, channel_order=channel_order)
     factor = float(scaling_factor)
+    shift = float(shift_factor)
     if not math.isfinite(factor) or factor <= 0.0:
         raise ValueError("VAE scaling_factor must be a positive finite value.")
+    if not math.isfinite(shift):
+        raise ValueError("VAE shift_factor must be finite.")
     downsample = int(latent_downsample_factor)
     if downsample <= 0:
         raise ValueError("VAE latent_downsample_factor must be positive.")
@@ -429,10 +436,16 @@ def vae_encode_for_sampling(
     backend = _resolve_backend(vae)
     if backend.kind == "decoding_system":
         configured_factor = float(backend.owner.vae_scaling_factor)
+        configured_shift = float(getattr(backend.owner, "vae_shift_factor", 0.0))
         if not math.isclose(configured_factor, factor, rel_tol=0.0, abs_tol=1.0e-12):
             raise ValueError(
                 "The requested VAE scaling_factor does not match the active DecodingSystem: "
                 f"requested={factor}, active={configured_factor}."
+            )
+        if not math.isclose(configured_shift, shift, rel_tol=0.0, abs_tol=1.0e-12):
+            raise ValueError(
+                "The requested VAE shift_factor does not match the active DecodingSystem: "
+                f"requested={shift}, active={configured_shift}."
             )
     module_device, module_dtype = _module_device_dtype(backend.module)
     vae_input = exact_image.mul(2.0).sub(1.0)
@@ -468,7 +481,7 @@ def vae_encode_for_sampling(
         )
         posterior = mean + standard_deviation * noise
         posterior_selection = "sample"
-    latents = posterior * factor
+    latents = (posterior - shift) * factor
     if not bool(torch.isfinite(latents).all()):
         raise ValueError("Scaled VAE sampling latent contains NaN or Inf.")
 
@@ -522,8 +535,10 @@ def vae_encode_for_sampling(
             "expected_width": expected_width,
             "expected_height": expected_height,
             "scaling_factor": factor,
+            "shift_factor": shift,
             "scaling_application_count": 1,
-            "scaling_operation": "posterior * scaling_factor",
+            "shift_application_count": 1 if shift != 0.0 else 0,
+            "scaling_operation": "(posterior - shift_factor) * scaling_factor",
         },
         "vae_execution": backend.report(),
         "upscale_provenance": provenance,
@@ -557,7 +572,9 @@ def build_vae_execution_fingerprint(metadata: Mapping[str, Any]) -> dict[str, An
                 "expected_width",
                 "expected_height",
                 "scaling_factor",
+                "shift_factor",
                 "scaling_application_count",
+                "shift_application_count",
                 "scaling_operation",
             }
         },
@@ -598,6 +615,7 @@ def vae_round_trip_from_encoded_for_diagnostics(
     encoded: VAEEncodeResult,
     vae: Any,
     scaling_factor: float,
+    shift_factor: float = 0.0,
     allow_center_crop: bool = False,
 ) -> VAERoundTripResult:
     """Decode an existing encode result without repeating VAE encoding."""
@@ -606,6 +624,7 @@ def vae_round_trip_from_encoded_for_diagnostics(
     decoded = backend.decode_scaled_latents(
         encoded.latents,
         scaling_factor=float(scaling_factor),
+        shift_factor=float(shift_factor),
     )
     exact = encoded.metadata["exact_image_contract"]
     width = int(exact["target_width"])
@@ -660,6 +679,7 @@ def vae_round_trip_for_diagnostics(
     image: torch.Tensor,
     vae: Any,
     scaling_factor: float,
+    shift_factor: float = 0.0,
     deterministic: bool = True,
     target_width: int | None = None,
     target_height: int | None = None,
@@ -677,6 +697,7 @@ def vae_round_trip_for_diagnostics(
         image=image,
         vae=vae,
         scaling_factor=scaling_factor,
+        shift_factor=shift_factor,
         deterministic=deterministic,
         target_width=target_width,
         target_height=target_height,
@@ -693,6 +714,7 @@ def vae_round_trip_for_diagnostics(
         encoded=encoded,
         vae=vae,
         scaling_factor=scaling_factor,
+        shift_factor=shift_factor,
         allow_center_crop=allow_center_crop,
     )
 
