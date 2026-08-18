@@ -4,9 +4,6 @@ import copy
 import hashlib
 import itertools
 import json
-import threading
-import time
-import uuid
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -15,9 +12,9 @@ from typing import Any, Mapping, Sequence
 from image_gen.webui.batch_io import BatchIOService, MAX_IMMEDIATE_SUBMISSION
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import WebUIModelSelectionState
+from image_gen.webui.preflight_tokens import PreflightTokenStore
 from modules.project_context import ProjectContext
 
-_TOKEN_TTL_SECONDS = 15 * 60
 _DEFAULT_LIMIT = MAX_IMMEDIATE_SUBMISSION
 _HARD_LIMIT = 1000
 _WARNING_THRESHOLD = 50
@@ -92,10 +89,6 @@ class VariationPreflight:
         return asdict(self)
 
 
-@dataclass
-class _StoredVariationPreflight:
-    specification: dict[str, Any]
-    created_monotonic: float = field(default_factory=time.monotonic)
 
 
 def _json_safe(value: Any) -> Any:
@@ -144,8 +137,9 @@ class VariationMatrixService:
         self.jobs = jobs
         self.model_selection = model_selection
         self.batch_io = batch_io
-        self._tokens: dict[str, _StoredVariationPreflight] = {}
-        self._lock = threading.RLock()
+        self._tokens = PreflightTokenStore[dict[str, Any]](
+            missing_message="Variation preflight expired or was not found. Run preflight again.",
+        )
 
     @staticmethod
     def _range_values(source: Mapping[str, Any]) -> list[Any]:
@@ -513,26 +507,12 @@ class VariationMatrixService:
             result.preflight_token = self._issue_token(asdict(plan))
         return result
 
-    def _cleanup_tokens(self) -> None:
-        cutoff = time.monotonic() - _TOKEN_TTL_SECONDS
-        with self._lock:
-            for token in [key for key, value in self._tokens.items() if value.created_monotonic < cutoff]:
-                self._tokens.pop(token, None)
 
     def _issue_token(self, specification: dict[str, Any]) -> str:
-        self._cleanup_tokens()
-        token = uuid.uuid4().hex
-        with self._lock:
-            self._tokens[token] = _StoredVariationPreflight(copy.deepcopy(specification))
-        return token
+        return self._tokens.issue(specification)
 
     def _stored_plan(self, token: str) -> VariationPlan:
-        self._cleanup_tokens()
-        with self._lock:
-            stored = self._tokens.get(str(token or ""))
-        if stored is None:
-            raise ValueError("Variation preflight expired or was not found. Run preflight again.")
-        source = copy.deepcopy(stored.specification)
+        source = self._tokens.get(token)
         source["dimensions"] = [VariationDimension(**item) for item in source.get("dimensions") or []]
         return VariationPlan(**source)
 
@@ -564,6 +544,5 @@ class VariationMatrixService:
                     "base_source_label": item["base_source_label"],
                     "errors": [str(exc)],
                 })
-        with self._lock:
-            self._tokens.pop(preflight_token, None)
+        self._tokens.discard(preflight_token)
         return result, submitted, rejected

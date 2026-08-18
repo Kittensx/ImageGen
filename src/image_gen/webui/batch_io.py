@@ -4,9 +4,6 @@ import copy
 import csv
 import io
 import json
-import threading
-import time
-import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import WebUIModelSelectionState
+from image_gen.webui.preflight_tokens import PreflightTokenStore
 from modules.project_context import ProjectContext
 
 NATIVE_FORMAT = "image_gen_queue"
@@ -23,14 +21,13 @@ NATIVE_VERSION = 1
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_PARSED_JOBS = 1000
 MAX_IMMEDIATE_SUBMISSION = 250
-_TOKEN_TTL_SECONDS = 15 * 60
 
 _INT_FIELDS = {"seed", "width", "height", "steps", "batch_size", "batch_count", "clip_skip", "hires_width", "hires_height", "hires_steps", "hires_expected_native_scale", "outpaint_shape_target_width", "outpaint_shape_target_height", "outpaint_shape_base_width", "outpaint_shape_base_height"}
 _FLOAT_FIELDS = {"cfg_scale", "cfg_rescale", "guidance_rescale", "hires_scale", "hires_axis_scale_width", "hires_axis_scale_height", "hires_uniform_scale", "hires_denoising_strength", "outpaint_shape_denoising_strength"}
 _BOOL_FIELDS = {"save_images", "save_txt", "save_json", "save_diagnostics_json", "tiling", "prompt_shadow_compare", "hires_enabled", "hires_aspect_ratio_changed", "hires_save_lowres", "outpaint_shape_expansion_enabled", "outpaint_shape_save_base", "sd2_dedicated_generation"}
-_BOOL_FIELDS = _BOOL_FIELDS | {"hires_blurred_edge_compare_diagnostics"}
+_BOOL_FIELDS = _BOOL_FIELDS | {"hires_blurred_edge_compare_diagnostics", "model_enforce_recommended_steps", "model_enforce_recommended_cfg"}
 _DICT_FIELDS = {"sampler_kwargs", "scheduler_kwargs", "prompt_parser_kwargs", "prompt_shortcut_profile_snapshot", "hires_prompt_parser_kwargs", "hires_shortcut_profile_snapshot", "prompt_preflight", "prompt_route_plan", "hires_prompt_route_plan", "hires_recorded_target_correction", "hires_recorded_correction_fingerprint", "hires_dimension_plan", "outpaint_shape_runtime_record", "parser_kwargs", "extras", "variation_matrix"}
-_REMAP_FIELDS = {"model_path", "vae_path", "sd2_runtime_profile_override", "sampler_name", "scheduler_name"}
+_REMAP_FIELDS = {"model_path", "vae_path", "sd2_runtime_profile_override", "sd3_runtime_profile_override", "sampler_name", "scheduler_name"}
 _ALIASES = {
     "prompt": "positive_prompt",
     "sampler": "sampler_name",
@@ -42,7 +39,7 @@ _ALIASES = {
 _REQUEST_FIELDS = {
     "positive_prompt", "negative_prompt", "seed", "width", "height", "steps",
     "cfg_scale", "batch_size", "batch_count", "sampler_name", "scheduler_name",
-    "model_path", "vae_path", "sd2_runtime_profile_override", "sd2_dedicated_generation", "sampler_kwargs", "scheduler_kwargs", "cfg_rescale",
+    "model_path", "vae_path", "sd2_runtime_profile_override", "sd3_runtime_profile_override", "sd3_text_encoder_source", "advanced_models_enabled", "advanced_model_family", "advanced_model_components", "advanced_model_allow_digital_components", "advanced_model_composition_sha256", "advanced_model_t5_device", "text_encoder_3_device", "model_enforce_recommended_steps", "model_enforce_recommended_cfg", "sd2_dedicated_generation", "sampler_kwargs", "scheduler_kwargs", "cfg_rescale",
     "compatibility_mode", "clip_skip", "tiling", "prompt_parser_name", "prompt_parser_kwargs",
     "prompt_shortcut_profile_name", "prompt_shortcut_profile_snapshot", "prompt_parser_preset_name",
     "base_prompt_parser_name", "base_shortcut_profile_name", "hires_prompt_parser_mode",
@@ -169,11 +166,6 @@ class ExportResult:
     job_count: int
 
 
-@dataclass
-class _StoredImportPreflight:
-    token: str
-    specification: dict[str, Any]
-    created_monotonic: float = field(default_factory=time.monotonic)
 
 
 class BatchIOService:
@@ -188,8 +180,9 @@ class BatchIOService:
         self.context = context
         self.jobs = jobs
         self.model_selection = model_selection
-        self._tokens: dict[str, _StoredImportPreflight] = {}
-        self._lock = threading.RLock()
+        self._tokens = PreflightTokenStore[dict[str, Any]](
+            missing_message="Import preflight expired or was not found. Run validation again.",
+        )
 
     @staticmethod
     def detect_format(filename: str, explicit: str | None = None) -> str:
@@ -756,26 +749,12 @@ class BatchIOService:
             "item_remaps": item_remaps,
         }
 
-    def _cleanup_tokens(self) -> None:
-        cutoff = time.monotonic() - _TOKEN_TTL_SECONDS
-        with self._lock:
-            for token in [key for key, stored in self._tokens.items() if stored.created_monotonic < cutoff]:
-                self._tokens.pop(token, None)
 
     def _issue_token(self, specification: dict[str, Any]) -> str:
-        self._cleanup_tokens()
-        token = uuid.uuid4().hex
-        with self._lock:
-            self._tokens[token] = _StoredImportPreflight(token, copy.deepcopy(specification))
-        return token
+        return self._tokens.issue(specification)
 
     def _consume_specification(self, token: str) -> dict[str, Any]:
-        self._cleanup_tokens()
-        with self._lock:
-            stored = self._tokens.get(str(token or ""))
-        if stored is None:
-            raise ValueError("Import preflight expired or was not found. Run validation again.")
-        return copy.deepcopy(stored.specification)
+        return self._tokens.get(token)
 
     def _evaluate_specification(self, specification: dict[str, Any], *, issue_token: bool) -> ImportPreflight:
         by_id = {item["job_id"]: item for item in specification["jobs"]}
@@ -922,8 +901,7 @@ class BatchIOService:
                 submitted.append(job)
             except (OSError, TypeError, ValueError) as exc:
                 rejected.append({"job_id": item["job_id"], "source_label": item["source_label"], "errors": [str(exc)]})
-        with self._lock:
-            self._tokens.pop(preflight_token, None)
+        self._tokens.discard(preflight_token)
         return result, submitted, rejected
 
     @staticmethod

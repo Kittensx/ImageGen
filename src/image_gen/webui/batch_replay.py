@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import copy
-import threading
-import time
-import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import WebUIModelSelectionState
+from image_gen.webui.preflight_tokens import PreflightTokenStore
 from image_gen.webui.replay import ReplayService, _BATCH_OVERRIDE_FIELDS
 
 MAX_SELECTED_OUTPUTS = 100
 MAX_COMPOSER_JOBS = 250
-_TOKEN_TTL_SECONDS = 15 * 60
 _REMAP_FIELDS = {"model_path", "vae_path", "sampler_name", "scheduler_name"}
 
 
@@ -31,11 +28,6 @@ class BatchReplayPreflight:
         return asdict(self)
 
 
-@dataclass
-class _StoredBatchPreflight:
-    token: str
-    specification: dict[str, Any]
-    created_monotonic: float = field(default_factory=time.monotonic)
 
 
 class BatchReplayService:
@@ -50,8 +42,9 @@ class BatchReplayService:
         self.replay = replay
         self.jobs = jobs
         self.model_selection = model_selection
-        self._tokens: dict[str, _StoredBatchPreflight] = {}
-        self._lock = threading.RLock()
+        self._tokens = PreflightTokenStore[dict[str, Any]](
+            missing_message="Batch replay preflight expired or was not found. Run preflight again.",
+        )
 
     @staticmethod
     def _unique_ids(values: Any) -> list[str]:
@@ -135,32 +128,12 @@ class BatchReplayService:
             "item_remaps": item_remaps,
         }
 
-    def _cleanup_tokens(self) -> None:
-        cutoff = time.monotonic() - _TOKEN_TTL_SECONDS
-        with self._lock:
-            for token in [
-                token for token, stored in self._tokens.items()
-                if stored.created_monotonic < cutoff
-            ]:
-                self._tokens.pop(token, None)
 
     def _issue_token(self, specification: dict[str, Any]) -> str:
-        self._cleanup_tokens()
-        token = uuid.uuid4().hex
-        with self._lock:
-            self._tokens[token] = _StoredBatchPreflight(
-                token=token,
-                specification=copy.deepcopy(specification),
-            )
-        return token
+        return self._tokens.issue(specification)
 
     def _consume_specification(self, token: str) -> dict[str, Any]:
-        self._cleanup_tokens()
-        with self._lock:
-            stored = self._tokens.get(str(token or ""))
-        if stored is None:
-            raise ValueError("Batch replay preflight expired or was not found. Run preflight again.")
-        return copy.deepcopy(stored.specification)
+        return self._tokens.get(token)
 
     @staticmethod
     def _prompt_summary(request: Mapping[str, Any], limit: int = 96) -> str:
@@ -345,8 +318,7 @@ class BatchReplayService:
             except (OSError, TypeError, ValueError) as exc:
                 rejected.append({"output_id": item["output_id"], "errors": [str(exc)]})
 
-        with self._lock:
-            self._tokens.pop(preflight_token, None)
+        self._tokens.discard(preflight_token)
         return result, submitted, rejected
 
 

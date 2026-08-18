@@ -3,10 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import threading
-import time
-import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -24,6 +21,7 @@ from image_gen.runtime_options import (
 from image_gen.webui.jobs import GenerationJobManager
 from image_gen.webui.model_selection import ActiveModelSelection, WebUIModelSelectionState
 from image_gen.webui.output_details import OutputMetadataDetails, load_output_details
+from image_gen.webui.preflight_tokens import PreflightTokenStore
 from image_gen.webui.prompt_assets import extract_inline_loras_from_prompts, merge_replay_loras
 from image_gen.runtime.lora_runtime import LoRAResolver
 from image_gen.webui.schema_utils import normalize_config_schema
@@ -37,6 +35,17 @@ _EDITABLE_FIELDS = {
     "model_path",
     "vae_path",
     "sd2_runtime_profile_override",
+    "sd3_runtime_profile_override",
+    "sd3_text_encoder_source",
+    "advanced_models_enabled",
+    "advanced_model_family",
+    "advanced_model_components",
+    "advanced_model_allow_digital_components",
+    "advanced_model_composition_sha256",
+    "advanced_model_t5_device",
+    "text_encoder_3_device",
+    "model_enforce_recommended_steps",
+    "model_enforce_recommended_cfg",
     "sd2_dedicated_generation",
     "width",
     "height",
@@ -195,6 +204,18 @@ _OPERATIONAL_FIELDS = {
 _PRESERVABLE_BACKEND_FIELDS = {
     "cfg_rescale",
     "sd2_runtime_profile_override",
+    "sd3_runtime_profile_override",
+    "sd3_text_encoder_source",
+    "advanced_models_enabled",
+    "advanced_model_family",
+    "advanced_model_components",
+    "advanced_model_allow_digital_components",
+    "advanced_model_composition_sha256",
+    "advanced_model_t5_device",
+    "text_encoder_3_device",
+    "advanced_model_resolved",
+    "model_enforce_recommended_steps",
+    "model_enforce_recommended_cfg",
     "sd2_dedicated_generation",
     "compatibility_mode",
     "clip_skip",
@@ -333,7 +354,6 @@ _MANIFEST_COMPLETENESS_FIELDS = (
     "extra.model_provenance.loaded_path",
     "extra.model_provenance.sha256",
 )
-_TOKEN_TTL_SECONDS = 15 * 60
 
 
 def _canonical_model_family(value: Any) -> str:
@@ -447,11 +467,6 @@ class ReplayPreflight:
         return asdict(self)
 
 
-@dataclass
-class _StoredPreflight:
-    token: str
-    specification: dict[str, Any]
-    created_monotonic: float = field(default_factory=time.monotonic)
 
 
 class ReplayService:
@@ -469,8 +484,9 @@ class ReplayService:
         self.jobs = jobs
         self.model_selection = model_selection
         self.upscaler_catalog = upscaler_catalog
-        self._tokens: dict[str, _StoredPreflight] = {}
-        self._lock = threading.RLock()
+        self._tokens = PreflightTokenStore[dict[str, Any]](
+            missing_message="Replay preflight expired or was not found. Run preflight again.",
+        )
 
     @staticmethod
     def _mapping(value: Any) -> dict[str, Any]:
@@ -650,30 +666,12 @@ class ReplayService:
             "override_fields": override_fields,
         }
 
-    def _cleanup_tokens(self) -> None:
-        cutoff = time.monotonic() - _TOKEN_TTL_SECONDS
-        with self._lock:
-            stale = [token for token, item in self._tokens.items() if item.created_monotonic < cutoff]
-            for token in stale:
-                self._tokens.pop(token, None)
 
     def _issue_token(self, specification: dict[str, Any]) -> str:
-        self._cleanup_tokens()
-        token = uuid.uuid4().hex
-        with self._lock:
-            self._tokens[token] = _StoredPreflight(
-                token=token,
-                specification=copy.deepcopy(specification),
-            )
-        return token
+        return self._tokens.issue(specification)
 
     def _consume_specification(self, token: str) -> dict[str, Any]:
-        self._cleanup_tokens()
-        with self._lock:
-            stored = self._tokens.get(str(token or ""))
-        if stored is None:
-            raise ValueError("Replay preflight expired or was not found. Run preflight again.")
-        return copy.deepcopy(stored.specification)
+        return self._tokens.get(token)
 
     def _completeness(self, details: OutputMetadataDetails) -> dict[str, Any]:
         manifest = details.manifest
@@ -718,6 +716,40 @@ class ReplayService:
             container = request.get(parts[0])
             if isinstance(container, dict):
                 container.pop(parts[1], None)
+
+    @classmethod
+    def _pin_recorded_advanced_model_resolution(
+        cls,
+        request: dict[str, Any],
+        recorded: Mapping[str, Any] | None,
+    ) -> bool:
+        resolution = cls._mapping(recorded)
+        components = cls._mapping(resolution.get("components"))
+        if not resolution or not components:
+            return False
+        selected = cls._mapping(request.get("advanced_model_components"))
+        pinned = copy.deepcopy(selected)
+        pinned_any = False
+        for role, item in components.items():
+            entry = cls._mapping(item)
+            digest = str(entry.get("component_sha256") or "").strip().lower()
+            if not digest:
+                continue
+            pinned[str(role)] = digest
+            pinned_any = True
+        if not pinned_any:
+            return False
+        request["advanced_model_components"] = pinned
+        if not str(request.get("advanced_model_family") or "").strip():
+            family = str(resolution.get("family_id") or "").strip()
+            if family:
+                request["advanced_model_family"] = family
+        if not str(request.get("advanced_model_composition_sha256") or "").strip():
+            composition_sha = str(resolution.get("composition_sha256") or "").strip().lower()
+            if composition_sha:
+                request["advanced_model_composition_sha256"] = composition_sha
+        request["advanced_model_resolved"] = copy.deepcopy(resolution)
+        return True
 
     def _resolve_vae(self, value: Any) -> Path:
         text = str(value or "").strip()
@@ -820,6 +852,26 @@ class ReplayService:
             else:
                 request["model_path"] = current_model.resolved_path
             replaced.add("model_path")
+
+        advanced_model_sensitive_fields = {
+            "model_path",
+            "advanced_models_enabled",
+            "advanced_model_family",
+            "advanced_model_components",
+            "advanced_model_allow_digital_components",
+            "advanced_model_composition_sha256",
+            "advanced_model_t5_device",
+            "text_encoder_3_device",
+        }
+        if (
+            mode == "exact"
+            and bool(request.get("advanced_models_enabled", False))
+            and not (replaced & advanced_model_sensitive_fields)
+        ):
+            self._pin_recorded_advanced_model_resolution(
+                request,
+                original.get("advanced_model_resolved"),
+            )
 
         schedule_sensitive_fields = {
             "sampler_name",
@@ -1528,8 +1580,7 @@ class ReplayService:
         request = dict(result.request)
         request["model_path"] = selection.resolved_path
         job = await self.jobs.submit(request, model_selection=selection.to_dict())
-        with self._lock:
-            self._tokens.pop(preflight_token, None)
+        self._tokens.discard(preflight_token)
         return result, job
 
 
