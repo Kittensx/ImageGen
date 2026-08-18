@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "support_id": "sdxl-family-support",
+  "profiles": {
+    "base": {
+      "label": "SDXL Base 1.0",
+      "repo_id": "stabilityai/stable-diffusion-xl-base-1.0",
+      "revision": "main",
+      "runtime_subdir": "stable_diffusion/SDXL_Base",
+      "gated": false,
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder_2/config.json",
+        "tokenizer/merges.txt",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer_2/merges.txt",
+        "tokenizer_2/special_tokens_map.json",
+        "tokenizer_2/tokenizer_config.json",
+        "tokenizer_2/vocab.json",
+        "unet/config.json",
+        "vae/config.json"
+      ]
+    },
+    "refiner": {
+      "label": "SDXL Base Refiner 1.0",
+      "repo_id": "stabilityai/stable-diffusion-xl-refiner-1.0",
+      "revision": "main",
+      "runtime_subdir": "stable_diffusion/SDXL_Base_Refiner",
+      "gated": false,
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder_2/config.json",
+        "tokenizer_2/merges.txt",
+        "tokenizer_2/special_tokens_map.json",
+        "tokenizer_2/tokenizer_config.json",
+        "tokenizer_2/vocab.json",
+        "unet/config.json",
+        "vae/config.json"
+      ]
+    },
+    "turbo": {
+      "label": "SDXL Turbo",
+      "repo_id": "stabilityai/sdxl-turbo",
+      "revision": "main",
+      "runtime_subdir": "stable_diffusion/SDXL_Turbo",
+      "gated": false,
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder_2/config.json",
+        "tokenizer/merges.txt",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer_2/merges.txt",
+        "tokenizer_2/special_tokens_map.json",
+        "tokenizer_2/tokenizer_config.json",
+        "tokenizer_2/vocab.json",
+        "unet/config.json",
+        "vae/config.json"
+      ]
+    },
+    "japanese-sdxl": {
+      "label": "Japanese Stable Diffusion XL support",
+      "repo_id": "stabilityai/japanese-stable-diffusion-xl",
+      "revision": "main",
+      "runtime_subdir": "stable_diffusion/japanese-stable-diffusion-xl",
+      "gated": true,
+      "files": [
+        "model_index.json",
+        "modeling_clipnull.py",
+        "pipeline_japanese_stable_diffusion_xl.py",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer/spiece.model",
+        "tokenizer/tokenizer_config.json",
+        "unet/config.json",
+        "vae/config.json"
+      ]
+    },
+    "japanese-clip": {
+      "label": "Japanese Stable CLIP ViT-L/16 support",
+      "repo_id": "stabilityai/japanese-stable-clip-vit-l-16",
+      "revision": "main",
+      "runtime_subdir": "stable_diffusion/japanese-stable-clip-vit-l-16",
+      "gated": true,
+      "files": [
+        "config.json",
+        "configuration_japanese_stable_clip.py",
+        "modeling_japanese_stable_clip.py",
+        "preprocessor_config.json",
+        "special_tokens_map.json",
+        "spiece.model",
+        "tokenizer_config.json"
+      ]
+    }
+  }
+}
