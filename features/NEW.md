@@ -2,13 +2,49 @@
 
 This page highlights recent user-visible improvements present in the current source. It is intentionally shorter and more product-focused than the chronological changelog.
 
+## SDXL, SD3 Medium, and SD3.5 Medium Generation
+
+ImageGen's active txt2img architecture set now extends through **SDXL, SD3 Medium, and SD3.5 Medium** in addition to SD 1.x and qualified SD 2.x.
+
+SDXL uses its architecture-specific dual-encoder/pooled-conditioning path and runtime profiles. SD3 Medium and SD3.5 Medium use the Flow Match transformer path with 16-channel latents, CLIP-L + CLIP-G conditioning, SD3-specific runtime profiles, and staged component residency.
+
+The current source includes a dedicated `install_sd3_support.bat` setup helper for SD3-family runtime assets and shared text encoders. It does not download the user's main model checkpoint.
+
+SD3 Medium and SD3.5 Medium normal txt2img generation have been verified with image-generation tests. Broader SD3 workflows such as Hires, SD3 LoRA application, Img2Img, and REGION/Canvas combinations remain separate qualification work.
+
+## Advanced Models Component Composition
+
+The WebUI now includes **Advanced Models** mode for building a generation composition from registry-fingerprinted components instead of requiring one monolithic checkpoint to define every active role.
+
+The initial family contracts cover SD 1.x, SD 2.x, SDXL, and SD3/SD3.5 roles. Compatible model weights, VAEs, text encoders, and optional SD3 T5/T5XXL components can be selected by exact component identity.
+
+The component registry distinguishes exact identity from source location. A component can be available as a standalone physical file, as a digital component inside one or more donor checkpoints, or through both source types without changing its fingerprint.
+
+Auto selection is conservative: required roles are automatically resolved only when exactly one eligible compatible fingerprint exists. Ambiguous choices remain explicit rather than being guessed from filenames.
+
+## Persistent Generation Queue
+
+Recoverable generation queues now survive application restarts.
+
+ImageGen persists queue ordering, individually paused queued jobs, whole-queue hold state, and recoverable multi-image progress. If the application closes while a generation is active, that job can be restored at the front of the queue, but the queue starts held so reopening ImageGen does not immediately restart GPU work without an explicit Resume.
+
+Completed, failed, and normally cancelled jobs are not requeued.
+
+## Runtime and Replay Architecture Hardening
+
+Several large runtime areas have been decomposed without intentionally changing their generation semantics.
+
+The KES scheduler now separates schedule construction, cache behavior, randomization, blending, stabilization, and diagnostics. The txt2img runtime separates model preflight, pipeline construction, residency, and request execution behind the existing `Txt2ImgRunner` surface. Catalog/replay work now uses domain-specific catalog services and a shared preflight-token store instead of duplicating token lifecycle code across replay, batch replay, batch import, and variation workflows.
+
+These changes primarily improve maintainability and reduce the risk of future feature work crossing unrelated runtime responsibilities.
+
 ## Stable Diffusion 2.x Generation
 
 Qualified **Stable Diffusion 2.x** checkpoints can now use ImageGen's normal generation runtime through a dedicated OpenCLIP conditioning path and SD 2.x runtime-profile contract.
 
 SD 2.x no longer reuses SD 1.x text-conditioning assumptions. The runtime validates the 1024-wide OpenCLIP conditioning contract, resolves SD 2.x prediction/runtime profiles, and keeps architecture qualification explicit.
 
-SDXL remains planned for base-model generation.
+SDXL has since moved into the active generation runtime; this SD 2.x section is retained as the earlier architecture-expansion milestone.
 
 ## Stronger LoRA Compatibility and Inspection
 

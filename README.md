@@ -1,13 +1,13 @@
 # ImageGen
 
-**Local Stable Diffusion image generation for Windows with SD 1.x, SD 2.x, and SDXL support.**
+**Local Stable Diffusion image generation for Windows with SD 1.x, SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium support.**
 
-ImageGen is a local alpha image-generation application built around its own modular Stable Diffusion runtime. The current release supports SD 1.x, SD 2.x, and SDXL text-to-image generation, a browser-based local WebUI, LoRA support, neural Hires generation, replayable generation records, memory-aware execution, and an alpha Canvas Expansion workflow for adapting an image to a larger shape without stretching the protected source.
+ImageGen is a local alpha image-generation application built around its own modular Stable Diffusion runtime. The current release supports SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium text-to-image generation, a browser-based local WebUI, component-based Advanced Models composition, LoRA support on qualified families, neural Hires generation, replayable generation records, persistent generation queues, memory-aware execution, and an alpha Canvas Expansion workflow for adapting an image to a larger shape without stretching the protected source.
 
 > [!IMPORTANT]
 > ImageGen is still in alpha development. Interfaces, metadata, configuration fields, and experimental workflows may change between releases.
 >
-> **Current model-family support includes SD 1.x, SD 2.x, and SDXL.** Support remains architecture-aware, and individual checkpoints or specialized variants can still have model-specific requirements.
+> **Current text-to-image architecture support includes SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium.** Support remains architecture-aware, and individual checkpoints or specialized variants can still have model-specific requirements.
 
 ## Start Here
 
@@ -31,7 +31,7 @@ The current public build is designed around:
 - **Windows 10 or Windows 11, 64-bit**
 - **Python 3.10.20, 64-bit — exactly**
 - An NVIDIA CUDA GPU supported by a published ImageGen hardware profile
-- A legally obtained, compatible **full SD 1.x, SD 2.x, or SDXL `.safetensors` checkpoint**
+- A legally obtained, compatible **full SD 1.x, SD 2.x, SDXL, SD3 Medium, or SD3.5 Medium `.safetensors` checkpoint**
 - Enough disk space for ImageGen, the Python environment, checkpoints, LoRAs, upscalers, and generated images
 
 ### Python 3.10.20 Is Required
@@ -77,11 +77,23 @@ The installer handles the environment setup for the supported machine. It will:
 
 If setup replaces an existing ImageGen `.venv`, the installer is designed to preserve the previous environment as a backup and restore it if installation fails.
 
-### 3. Add a Stable Diffusion Checkpoint
+### Optional SD3 / SD3.5 Runtime Support Setup
+
+After the main ImageGen environment is installed, SD3 Medium and SD3.5 Medium use an additional runtime-support setup step:
+
+```bat
+install_sd3_support.bat
+```
+
+This installs the architecture runtime configuration/tokenizer assets and shared text-encoder files used by the SD3-family runtime. It does **not** download a Stable Diffusion checkpoint for you. Main model checkpoints must still be obtained separately and placed in your configured checkpoint library.
+
+The normal WebUI SD3/SD3.5 path is currently qualified around CLIP-L + CLIP-G conditioning. The backend also contains T5/T5XXL component support for Advanced Models work, but normal WebUI T5 selection remains a separate advanced/qualification boundary.
+
+### 3. Add a Supported Stable Diffusion Checkpoint
 
 ImageGen does not include Stable Diffusion checkpoints.
 
-Place a compatible full SD 1.x, SD 2.x, or SDXL `.safetensors` checkpoint in:
+Place a compatible full SD 1.x, SD 2.x, SDXL, SD3 Medium, or SD3.5 Medium `.safetensors` checkpoint in:
 
 ```text
 models\StableDiffusion\CheckPoints
@@ -90,7 +102,7 @@ models\StableDiffusion\CheckPoints
 You can then select the checkpoint from the ImageGen WebUI.
 
 > [!NOTE]
-> The current generation loader supports full SD 1.x, SD 2.x, and SDXL `.safetensors` checkpoints. A file appearing in an asset browser does not automatically mean that its exact format, architecture, or specialized variant is supported by every workflow.
+> The current generation loader supports qualified full SD 1.x, SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium `.safetensors` checkpoints. A file appearing in an asset browser does not automatically mean that its exact format, architecture, specialized variant, LoRA ecosystem, or secondary workflow is supported.
 
 ### 4. Start the WebUI
 
@@ -157,7 +169,7 @@ To replace an existing key, simply replace the contents of `civitai_api_key.txt`
 For a basic txt2img run:
 
 1. open the **Generation** workspace;
-2. select a supported SD 1.x, SD 2.x, or SDXL checkpoint;
+2. select a supported SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, or SD3.5 Medium checkpoint;
 3. enter a positive prompt and, if desired, a negative prompt;
 4. choose width, height, steps, CFG, sampler, scheduler, and seed;
 5. optionally select LoRAs or enable Hires; and
@@ -180,13 +192,17 @@ The output location and model directories can be changed through ImageGen config
 | SD 1.x text-to-image | **Available** |
 | SD 2.x text-to-image | **Available** |
 | SDXL text-to-image | **Available** |
-| Full SD 1.x / SD 2.x / SDXL `.safetensors` checkpoints | **Available** |
+| SD3 Medium text-to-image | **Available — verified** |
+| SD3.5 Medium text-to-image | **Available — verified** |
+| Full qualified SD 1.x / SD 2.x / SDXL / SD3 Medium / SD3.5 Medium `.safetensors` checkpoints | **Available** |
+| Advanced Models component composition | **Available — alpha / evidence-based** |
 | Local WebUI | **Available** |
 | Interactive CLI / config-driven generation | **Available** |
 | LoRA loading and weighted multi-LoRA generation | **Available** |
 | Neural `.pth` Hires / second pass | **Available — alpha** |
 | Exact requested output dimensions | **Available** |
 | Queue, replay, batch import/export, and variation tools | **Available** |
+| Queue persistence across application sessions | **Available** |
 | Output metadata and compact replay records | **Available** |
 | Canvas Expansion / shape adaptation | **Available — alpha / intermediate workflow** |
 | General Image-to-Image | **Planned — not yet available** |
@@ -321,6 +337,6 @@ Review diagnostic files before posting them publicly. Prompts, local paths, file
 
 ## Project Status
 
-ImageGen is an actively developed alpha. The current product focus is a reliable, replayable, memory-aware **SD 1.x, SD 2.x, and SDXL generation environment** while the architecture is extended toward general Img2Img/Inpainting, larger-model execution, and additional image-generation workflows.
+ImageGen is an actively developed alpha. The current product focus is a reliable, replayable, memory-aware **SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium generation environment** while the architecture is extended toward general Img2Img/Inpainting, broader adapter support, stronger component-composition qualification, and additional image-generation workflows.
 
 For planned work, see [Upcoming Features](features/UPCOMING.md). For chronological changes, see the Changelog.

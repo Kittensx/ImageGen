@@ -30,21 +30,33 @@ Txt2Img or Existing Image
 -> Img2Img refinement
 ```
 
-## Stable Diffusion XL (SDXL)
+## SD3 / SD3.5 Workflow Expansion
 
-Stable Diffusion 2.x has moved into the current qualified generation runtime, so the remaining major Stable Diffusion family expansion is **SDXL**.
+SD3 Medium and SD3.5 Medium normal txt2img generation are now current features. Remaining SD3-family work is about expanding qualified workflows rather than establishing the first base-generation path.
 
-SDXL generation requires more than model discovery. Planned work still needs to qualify:
+Future areas include:
 
-- dual tokenizers;
-- dual text encoders;
-- pooled prompt embeddings;
-- added conditioning/time IDs;
-- the SDXL-specific UNet call contract;
-- model-family-specific validation; and
-- end-to-end sampler/scheduler/replay behavior.
+- normal WebUI T5/T5XXL source selection and memory policy;
+- SD3/SD3.5 LoRA application;
+- Hires qualification;
+- Img2Img and inpainting integration;
+- REGION / Canvas Expansion / outpaint integration;
+- broader sampler/scheduler qualification in the Flow Match domain;
+- additional SD3-family checkpoint variants only after matching runtime profiles and empirical validation; and
+- stronger replay/compatibility evidence for advanced component compositions.
 
-The standard LoRA compatibility layer can already identify SDXL UNet/TE1/TE2 adapter targets, but that adapter mapping work should not be mistaken for a completed SDXL base-generation runtime.
+## Advanced Models Qualification and Component Lifecycle
+
+Advanced Models component composition is now implemented. Future work can strengthen the evidence and lifecycle around those compositions without reverting to filename-based compatibility assumptions.
+
+Expandable areas include:
+
+- broader empirical compatibility relationships between exact component fingerprints;
+- digital-component parity qualification against donor checkpoints;
+- physical extraction only after digital parity is proven;
+- recomposition parity tests for extracted complementary components;
+- richer user-facing compatibility evidence and provenance; and
+- optional blueprint-driven reconstruction/export for known original model compositions.
 
 ## Broader Adapter / LyCORIS Runtime Support
 

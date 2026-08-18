@@ -4,19 +4,22 @@ This page describes capabilities present in the current ImageGen source/runtime.
 
 ImageGen is still an alpha application, so “available” means implemented in the current alpha rather than frozen or guaranteed API compatibility.
 
-## 1. Native SD 1.x and Qualified SD 2.x Text-to-Image Generation
+## 1. Native Stable Diffusion Architecture Support
 
 ImageGen runs its own modular Stable Diffusion generation pipeline rather than launching another image-generation WebUI as its backend.
 
-The current enabled model-family boundary is:
+The current enabled text-to-image architecture boundary is:
 
-- **Stable Diffusion 1.x** using qualified full monolithic `.safetensors` checkpoints; and
-- **qualified Stable Diffusion 2.x** checkpoints using the dedicated SD 2.x OpenCLIP/runtime-profile path.
+- **Stable Diffusion 1.x** using qualified full monolithic `.safetensors` checkpoints;
+- **qualified Stable Diffusion 2.x** checkpoints using the dedicated OpenCLIP/runtime-profile path;
+- **Stable Diffusion XL (SDXL)** through the qualified dual-tokenizer/dual-text-encoder, pooled-conditioning, added-conditioning/time-ID, and SDXL runtime-profile path;
+- **Stable Diffusion 3 Medium** using the SD3 Flow Match transformer/16-channel latent contract; and
+- **Stable Diffusion 3.5 Medium** using the corresponding qualified SD3.5 Medium runtime profile.
 
 The shared runtime handles:
 
 - checkpoint inspection and architecture validation;
-- UNet, text encoder, and VAE loading;
+- architecture-specific model/component loading;
 - positive and negative conditioning;
 - seeded latent creation;
 - sampler/scheduler execution;
@@ -46,9 +49,62 @@ The SD 2.x runtime includes:
 
 Runtime-profile definitions cover SD 2.0/2.1 base and 768-oriented families, but an arbitrary checkpoint is not accepted solely because its filename or provider metadata says “SD2.” ImageGen still requires the model to satisfy the active qualification contract.
 
-### SDXL boundary
+### SDXL conditioning and runtime profiles
 
-SDXL checkpoints can be inspected and SDXL adapter targets can be classified, but base-model SDXL generation remains blocked until the dual-tokenizer/dual-text-encoder, pooled-conditioning, time-ID, and SDXL UNet-call contracts are implemented and qualified.
+SDXL generation is active in the current runtime. The SDXL path includes:
+
+- dual tokenizer and dual text-encoder handling;
+- pooled prompt embeddings;
+- added conditioning/time IDs;
+- SDXL-specific UNet invocation;
+- architecture/runtime preflight;
+- base SDXL runtime profiles; and
+- profile-aware recommendations for specialized families such as Lightning and Turbo without silently replacing user choices.
+
+Individual specialized SDXL checkpoints can still have profile-specific requirements. Architecture support does not mean that every community checkpoint or secondary workflow has been independently qualified.
+
+### SD3 Medium and SD3.5 Medium
+
+Normal WebUI txt2img generation is available for **SD3 Medium** and **SD3.5 Medium**. These paths have been verified with generated-image tests in the current source snapshot.
+
+The SD3-family runtime includes:
+
+- SD3.x checkpoint architecture detection;
+- Flow Match denoising semantics;
+- transformer rather than UNet execution;
+- 16-channel latent/VAE handling;
+- qualified runtime profiles for `sd3_medium` and `sd3_5_medium`;
+- CLIP-L and CLIP-G conditioning;
+- embedded-or-shared text-encoder source resolution;
+- `flow_euler` sampler support;
+- `flow_match_euler` scheduler support;
+- architecture-specific preflight and recommendation handling; and
+- staged residency so text encoders, transformer, and VAE do not need to remain simultaneously GPU-resident while idle.
+
+The dedicated support installer can provision runtime configuration/tokenizer assets and shared text encoders without downloading the user's main model checkpoint:
+
+```bat
+install_sd3_support.bat
+```
+
+The normal WebUI path currently uses the qualified CLIP-L + CLIP-G mode. T5/T5XXL exists as an optional component path for Advanced Models, but ordinary SD3 WebUI T5 selection is not yet presented as a fully general default workflow.
+
+### Advanced Models and component composition
+
+ImageGen also has an **Advanced Models** mode for building a generation composition from registry-fingerprinted components instead of treating one checkpoint filename as the complete model identity.
+
+Current family contracts cover:
+
+- SD 1.x: model/UNet weights, VAE, and text encoder;
+- SD 2.x: model/UNet weights, VAE, and text encoder;
+- SDXL: model/UNet weights, VAE, text encoder 1, and text encoder 2; and
+- SD3/SD3.5: transformer/model weights, VAE, CLIP-L, CLIP-G, and optional T5/T5XXL.
+
+Advanced Models uses exact component fingerprints and registry evidence. A physical filename or donor-checkpoint name is a source-location hint, not compatibility proof. Digital checkpoint components and standalone components can satisfy the same exact component identity when their fingerprints and provider role contracts match.
+
+Auto selection is intentionally conservative: a required role is selected automatically only when exactly one eligible compatible component fingerprint is available. Ambiguous roles require an explicit user choice.
+
+Advanced Models selections persist into generation settings, replay, batch import/export, queue composition, and output manifests by component identity rather than by filename alone.
 
 ## 2. Exact Requested Dimensions
 
@@ -129,7 +185,7 @@ Current general capabilities include:
 
 The compatibility layer now separates four questions that were previously easy to conflate:
 
-1. **Family** — SD 1.x, SD 2.x, SDXL, or unknown.
+1. **Family** — SD 1.x, SD 2.x, SDXL, or unknown for the currently qualified standard LoRA path. SD3/SD3.5 LoRA application remains a separate unqualified workflow.
 2. **Format** — the adapter representation detected from metadata/tensor keys.
 3. **Targets** — components such as UNet, text encoder 1, text encoder 2, linear layers, or convolutional layers.
 4. **Runtime support** — whether the current build has a qualified loader for that exact combination.
@@ -152,7 +208,7 @@ Current family target awareness includes:
 - **SD 2.x:** UNet and text encoder 1, without applying SD 1-specific text-encoder shape assumptions; and
 - **SDXL:** UNet, TE1, and TE2 target identification/mapping for adapter compatibility work.
 
-SDXL adapter compatibility does not mean SDXL base generation is enabled.
+SDXL base generation is now enabled, but adapter compatibility remains a separate question: an SDXL checkpoint being runnable does not automatically make every SDXL-targeted adapter format/runtime combination qualified.
 
 ### Unsupported or partial adapter formats
 
@@ -324,6 +380,9 @@ Current functionality includes:
 - multiple held/paused jobs;
 - skipping paused queue items while other work remains schedulable;
 - moving queued items higher or lower without displacing the active generation;
+- persistence of recoverable queued work across application sessions;
+- restoration of explicit queue order, individually paused queued jobs, and whole-queue hold state; and
+- safe recovery of an interrupted active job at the front of a held queue so reopening ImageGen does not unexpectedly restart GPU work;
 - finite progress such as `2 of 20`;
 - continuous-generation progress such as `2 of ∞`;
 - queue filtering;
