@@ -190,6 +190,8 @@ class ResidentTxt2ImgModelRuntime:
             "cache_entries": 0,
             "cpu_loaded": False,
             "gpu_loaded": False,
+            "generation_ready": False,
+            "architecture": "",
             "component_devices": {},
             "cuda_memory": {"allocated_bytes": 0, "reserved_bytes": 0},
         }
@@ -202,6 +204,9 @@ class ResidentTxt2ImgModelRuntime:
             "current_model_path": residency.get("model_path"),
             "cpu_loaded": bool(residency.get("cpu_loaded")),
             "gpu_loaded": bool(residency.get("gpu_loaded")),
+            "generation_ready": bool(residency.get("generation_ready")),
+            "staged_runtime": bool(residency.get("staged_runtime")),
+            "architecture": str(residency.get("architecture") or ""),
             "component_devices": dict(residency.get("component_devices") or {}),
             "memory": dict(residency.get("cuda_memory") or {}),
             "cache_entries": int(residency.get("cache_entries") or 0),
@@ -211,7 +216,12 @@ class ResidentTxt2ImgModelRuntime:
             "cuda_available": bool(torch.cuda.is_available()),
             "execution_device_policy": str(self.runtime_settings.get("model_runtime_execution_device") or "cuda_preferred"),
             "retention_device_policy": str(self.runtime_settings.get("model_runtime_retention_device") or "auto"),
-            "execution_device": str(self.runtime_settings.get("last_execution_device") or (residency.get("component_devices") or {}).get("unet") or ("cuda" if torch.cuda.is_available() else "cpu")),
+            "execution_device": str(
+                self.runtime_settings.get("last_execution_device")
+                or (residency.get("component_devices") or {}).get("unet")
+                or (residency.get("component_devices") or {}).get("transformer")
+                or ("cuda" if torch.cuda.is_available() else "cpu")
+            ),
             "cpu_fallback_reason": self.runtime_settings.get("cpu_fallback_reason"),
             "timings": dict(self.timings),
             **extra,
@@ -254,13 +264,17 @@ class ResidentTxt2ImgModelRuntime:
         current_path = str(current.get("model_path") or "")
         requested_path = _normalized_resolved_path(model_path)
         current_resolved = _normalized_resolved_path(current_path)
+        requested_composition = str(extras.get("advanced_model_composition_sha256") or "")
+        current_composition = str(current.get("composition_sha256") or "")
+        composition_matches = requested_composition == current_composition
         extras["model_runtime_event_callback"] = self._runner_event
         reused_resident_model = bool(
             current.get("resident")
             and current_path
             and current_resolved == requested_path
+            and composition_matches
         )
-        if current_path and current_resolved != requested_path:
+        if current_path and (current_resolved != requested_path or not composition_matches):
             self.emit_status(
                 "unloading",
                 action="automatic_model_swap",
@@ -336,16 +350,32 @@ class ResidentTxt2ImgModelRuntime:
         request, payload_extras = self._load_payload(config_path)
         self.selected_model_path = str(payload_extras.get("model_path") or "") or None
         resident_before = runner.resident_model_status()
+        requested_composition = str(payload_extras.get("advanced_model_composition_sha256") or "")
+        current_composition = str(resident_before.get("composition_sha256") or "")
         resident_reuse_candidate = bool(
             resident_before.get("resident")
             and resident_before.get("model_path")
             and os.path.normcase(str(Path(str(resident_before.get("model_path"))).resolve()))
             == os.path.normcase(str(Path(str(self.selected_model_path)).resolve()))
+            and requested_composition == current_composition
         )
         if not resident_reuse_candidate and self.selected_model_path:
+            activation_settings = dict(self.runtime_settings)
+            for key in (
+                "_advanced_model_resolved",
+                "advanced_models_enabled",
+                "advanced_model_family",
+                "advanced_model_components",
+                "advanced_model_allow_digital_components",
+                "advanced_model_composition_sha256",
+                "advanced_model_t5_device",
+                "text_encoder_3_device",
+            ):
+                if key in payload_extras:
+                    activation_settings[key] = payload_extras[key]
             self.activate({
                 "model_path": self.selected_model_path,
-                "runtime_settings": dict(self.runtime_settings),
+                "runtime_settings": activation_settings,
             })
             resident_before = runner.resident_model_status()
             resident_reuse_candidate = bool(resident_before.get("resident"))

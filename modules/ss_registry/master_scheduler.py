@@ -106,6 +106,7 @@ class SchedulerMap:
                     "supports_fixed_steps": True,
                     "supports_step_expansion": bool(meta.get("supports_step_expansion", False)),
                     "supports_tail_metadata": bool(meta.get("supports_tail_steps", False)),
+                    "schedule_domain": str(meta.get("schedule_domain", "vp_sigma")),
                 },
                 "config_schema": {
                     "type": "object",

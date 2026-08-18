@@ -18,6 +18,9 @@ class ResolvedConfigs:
     tokenizer_dir: str = ""
     tokenizer_2_dir: str = ""
     scheduler_config_path: str = ""
+    transformer_config_path: str = ""
+    text_encoder_3_config_path: str = ""
+    tokenizer_3_dir: str = ""
 
 
 class ConfigResolver:
@@ -91,6 +94,9 @@ class ConfigResolver:
         tokenizer_dir: str | None = None,
         tokenizer_2_dir: str | None = None,
         scheduler_config_path: str | None = None,
+        transformer_config_path: str | None = None,
+        text_encoder_3_config_path: str | None = None,
+        tokenizer_3_dir: str | None = None,
     ) -> ResolvedConfigs:
         architecture_key = str(architecture or "").strip().lower()
         required_files = [unet_config_path, vae_config_path, text_encoder_config_path]
@@ -105,6 +111,20 @@ class ConfigResolver:
                 ]
             )
             required_dirs.extend([str(tokenizer_dir or ""), str(tokenizer_2_dir or "")])
+        elif architecture_key in {"sd3", "sd3.x", "stable-diffusion-3.x"}:
+            # SD3 has a transformer denoiser rather than a UNet. Keep the legacy
+            # unet_config_path field available for older callers but do not require it.
+            required_files = [
+                str(transformer_config_path or ""),
+                str(vae_config_path or ""),
+                str(text_encoder_config_path or ""),
+                str(text_encoder_2_config_path or ""),
+                str(text_encoder_3_config_path or ""),
+                str(scheduler_config_path or ""),
+            ]
+            required_dirs.extend(
+                [str(tokenizer_dir or ""), str(tokenizer_2_dir or ""), str(tokenizer_3_dir or "")]
+            )
 
         missing_files = [path for path in required_files if not path or not os.path.isfile(path)]
         missing_dirs = [path for path in required_dirs if not path or not os.path.isdir(path)]
@@ -136,6 +156,9 @@ class ConfigResolver:
             tokenizer_dir=str(tokenizer_dir or ""),
             tokenizer_2_dir=str(tokenizer_2_dir or ""),
             scheduler_config_path=str(scheduler_config_path or ""),
+            transformer_config_path=str(transformer_config_path or ""),
+            text_encoder_3_config_path=str(text_encoder_3_config_path or ""),
+            tokenizer_3_dir=str(tokenizer_3_dir or ""),
         )
 
     def _map_architecture_to_dir(self, architecture: str) -> str:

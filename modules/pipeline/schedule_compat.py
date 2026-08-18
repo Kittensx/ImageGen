@@ -175,6 +175,13 @@ def validate_schedule_for_sampler(
     )
 
     reasons: list[str] = []
+    schedule_metadata = dict(getattr(schedule, "metadata", {}) or {})
+    schedule_domain = str(schedule_metadata.get("schedule_domain") or "vp_sigma").strip().lower().replace("-", "_")
+    if schedule_domain != capabilities.schedule_domain:
+        reasons.append(
+            "sampler/scheduler mathematical-domain mismatch: "
+            f"sampler requires {capabilities.schedule_domain!r}, schedule provides {schedule_domain!r}"
+        )
     if capabilities.requires_requested_step_schedule:
         if sigma_transitions != requested_steps:
             reasons.append(

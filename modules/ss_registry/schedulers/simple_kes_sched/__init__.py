@@ -371,6 +371,7 @@ def _build_meta() -> dict:
         "supports_blended_tail": True,
         "supports_progressive_decay": True,
         "scheduler_family": "kes",
+        "schedule_domain": "vp_sigma",
         "config_root": config_root,
         "default_config": default_config,
         "user_config": user_config,
@@ -402,6 +403,7 @@ PLUGIN_DESCRIPTOR = {
         "supports_blended_tail": True,
         "supports_progressive_decay": True,
         "scheduler_family": "kes",
+        "schedule_domain": "vp_sigma",
     },
     "config_schema": _build_config_schema(),
 }

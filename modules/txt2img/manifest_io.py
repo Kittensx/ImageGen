@@ -37,6 +37,18 @@ _NON_GENERATION_SCHEDULER_KEYS = {
     "save_sigma_cache",
 }
 
+
+_ADVANCED_MODEL_REPLAY_FIELDS = (
+    "advanced_models_enabled",
+    "advanced_model_family",
+    "advanced_model_components",
+    "advanced_model_allow_digital_components",
+    "advanced_model_composition_sha256",
+    "advanced_model_t5_device",
+    "text_encoder_3_device",
+    "advanced_model_resolved",
+)
+
 _HIRES_REPLAY_FIELDS = (
     "hires_prompt_parser_mode",
     "hires_prompt_parser_name",
@@ -376,6 +388,13 @@ def manifest_to_replay_dict(manifest: GenerationManifest) -> dict[str, Any]:
         if not _is_empty(value):
             compact_extra[key] = value
 
+    for key in _ADVANCED_MODEL_REPLAY_FIELDS:
+        if key not in optional_extra:
+            continue
+        value = optional_extra.get(key)
+        if not _is_empty(value) or value in (False, 0, 0.0):
+            compact_extra[key] = value
+
     region_pass_records = _compact_region_pass_records(
         optional_extra.get("region_pass_records")
     )
@@ -466,6 +485,15 @@ def manifest_to_replay_dict(manifest: GenerationManifest) -> dict[str, Any]:
         "required_for_rerun": required,
         "optional_for_rerun": _drop_empty(optional_payload),
     }
+    runtime_info = manifest.runtime_info
+    compact_runtime_info = _drop_empty({
+        "timestamp": getattr(runtime_info, "timestamp", None),
+        "device": getattr(runtime_info, "device", None),
+        "generation_time_sec": getattr(runtime_info, "generation_time_sec", None),
+        "effective_steps": getattr(runtime_info, "effective_steps", None),
+    })
+    if compact_runtime_info:
+        payload["runtime_info"] = compact_runtime_info
 
     base_model = _compact_asset(manifest.base_model)
     if base_model:

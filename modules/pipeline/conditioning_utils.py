@@ -5,6 +5,7 @@ from typing import Any, Optional
 import torch
 
 from image_gen.contracts.model_conditioning import (
+    BranchModelConditioningKwargs,
     ModelConditioningKwargs,
     select_model_conditioning_branch,
 )
@@ -159,9 +160,9 @@ def resolve_step_model_conditioning(
 ) -> ModelConditioningKwargs:
     """Resolve optional model-specific kwargs for the active sampler step.
 
-    Legacy SD1/SD2 conditioning returns ``None``. SDXL resolves the pooled
-    positive/negative schedules for this step and combines them with geometry
-    derived from the canonical generation dimension plan.
+    Legacy SD1/SD2 conditioning returns ``None``. SDXL resolves pooled
+    positive/negative schedules plus geometry time IDs. SD3 resolves the
+    branch-specific pooled projections required by the transformer.
     """
 
     conditioning_extra = getattr(conditioning, "extra", None)
@@ -170,7 +171,7 @@ def resolve_step_model_conditioning(
         if isinstance(conditioning_extra, dict)
         else ""
     )
-    if architecture != "sdxl":
+    if architecture not in {"sdxl", "sd3.x"}:
         return None
 
     pooled_cond = getattr(conditioning, "pooled_cond", None)
@@ -187,7 +188,29 @@ def resolve_step_model_conditioning(
         pooled_cond, pooled_uncond = resolve_pooled(step_index=step_index)
 
     if pooled_cond is None or pooled_uncond is None:
-        raise ValueError("SDXL conditioning is missing pooled_cond/pooled_uncond.")
+        label = "SD3" if architecture == "sd3.x" else "SDXL"
+        raise ValueError(f"{label} conditioning is missing pooled_cond/pooled_uncond.")
+
+    if architecture == "sd3.x":
+        if pooled_cond.ndim != 2 or pooled_uncond.ndim != 2:
+            raise ValueError("SD3 pooled conditioning must be rank-2 [batch, width].")
+        if int(pooled_cond.shape[-1]) != 2048 or int(pooled_uncond.shape[-1]) != 2048:
+            raise ValueError(
+                "SD3 pooled conditioning must be 2048-wide for CLIP-L + CLIP-G."
+            )
+        batch = int(latents.shape[0])
+        if int(pooled_cond.shape[0]) == 1 and batch > 1:
+            pooled_cond = pooled_cond.expand(batch, -1)
+        if int(pooled_uncond.shape[0]) == 1 and batch > 1:
+            pooled_uncond = pooled_uncond.expand(batch, -1)
+        if int(pooled_cond.shape[0]) != batch or int(pooled_uncond.shape[0]) != batch:
+            raise ValueError("SD3 pooled conditioning batch does not match latent batch.")
+        if isinstance(conditioning_extra, dict):
+            conditioning_extra["model_conditioning_contract"] = "sd3_pooled_projection_v1"
+        return BranchModelConditioningKwargs(
+            conditional={"pooled_projections": pooled_cond},
+            unconditional={"pooled_projections": pooled_uncond},
+        )
 
     model_conditioning, time_id_plan = build_sdxl_branch_model_conditioning(
         pooled_cond=pooled_cond,

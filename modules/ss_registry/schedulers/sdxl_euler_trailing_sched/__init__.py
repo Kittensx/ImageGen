@@ -95,6 +95,7 @@ class SDXLEulerTrailingSchedulerAdapter:
             metadata={
                 "scheduler_name": "sdxl_euler_trailing",
                 "scheduler_family": "sdxl_euler",
+                "schedule_domain": "vp_sigma",
                 "timestep_spacing": "trailing",
                 "prediction_type": str(config.get("prediction_type", "epsilon")),
                 "scheduler_config_path": config_path,
@@ -135,6 +136,7 @@ PLUGIN_DESCRIPTOR = {
         "supports_progressive_decay": False,
         "supports_hires_refinement": True,
         "scheduler_family": "sdxl_euler",
+        "schedule_domain": "vp_sigma",
     },
     "config_schema": {
         "type": "object",

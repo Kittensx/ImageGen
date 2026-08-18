@@ -52,6 +52,7 @@ from modules.prompt_shortcuts import (
 from modules.adapters.local_clip_conditioning_wrapper import LocalCLIPConditioningWrapper
 from modules.adapters.sd2_openclip_conditioning import SD2OpenCLIPConditioningRuntime
 from modules.adapters.sdxl_conditioning import SDXLConditioningRuntime
+from modules.adapters.sd3_conditioning import SD3ConditioningRuntime
 from image_gen.systems.guidance import (
     PromptCFGScheduleError,
     finalize_prompt_cfg_payload,
@@ -228,6 +229,37 @@ class PromptConditioningAdapter(PromptAdapter):
             hidden_size = int(getattr(config, "hidden_size", 0) or 0)
             hidden_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
             architecture = str(getattr(text_encoder, "_image_gen_architecture", "") or "").strip().lower()
+            is_sd3 = architecture in {"sd3", "sd3.x", "sd3.5", "stable-diffusion-3", "stable-diffusion-3.x"}
+            if is_sd3:
+                text_encoder_2 = getattr(components, "text_encoder_2", None)
+                tokenizer_2 = getattr(components, "tokenizer_2", None)
+                if text_encoder_2 is None or tokenizer_2 is None:
+                    raise ValueError(
+                        "SD3 CLIP-only conditioning requires CLIP-G text_encoder_2 and tokenizer_2."
+                    )
+                runtime_profile = dict(getattr(components, "model_runtime_profile", {}) or {})
+                denoiser = getattr(components, "denoiser", None)
+                denoiser_config = getattr(denoiser, "config", None)
+                component_joint_attention_dim = int(
+                    getattr(denoiser_config, "joint_attention_dim", 0) or 0
+                )
+                joint_attention_dim = component_joint_attention_dim or int(
+                    runtime_profile.get(
+                        "transformer_joint_attention_dim",
+                        runtime_profile.get("joint_attention_dim", 4096),
+                    )
+                    or 4096
+                )
+                return SD3ConditioningRuntime(
+                    text_encoder=text_encoder,
+                    tokenizer=tokenizer,
+                    text_encoder_2=text_encoder_2,
+                    tokenizer_2=tokenizer_2,
+                    text_encoder_3=getattr(components, "text_encoder_3", None),
+                    tokenizer_3=getattr(components, "tokenizer_3", None),
+                    joint_attention_dim=joint_attention_dim,
+                )
+
             is_sdxl = architecture in {"sdxl", "stable-diffusion-xl", "stable-diffusion-xl-base"}
             if is_sdxl:
                 text_encoder_2 = getattr(components, "text_encoder_2", None)
@@ -1056,11 +1088,12 @@ class PromptConditioningAdapter(PromptAdapter):
         cond0, uncond0 = resolver.resolve(step_index=0)
         pooled_cond0 = None
         pooled_uncond0 = None
-        if isinstance(cond_model, SDXLConditioningRuntime):
-            # Pooled SDXL conditioning follows the same parsed prompt schedules
-            # and composable weights as token conditioning. Regional guidance
-            # remains spatially applied to cross-attention; the global pooled
-            # branch is resolved from the base prompt schedule.
+        has_pooled_conditioning = isinstance(cond_model, (SDXLConditioningRuntime, SD3ConditioningRuntime))
+        if has_pooled_conditioning:
+            # Pooled SDXL and SD3 conditioning follows the same parsed prompt
+            # schedules and composable weights as token conditioning. Regional
+            # guidance remains spatially applied only to token/cross-attention
+            # conditioning; pooled conditioning resolves from the base schedule.
             pooled_cond0, pooled_uncond0 = base_resolver.resolve_pooled(step_index=0)
 
         prompt_schedules = {
@@ -1239,8 +1272,17 @@ class PromptConditioningAdapter(PromptAdapter):
                 "positive_parse_result": pos_result,
                 "negative_parse_result": neg_result,
                 "resolver": resolver,
-                "pooled_resolver": base_resolver if isinstance(cond_model, SDXLConditioningRuntime) else None,
-                "conditioning_architecture": "sdxl" if isinstance(cond_model, SDXLConditioningRuntime) else "legacy",
+                "pooled_resolver": base_resolver if has_pooled_conditioning else None,
+                "conditioning_architecture": (
+                    "sd3.x"
+                    if isinstance(cond_model, SD3ConditioningRuntime)
+                    else ("sdxl" if isinstance(cond_model, SDXLConditioningRuntime) else "legacy")
+                ),
+                "conditioning_metadata": (
+                    cond_model.contract_metadata()
+                    if isinstance(cond_model, SD3ConditioningRuntime)
+                    else {}
+                ),
                 "prompt_parser": parser_metadata,
                 "prompt_shortcut_profile": shortcut_profile_metadata,
                 "prompt_translation": prompt_translation,

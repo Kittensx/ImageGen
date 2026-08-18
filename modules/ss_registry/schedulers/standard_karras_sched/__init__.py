@@ -183,6 +183,7 @@ class StandardKarrasSchedulerAdapter:
         metadata = {
             "scheduler_name": "standard_karras",
             "scheduler_family": "standard",
+            "schedule_domain": "vp_sigma",
             "schedule_mode": "karras",
             "schedule_control": "model_bounded_control",
             "rho": rho,
@@ -298,6 +299,7 @@ PLUGIN_DESCRIPTOR = {
         "supports_blended_tail": False,
         "supports_progressive_decay": False,
         "scheduler_family": "standard",
+        "schedule_domain": "vp_sigma",
     },
     "config_schema": {
         "type": "object",

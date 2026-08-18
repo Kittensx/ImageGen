@@ -11,11 +11,18 @@ from modules.asset_discovery import resolve_nested_asset
 from modules.checkpoint_inspector import CheckpointInspector, CheckpointReport
 from modules.config_resolver import ConfigResolver, ResolvedConfigs
 from modules.state_dict_mapper import StateDictMapper, MappedStateDict
-from modules.registry import AssetRegistry
+from modules.registry import (
+    AssetRegistry,
+    ComponentRegistryRefresher,
+    ComponentSnapshotRecord,
+    SafetensorsComponentSnapshotter,
+)
 from modules.component_builder import ComponentBuilder, BuiltComponents
 from modules.project_context import ProjectContext
 from modules.sd2_model_contract import SD2ResolvedModelContract, resolve_sd2_model_contract
 from modules.sdxl_model_contract import SDXLResolvedModelContract, resolve_sdxl_model_contract
+from modules.sd3_model_contract import SD3ResolvedModelContract, resolve_sd3_model_contract
+from modules.sd3_component_sources import prepare_sd3_text_encoder_states
 from image_gen.systems.validation.capabilities import capability_for
 
 
@@ -26,6 +33,8 @@ class LoadPlan:
     mapped_state: MappedStateDict
     sd2_contract: SD2ResolvedModelContract | None = None
     sdxl_contract: SDXLResolvedModelContract | None = None
+    sd3_contract: SD3ResolvedModelContract | None = None
+    component_snapshots: tuple[ComponentSnapshotRecord, ...] = ()
 
 
 class LoadModel(ConfigOptions):
@@ -49,16 +58,39 @@ class LoadModel(ConfigOptions):
             local_config_root=self.local_config_dir
         )
         self.asset_registry = asset_registry or AssetRegistry(self.registry_db_path)
+        self.component_snapshotter = SafetensorsComponentSnapshotter(self.mapper)
+        self.component_registry_refresher = ComponentRegistryRefresher(
+            self.context,
+            registry=self.asset_registry,
+            inspector=self.inspector,
+            snapshotter=self.component_snapshotter,
+        )
+        self._last_component_registry_refresh: dict[str, object] = {}
 
     def build_components_from_plan(
         self,
         plan: LoadPlan,
         dtype: torch.dtype | None = None,
         device: str | torch.device | None = None,
+        request_extras: dict[str, Any] | None = None,
     ) -> BuiltComponents:
         requested_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         cpu_first_sdxl = bool(plan.sdxl_contract is not None and requested_device.type == "cuda")
+        cpu_first_sd3 = bool(plan.sd3_contract is not None)
+        cpu_first_hydration = bool(cpu_first_sdxl or cpu_first_sd3)
+        # Preserve the qualified SDXL CPU-first expression exactly, then layer
+        # the SD3 transformer rule on top. This avoids changing established
+        # SDXL behavior/contracts while SD3 remains CPU-first in Phase 4.
         build_device = torch.device("cpu") if cpu_first_sdxl else requested_device
+        if cpu_first_sd3:
+            build_device = torch.device("cpu")
+        sd3_text_encoder_sources: dict[str, Any] = {}
+        if plan.sd3_contract is not None:
+            sd3_text_encoder_sources = prepare_sd3_text_encoder_states(
+                plan,
+                context=self.context,
+                request_extras=request_extras,
+            )
         builder = ComponentBuilder(
             device=str(build_device),
             dtype=dtype,
@@ -69,7 +101,11 @@ class LoadModel(ConfigOptions):
             mapped_state=plan.mapped_state,
         )
         built.cpu_first_hydration = cpu_first_sdxl
+        if cpu_first_sd3:
+            built.cpu_first_hydration = True
         built.runtime_target_device = str(requested_device)
+        if sd3_text_encoder_sources:
+            setattr(built, "sd3_text_encoder_sources", dict(sd3_text_encoder_sources))
         return built
         
     def debug_print_components(self, built) -> None:
@@ -135,6 +171,44 @@ class LoadModel(ConfigOptions):
             "Hypernetworks": self.hypernetworks_dir,
         }
 
+    def _ensure_component_snapshots(
+        self,
+        *,
+        asset_id: int,
+        asset_quick_fingerprint: str | None,
+        checkpoint_path: str,
+        report: CheckpointReport,
+    ) -> tuple[ComponentSnapshotRecord, ...]:
+        """Ensure a loaded Safetensors checkpoint has a complete registry snapshot.
+
+        Registry maintenance is now delegated to :class:`ComponentRegistryRefresher`.
+        A file is not considered cache-complete merely because *some* snapshots exist:
+        the current header-derived component role set must be represented and bound to
+        the file's current quick fingerprint. This means loading a new or previously
+        partial asset automatically repairs its registry entry without requiring a
+        separate full-library inventory run.
+        """
+        if Path(checkpoint_path).suffix.lower() != ".safetensors":
+            self._last_component_registry_refresh = {
+                "status": "skipped_non_safetensors",
+                "changed": False,
+                "path": str(checkpoint_path),
+            }
+            return ()
+
+        asset = self.asset_registry.get_asset_by_id(asset_id)
+        if asset is None:
+            raise RuntimeError(f"Loaded asset registry row disappeared before component refresh: asset_id={asset_id}")
+
+        records, evidence = self.component_registry_refresher.ensure_checkpoint(
+            asset=asset,
+            checkpoint_path=checkpoint_path,
+            report=report,
+            source="model_load",
+        )
+        self._last_component_registry_refresh = dict(evidence)
+        return tuple(records)
+
     def _infer_asset_type_from_report(self, report: CheckpointReport) -> str:
         if report.checkpoint_kind == "lora":
             return "lora"
@@ -151,6 +225,7 @@ class LoadModel(ConfigOptions):
         require_generation_support: bool = True,
         explicit_sd2_runtime_profile: str | None = None,
         explicit_sdxl_runtime_profile: str | None = None,
+        explicit_sd3_runtime_profile: str | None = None,
     ) -> LoadPlan:
         checkpoint_path = checkpoint_path if checkpoint_path is not None else self.MODEL_PATH
         if not checkpoint_path:
@@ -190,6 +265,13 @@ class LoadModel(ConfigOptions):
             asset_id = asset_record.id
 
             report = self.inspector.inspect(checkpoint_path)
+            self.asset_registry.update_asset_sha256(asset_id, report.sha256)
+            component_snapshots = self._ensure_component_snapshots(
+                asset_id=asset_id,
+                asset_quick_fingerprint=asset_record.quick_fingerprint,
+                checkpoint_path=checkpoint_path,
+                report=report,
+            )
 
             inspection_payload = {
                 "asset_type": self._infer_asset_type_from_report(report),
@@ -242,6 +324,7 @@ class LoadModel(ConfigOptions):
 
             sd2_contract = None
             sdxl_contract = None
+            sd3_contract = None
             if report.architecture == "sd2.x":
                 configured_profile = explicit_sd2_runtime_profile
                 if configured_profile is None:
@@ -289,10 +372,29 @@ class LoadModel(ConfigOptions):
                 )
                 report.architecture_source = "qualified_sdxl_runtime_profile"
                 configs = sdxl_contract.assets.to_resolved_configs(self.config_resolver)
+            elif report.architecture == "sd3.x":
+                configured_profile = explicit_sd3_runtime_profile
+                if configured_profile is None:
+                    configured_profile = str(
+                        ((self.config.get("defaults") or {}).get("sd3_runtime_profile") or "")
+                    ).strip() or None
+                sd3_contract = resolve_sd3_model_contract(
+                    self.context,
+                    checkpoint_variant=report.architecture_variant,
+                    explicit_profile_id=configured_profile,
+                )
+                report.prediction_type = "not_applicable_flow_match"
+                report.prediction_type_source = "sd3_flow_match_contract"
+                report.architecture_summary = (
+                    f"SD3.x / {sd3_contract.profile.profile_id} / flow_match / "
+                    f"{sd3_contract.model_dimension}"
+                )
+                report.architecture_source = "qualified_sd3_runtime_profile"
+                configs = sd3_contract.assets.to_resolved_configs(self.config_resolver)
             else:
                 configs = self.config_resolver.resolve(report.architecture)
             state_dict = self.inspector.load_state_dict(checkpoint_path)
-            mapped_state = self.mapper.split_checkpoint(state_dict)
+            mapped_state = self.mapper.split_checkpoint(state_dict, architecture=report.architecture)
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             self.asset_registry.log_load_attempt(
@@ -307,6 +409,11 @@ class LoadModel(ConfigOptions):
                     "path_kind": path_kind,
                     "managed_category": managed_category,
                     "mode": "generation" if require_generation_support else "validation",
+                    "component_snapshot_count": len(component_snapshots),
+                    "component_snapshot_version": (
+                        component_snapshots[0].snapshot_version if component_snapshots else None
+                    ),
+                    "component_registry_refresh": dict(self._last_component_registry_refresh),
                 },
             )
 
@@ -316,6 +423,8 @@ class LoadModel(ConfigOptions):
                 mapped_state=mapped_state,
                 sd2_contract=sd2_contract,
                 sdxl_contract=sdxl_contract,
+                sd3_contract=sd3_contract,
+                component_snapshots=component_snapshots,
             )
 
         except Exception as e:
@@ -342,12 +451,14 @@ class LoadModel(ConfigOptions):
         *,
         explicit_sd2_runtime_profile: str | None = None,
         explicit_sdxl_runtime_profile: str | None = None,
+        explicit_sd3_runtime_profile: str | None = None,
     ) -> LoadPlan:
         return self.prepare_load_plan(
             checkpoint_path=checkpoint_path,
             require_generation_support=False,
             explicit_sd2_runtime_profile=explicit_sd2_runtime_profile,
             explicit_sdxl_runtime_profile=explicit_sdxl_runtime_profile,
+            explicit_sd3_runtime_profile=explicit_sd3_runtime_profile,
         )
 
     def debug_print_plan(self, plan: LoadPlan) -> None:
@@ -358,8 +469,10 @@ class LoadModel(ConfigOptions):
         print(f"Checkpoint kind: {plan.report.checkpoint_kind}")
         print(f"Total keys: {plan.report.total_keys}")
         print(f"UNet keys: {len(plan.mapped_state.unet)}")
+        print(f"Transformer keys: {len(plan.mapped_state.transformer)}")
         print(f"VAE keys: {len(plan.mapped_state.vae)}")
         print(f"Text encoder keys: {len(plan.mapped_state.text_encoder)}")
         print(f"Text encoder 2 keys: {len(plan.mapped_state.text_encoder_2)}")
+        print(f"Text encoder 3 keys: {len(plan.mapped_state.text_encoder_3)}")
         print(f"Extra keys: {len(plan.mapped_state.extras)}")
         print(f"Config root: {plan.configs.root_dir}")
