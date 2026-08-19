@@ -201,11 +201,35 @@
 
       <details class="prompt-hires-routing" id="promptHiresRoutingSection">
         <summary>Hires / Second Pass</summary>
+        <div class="hires-profile-toolbar" id="hiresProfileToolbar">
+          <button class="primary-button compact-button" id="hiresAutoResolveButton" type="button">Auto</button>
+          <label class="field-block hires-profile-selector">
+            <span>Saved hires preset</span>
+            <select id="hiresProfileSelect" aria-label="Saved hires preset">
+              <option value="">Current settings</option>
+            </select>
+          </label>
+          <button class="secondary-button compact-button" id="hiresProfileApplyQuickButton" type="button" disabled>Apply</button>
+          <button class="secondary-button compact-button" id="hiresProfileConfigureButton" type="button">Configure Presets</button>
+        </div>
+        <small id="hiresProfileStatus" class="field-status subtle">Auto can resolve every required hires setting, or you can apply a saved preset explicitly.</small>
+        <small id="hiresAutoStatus" class="field-status subtle">Auto has not been resolved for the current context yet.</small>
+        <input id="hiresConfigurationMode" type="hidden" value="custom">
+        <input id="hiresAutoResolutionRecord" type="hidden" value="{}">
+        <input id="hiresLifecycleState" type="hidden" value="{}">
+        <div class="hires-lifecycle-toolbar" id="hiresLifecycleToolbar">
+          <small id="hiresLifecycleStatus" class="field-status subtle">Active hires settings are currently treated as custom.</small>
+          <div class="button-row compact-actions" id="hiresLifecycleActions">
+            <button class="secondary-button compact-button" id="hiresLifecycleReapplyAutoButton" type="button" hidden>Reapply Auto</button>
+            <button class="secondary-button compact-button" id="hiresLifecycleResetProfileButton" type="button" hidden>Reset to Profile</button>
+          </div>
+        </div>
+        <small id="hiresLifecycleNotice" class="field-status subtle" hidden></small>
         <label class="checkbox-row hires-enable-row">
           <input id="hiresEnabled" name="hires_enabled" type="checkbox">
           <span>Enable hires / second-pass generation</span>
         </label>
-        <small class="field-status subtle">The base image is decoded, enlarged by the selected neural .pth upscaler, re-encoded, and refined by the second denoising pass.</small>
+        <small class="field-status subtle">The base image is decoded, enlarged by the resolved neural upscaler or built-in resize fallback, re-encoded, and refined by the second denoising pass.</small>
         <div class="prompt-parser-grid" id="hiresRoutingControls">
           <label class="field-block" id="hiresParserModeField">
             <span>Hires parser mode</span>
@@ -291,6 +315,7 @@
             <span>Hires strategy</span>
             <select id="hiresStrategy" name="hires_strategy">
               <option value="pixel_neural" selected>Pixel neural (.pth)</option>
+              <option value="pixel_resize">Built-in pixel resize</option>
             </select>
           </label>
           <label class="field-block">
@@ -355,7 +380,7 @@
           </div>
           <span class="status-light-host" id="hiresUpscalerStatusLightHost"></span>
         </div>
-        <small id="hiresUpscalerStatus" class="field-status subtle">Select a supported neural .pth upscaler.</small>
+        <small id="hiresUpscalerStatus" class="field-status subtle">Auto can select a supported neural upscaler or built-in resize fallback.</small>
         <div id="hiresUpscalerRecovery" class="field-error-recovery" hidden>
           <strong>Hires needs an available upscaler.</strong>
           <span id="hiresUpscalerRecoveryMessage">Install or move a supported upscaler into a configured asset folder, then refresh discovery.</span>
@@ -451,6 +476,55 @@
           </details>
         </details>
       </details>
+
+      <aside id="hiresProfilePanel" class="hires-profile-panel" aria-label="Hires preset configuration" hidden>
+        <div class="hires-profile-panel-header">
+          <div>
+            <small>Hires Preset</small>
+            <h3 id="hiresProfilePanelTitle">Preset Configuration</h3>
+          </div>
+          <button class="ui-action-button ui-icon-control" id="hiresProfileCloseButton" type="button" aria-label="Close hires preset configuration" title="Close">×</button>
+        </div>
+        <div class="hires-profile-panel-scroll">
+          <label class="field-block">
+            <span>Preset name</span>
+            <input id="hiresProfileName" type="text" value="New Hires Preset" autocomplete="off">
+          </label>
+          <small id="hiresProfileReadOnlyStatus" class="field-status subtle"></small>
+
+          <details id="hiresAutoResolutionInspector" class="hires-profile-secondary-section" hidden open>
+            <summary>Auto Resolution</summary>
+            <div id="hiresAutoResolutionSummary" class="hires-profile-settings"></div>
+          </details>
+
+          <fieldset class="hires-profile-view-mode">
+            <legend>View</legend>
+            <label><input type="radio" name="hiresProfileViewMode" value="all" checked> All Settings</label>
+            <label><input type="radio" name="hiresProfileViewMode" value="modified"> Modified Only</label>
+          </fieldset>
+
+          <div id="hiresProfileSettings" class="hires-profile-settings"></div>
+
+          <details class="hires-profile-secondary-section" open>
+            <summary>Compatibility</summary>
+            <p class="field-status subtle">Compatibility describes where a preset is intended to work. It does not make the preset an automatic default.</p>
+            <div id="hiresProfileCompatibilityFamilies" class="hires-profile-multi-select"></div>
+            <div id="hiresProfileCompatibilityUpscalers" class="hires-profile-multi-select"></div>
+          </details>
+
+          <details class="hires-profile-secondary-section" open>
+            <summary>Default Assignments</summary>
+            <p class="field-status subtle">Defaults use the current model and upscaler identities. Internal hashes are resolved automatically and are never typed here.</p>
+            <div id="hiresProfileDefaultAssignments" class="hires-profile-default-assignments"></div>
+          </details>
+        </div>
+        <div class="hires-profile-panel-actions">
+          <button class="secondary-button compact-button" id="hiresProfileDuplicateButton" type="button" hidden>Duplicate as User Preset</button>
+          <button class="secondary-button compact-button" id="hiresProfileDeleteButton" type="button" hidden>Delete</button>
+          <button class="secondary-button compact-button" id="hiresProfileApplyButton" type="button">Apply Preset</button>
+          <button class="primary-button compact-button" id="hiresProfileSaveButton" type="button">Save Preset</button>
+        </div>
+      </aside>
 
 
     </section>

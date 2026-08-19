@@ -23,7 +23,17 @@ from .metadata import (
     compare_schedule_conformance,
     rehydrate_schedule_replay_record,
 )
-from .noise import HIRES_NOISE_POLICY_ID, HIRES_NOISE_SEED_OFFSET, noise_policy_metadata, noise_stream_metadata
+from .noise import (
+    FLOW_MATCH_LINEAR_FORWARD_PROCESS_ID,
+    HIRES_NOISE_POLICY_ID,
+    HIRES_NOISE_SEED_OFFSET,
+    SIGMA_ADDITIVE_FORWARD_PROCESS_ID,
+    apply_image_conditioned_forward_noise,
+    image_conditioned_forward_process_metadata,
+    noise_policy_metadata,
+    noise_stream_metadata,
+    normalize_image_conditioned_scheduler_domain,
+)
 from .qualification import (
     HiresPairQualification,
     REQUIRED_PHASE14M4_MATRIX,
@@ -60,6 +70,8 @@ __all__ = [
     "SCHEDULE_REPLAY_FORMAT",
     "HIRES_NOISE_POLICY_ID",
     "HIRES_NOISE_SEED_OFFSET",
+    "FLOW_MATCH_LINEAR_FORWARD_PROCESS_ID",
+    "SIGMA_ADDITIVE_FORWARD_PROCESS_ID",
     "HiresPairQualification",
     "REQUIRED_PHASE14M4_MATRIX",
     "A1111_FIXED_STEPS_V1",
@@ -79,4 +91,7 @@ __all__ = [
     "require_qualified_hires_pair",
     "noise_policy_metadata",
     "noise_stream_metadata",
+    "apply_image_conditioned_forward_noise",
+    "image_conditioned_forward_process_metadata",
+    "normalize_image_conditioned_scheduler_domain",
 ]

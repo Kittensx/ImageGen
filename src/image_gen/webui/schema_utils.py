@@ -88,6 +88,54 @@ def normalize_config_schema(schema: Mapping[str, Any] | None, *, kind: str | Non
     }
 
 
+def _scope_profile_value(value: Any, schema: Mapping[str, Any] | None) -> Any:
+    """Return only values explicitly owned by a profile schema branch."""
+
+    spec = normalize_property_schema("", schema or {})
+    kind = spec.get("type", "string")
+    if kind == "object":
+        if not isinstance(value, Mapping):
+            return {}
+        properties = spec.get("properties") if isinstance(spec.get("properties"), Mapping) else {}
+        return {
+            str(name): _scope_profile_value(value[name], child_schema)
+            for name, child_schema in properties.items()
+            if name in value
+        }
+    if kind == "array":
+        if not isinstance(value, (list, tuple)):
+            value = [value]
+        item_schema = spec.get("items") if isinstance(spec.get("items"), Mapping) else {}
+        return [_scope_profile_value(item, item_schema) for item in value]
+    return coerce_value_by_schema(value, spec)
+
+
+def scope_plugin_profile_values(
+    values: Mapping[str, Any] | None,
+    schema: Mapping[str, Any] | None,
+    *,
+    kind: str,
+) -> dict[str, Any]:
+    """Restrict a named advanced profile to fields explicitly owned by its plugin.
+
+    Runtime schemas may accept additional properties for adapter compatibility, but
+    a saved advanced profile is intentionally narrower. Scheduler fields linked to
+    the main generation form (currently ``steps`` and ``device``) are also excluded
+    so a scheduler profile cannot capture unrelated generation state.
+    """
+
+    incoming = dict(values or {})
+    normalized = normalize_config_schema(schema, kind=kind)
+    properties = normalized.get("properties") if isinstance(normalized.get("properties"), Mapping) else {}
+    scoped: dict[str, Any] = {}
+    for name, field_schema in properties.items():
+        if name not in incoming:
+            continue
+        if isinstance(field_schema, Mapping) and field_schema.get("x_linked"):
+            continue
+        scoped[str(name)] = _scope_profile_value(incoming[name], field_schema)
+    return scoped
+
 def coerce_value_by_schema(value: Any, schema: Mapping[str, Any] | None) -> Any:
     spec = normalize_property_schema("", schema or {})
     kind = spec.get("type", "string")

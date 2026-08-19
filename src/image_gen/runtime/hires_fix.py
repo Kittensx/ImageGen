@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 from copy import deepcopy
 from typing import Any, Mapping
 
@@ -25,14 +26,17 @@ from image_gen.systems.image_conditioning import (
     MAXIMUM_REQUESTED_REFINEMENT_STEPS,
     PROPORTIONAL_TAIL_V1,
     SUPPORTED_HIRES_STEP_POLICIES,
+    apply_image_conditioned_forward_noise,
     build_image_conditioned_schedule,
     build_schedule_fingerprint_record,
     build_schedule_replay_record,
     resolve_image_conditioned_step_plan,
 )
 from modules.txt2img.seed_utils import create_torch_generator, offset_seed
-HIRES_ALGORITHM_VERSION = "image-gen-hires-refinement-v2"
-_VALID_STRATEGIES = {"pixel_neural"}
+HIRES_ALGORITHM_VERSION = "image-gen-hires-refinement-v3"
+BUILTIN_PIXEL_RESIZE_ID = "builtin.pixel_resize.bicubic"
+BUILTIN_PIXEL_RESIZE_SHA256 = hashlib.sha256(b"image-gen:builtin:pixel_resize:bicubic:v1").hexdigest()
+_VALID_STRATEGIES = {"pixel_neural", "pixel_resize"}
 
 
 def _scalar_float(value: torch.Tensor | float | int | None) -> float | None:
@@ -43,6 +47,31 @@ def _scalar_float(value: torch.Tensor | float | int | None) -> float | None:
             return None
         return float(value.detach().reshape(-1)[0].cpu().item())
     return float(value)
+
+
+def _normalize_cfg_rescale(value: Any, *, fallback: Any = 0.0) -> float:
+    """Return a valid CFG-rescale value without aborting a hires pass.
+
+    CFG rescale is a unit-interval control.  Older/stale WebUI state can place
+    the ordinary CFG scale in ``hires_cfg_rescale`` (for example 5.0).  Hires
+    execution should inherit a valid base rescale in that case rather than
+    failing after the base image has already been generated.
+    """
+
+    try:
+        candidate = _scalar_float(value)
+    except (TypeError, ValueError):
+        candidate = None
+    if candidate is not None and 0.0 <= candidate <= 1.0:
+        return float(candidate)
+
+    try:
+        fallback_value = _scalar_float(fallback)
+    except (TypeError, ValueError):
+        fallback_value = None
+    if fallback_value is not None and 0.0 <= fallback_value <= 1.0:
+        return float(fallback_value)
+    return 0.0
 
 
 @dataclass(frozen=True)
@@ -189,7 +218,7 @@ def resolve_hires_upscale_plan(
             selected_id = ""
             requested_strategy = "pixel_neural"
         else:
-            raise ValueError("hires_strategy must be 'pixel_neural'.")
+            raise ValueError("hires_strategy must be 'pixel_neural' or 'pixel_resize'.")
 
     legacy_filter = str(
         getattr(request, "hires_exact_resize_filter", "bicubic") or "bicubic"
@@ -221,7 +250,7 @@ def resolve_hires_upscale_plan(
         raise ValueError("hires_blurred_edge_method must be box or gaussian_1d.")
 
     common = {
-        "strategy": "pixel_neural",
+        "strategy": requested_strategy,
         "legacy_value": selected_id,
         "latent_interpolation": None,
         "upscaler_id": selected_id or None,
@@ -243,6 +272,26 @@ def resolve_hires_upscale_plan(
         "tile_overlap": int(getattr(request, "hires_tile_overlap", 16) or 0),
         "tile_batch_size": int(getattr(request, "hires_tile_batch_size", 1) or 1),
     }
+
+    if requested_strategy == "pixel_resize":
+        builtin_id = selected_id or BUILTIN_PIXEL_RESIZE_ID
+        if builtin_id != BUILTIN_PIXEL_RESIZE_ID:
+            raise ValueError(
+                f"Pixel-resize hires requires {BUILTIN_PIXEL_RESIZE_ID!r}, received {builtin_id!r}."
+            )
+        resolved_common = dict(common)
+        resolved_common.update(
+            strategy="pixel_resize",
+            legacy_value=builtin_id,
+            upscaler_id=builtin_id,
+            exact_resize_filter="bicubic",
+            final_size_correction_filter="bicubic",
+            allow_tiling=False,
+            native_scale=0,
+            predicted_native_width=int(dimensions.effective_width),
+            predicted_native_height=int(dimensions.effective_height),
+        )
+        return HiresUpscalePlan(descriptor=None, **resolved_common)
 
     if not selected_id:
         if enabled:
@@ -349,8 +398,12 @@ class HiresExecutionPlan:
 
 
 
-def resolve_hires_execution_plan(request: GenerationRequest) -> HiresExecutionPlan:
-    dimensions = resolve_hires_dimensions(request)
+def resolve_hires_execution_plan(
+    request: GenerationRequest,
+    *,
+    dimension_multiple: int = 8,
+) -> HiresExecutionPlan:
+    dimensions = resolve_hires_dimensions(request, dimension_multiple=dimension_multiple)
     enabled = bool(getattr(request, "hires_enabled", False))
     raw_steps = getattr(request, "hires_steps", 20)
     steps = int(20 if raw_steps is None else raw_steps)
@@ -385,12 +438,12 @@ def resolve_hires_execution_plan(request: GenerationRequest) -> HiresExecutionPl
     cfg_scale = float(
         getattr(request, "cfg_scale", 7.0) if raw_hires_cfg is None else raw_hires_cfg
     )
-    raw_hires_rescale = getattr(request, "hires_cfg_rescale", None)
-    cfg_rescale = float(
-        getattr(request, "cfg_rescale", 0.0)
-        if raw_hires_rescale is None
-        else raw_hires_rescale
+    base_cfg_rescale = _normalize_cfg_rescale(
+        getattr(request, "cfg_rescale", 0.0),
+        fallback=0.0,
     )
+    raw_hires_rescale = getattr(request, "hires_cfg_rescale", None)
+    cfg_rescale = _normalize_cfg_rescale(raw_hires_rescale, fallback=base_cfg_rescale)
     if enabled and (
         dimensions.effective_width == dimensions.base_width
         and dimensions.effective_height == dimensions.base_height
@@ -431,6 +484,14 @@ def build_hires_request(
         ),
         width=int(plan.dimensions.effective_width),
         height=int(plan.dimensions.effective_height),
+        # Keep the derived request's canonical target geometry aligned with the
+        # second-pass canvas. GenerationRequest.__post_init__ normalizes width
+        # and height from outpaint_target_* whenever those values are present.
+        # The base request typically already carries its own target dimensions,
+        # so a plain dataclasses.replace() would otherwise snap the hires
+        # request back to the base width/height during construction.
+        outpaint_target_width=int(plan.dimensions.effective_width),
+        outpaint_target_height=int(plan.dimensions.effective_height),
         steps=int(plan.internal_steps),
         sampler_name=str(plan.sampler_name),
         scheduler_name=str(plan.scheduler_name),
@@ -598,6 +659,7 @@ def add_hires_noise(
     *,
     schedule: SchedulerOutput,
     seeds: list[int],
+    scheduler_domain: str = "sigma_additive",
 ) -> torch.Tensor:
     if len(seeds) != int(latents.shape[0]):
         raise ValueError("Hires noise seeds must match the latent batch size.")
@@ -616,7 +678,12 @@ def add_hires_noise(
             )
         )
     noise = torch.cat(noise_items, dim=0)
-    return latents + noise * float(schedule.initial_sigma)
+    return apply_image_conditioned_forward_noise(
+        latents,
+        noise,
+        schedule=schedule,
+        scheduler_domain=scheduler_domain,
+    )
 
 
 __all__ = [

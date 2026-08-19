@@ -9,7 +9,8 @@ import {
 } from "./live-preview.js?v=sdxl-cfg-recommendations4";
 import { showOutput, upsertRecentOutput } from "./gallery.js?v=0.1.46";
 import { openOutputDetailsData } from "./output-details.js";
-import { preflightCurrentPrompt } from "./prompt-tools.js?v=qol-seed-range3";
+import { preflightCurrentPrompt } from "./prompt-tools.js?v=r10.3";
+import { enforceCfgRescaleRequestGuardrails } from "./cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { resetGenerateControl, setGenerateControlState } from "../components/generation-control.js?v=0.1.0";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 import { setActionIcon } from "../components/action-icons.js?v=0.1.0";
@@ -27,6 +28,16 @@ let eventStreamJobId = null;
 let eventStreamFailures = 0;
 let eventStreamDisabledUntil = 0;
 let workerState = {};
+
+function validateHiresUpscalerSelection(values = {}) {
+  if (!values.hires_enabled) return null;
+  const strategy = String(values.hires_strategy || "").trim().toLowerCase();
+  const upscalerId = String(values.hires_upscaler_id || values.hires_upscaler || "").trim();
+  if (strategy === "pixel_neural" && !upscalerId) {
+    return "Neural hires is enabled, but no supported upscaler is selected. Choose a neural upscaler or disable hires before generating.";
+  }
+  return null;
+}
 
 function setSubmissionBusy(active, phase = "submitting", stage = "") {
   const button = $("#generateButton");
@@ -1001,7 +1012,12 @@ async function submit(unlimited) {
   submitInFlight = true;
   setSubmissionBusy(true, "validating", "Validating…");
   try {
-    const values = { ...collectValues(), unlimited: Boolean(unlimited) };
+    const values = enforceCfgRescaleRequestGuardrails({ ...collectValues(), unlimited: Boolean(unlimited) });
+    const hiresUpscalerError = validateHiresUpscalerSelection(values);
+    if (hiresUpscalerError) {
+      $("#hiresUpscaler")?.focus();
+      throw new Error(hiresUpscalerError);
+    }
     setSubmissionBusy(true, "validating_prompt", "Validating prompt…");
     const promptPreflight = await preflightCurrentPrompt(values);
     const promptErrors = promptPreflight.blocking_errors || [];

@@ -25,11 +25,49 @@ export function replaceOptions(select, values, currentValue = "") {
 }
 
 export function numberValue(input, fallback = null) {
-  if (input.value.trim() === "") {
+  if (!input || String(input.value ?? "").trim() === "") {
     return fallback;
   }
   const value = Number(input.value);
   return Number.isFinite(value) ? value : fallback;
+}
+
+export function clampNumber(value, minimum, maximum, fallback = minimum) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(maximum, Math.max(minimum, numeric));
+}
+
+export function clampedNumberValue(input, minimum, maximum, fallback = null) {
+  if (!input || String(input.value ?? "").trim() === "") {
+    return fallback;
+  }
+  const value = Number(input.value);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return clampNumber(value, minimum, maximum, fallback ?? minimum);
+}
+
+export function normalizeClampedNumberInput(input, { minimum, maximum, decimals = null } = {}) {
+  if (!input) {
+    return null;
+  }
+  const raw = String(input.value ?? "").trim();
+  if (raw === "") {
+    input.value = "";
+    return null;
+  }
+  const clamped = clampNumber(raw, minimum, maximum, null);
+  if (clamped === null) {
+    input.value = "";
+    return null;
+  }
+  const normalized = decimals === null ? clamped : Number(clamped.toFixed(decimals));
+  input.value = String(normalized);
+  return normalized;
 }
 
 export function shortText(value, limit = 54) {

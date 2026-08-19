@@ -3,12 +3,15 @@ import { state } from "../state.js";
 import { $, notify } from "../utils.js";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 
+let unresolvedNeuralSelectionRequired = false;
+
 function catalog() {
   return state.upscalers || {};
 }
 
 function selectedDescriptor(id = $("#hiresUpscaler")?.value || "") {
-  return (catalog().neural || []).find((item) => item.upscaler_id === id) || null;
+  return [...(catalog().neural || []), ...(catalog().interpolation_baselines || [])]
+    .find((item) => item.upscaler_id === id) || null;
 }
 
 function addOption(select, item, { disabled = false } = {}) {
@@ -71,16 +74,41 @@ function renderStatus() {
   if (!status) return;
   const item = selectedDescriptor();
   if (!item) {
-    status.textContent = "No supported neural .pth upscaler is selected. Refresh or install a recognized model.";
+    status.textContent = unresolvedNeuralSelectionRequired
+      ? "Neural hires is selected, but the saved upscaler is missing or unresolved. Choose a supported neural upscaler or disable hires before generating."
+      : "No supported neural .pth upscaler is selected. Refresh or install a recognized model.";
     status.className = "field-status error";
     setSubsystemStatus({
       id: "hiresUpscalerSubsystemStatusLight",
       host: "#hiresUpscalerStatusLightHost",
       label: "Neural hires upscaler",
       status: "inactive",
-      stateLabel: "Not selected",
-      summary: "No supported neural upscaler is currently selected.",
-      detail: "Refresh discovery or select a recognized .pth upscaler to resolve runtime qualification.",
+      stateLabel: unresolvedNeuralSelectionRequired ? "Selection required" : "Not selected",
+      summary: unresolvedNeuralSelectionRequired
+        ? "A neural hires request is active, but its upscaler could not be resolved."
+        : "No supported neural upscaler is currently selected.",
+      detail: unresolvedNeuralSelectionRequired
+        ? "The WebUI will not silently substitute a neural upscaler. Choose a supported model explicitly or disable hires."
+        : "Refresh discovery or select a recognized .pth upscaler to resolve runtime qualification.",
+      diagnosticTarget: "#hiresUpscalerDiagnostics",
+    });
+    const civitaiButton = $("#upscalerFetchCivitaiButton");
+    if (civitaiButton) civitaiButton.disabled = true;
+    return;
+  }
+  if (item.builtin || item.strategy === "pixel_resize") {
+    clearHiresUpscalerError();
+    status.textContent = `${item.display_name || "Built-in resize"} · automatic fallback · no external .pth required.`;
+    status.className = "field-status ready";
+    setSubsystemStatus({
+      id: "hiresUpscalerSubsystemStatusLight",
+      host: "#hiresUpscalerStatusLightHost",
+      label: "Hires upscaler",
+      status: "healthy",
+      stateLabel: "Built-in fallback",
+      summary: "A built-in resize path is selected; no neural upscaler asset is required.",
+      detail: "Auto can use this path when no qualified neural upscaler is available.",
+      facts: { upscaler: item.display_name || item.upscaler_id, architecture: "interpolation" },
       diagnosticTarget: "#hiresUpscalerDiagnostics",
     });
     const civitaiButton = $("#upscalerFetchCivitaiButton");
@@ -117,6 +145,15 @@ function renderStatus() {
   });
   const civitaiButton = $("#upscalerFetchCivitaiButton");
   if (civitaiButton) civitaiButton.disabled = !item?.upscaler_id;
+}
+
+function requiresExplicitNeuralSelection(current = {}) {
+  if (!current?.hires_enabled) return false;
+  const strategy = String(current.hires_strategy || "").trim().toLowerCase();
+  const requested = String(current.hires_upscaler_id || current.hires_upscaler || "").trim();
+  if (strategy !== "pixel_neural") return false;
+  if (!requested) return true;
+  return !Boolean(selectedDescriptor(requested));
 }
 
 function setTileControls(enabled, item) {
@@ -183,6 +220,20 @@ function automaticFilter(nativeWidth, nativeHeight, targetWidth, targetHeight, p
 export function updateHiresUpscalerPlanUI(plan = {}, enabled = false) {
   const item = selectedDescriptor();
   setTileControls(enabled, item);
+  if (enabled && item && (item.builtin || item.strategy === "pixel_resize")) {
+    const policyControl = $("#hiresAspectPolicy");
+    const paddingControl = $("#hiresPaddingMode");
+    const filterControl = $("#hiresFinalSizeCorrectionFilter");
+    if (policyControl) policyControl.disabled = true;
+    if (paddingControl) paddingControl.disabled = true;
+    if (filterControl) { filterControl.value = "bicubic"; filterControl.disabled = true; }
+    const target = `${Number(plan.internal_width || plan.final_width || 0)} × ${Number(plan.internal_height || plan.final_height || 0)}`;
+    const nativeStatus = $("#hiresNativePlanStatus");
+    if (nativeStatus) { nativeStatus.textContent = `Built-in Bicubic resize prepares the second-pass canvas directly at ${target}; no external neural native-scale correction is required.`; nativeStatus.className = "field-status ready"; }
+    const severityStatus = $("#hiresCorrectionSeverityStatus");
+    if (severityStatus) { severityStatus.textContent = "Correction severity: not applicable to the built-in direct resize fallback."; severityStatus.className = "field-status subtle"; }
+    return;
+  }
   const policyControl = $("#hiresAspectPolicy");
   const paddingControl = $("#hiresPaddingMode");
   const filterControl = $("#hiresFinalSizeCorrectionFilter");
@@ -227,22 +278,40 @@ export function updateHiresUpscalerPlanUI(plan = {}, enabled = false) {
   }
 }
 
-function renderOptions(preferred = "") {
+function renderOptions(preferred = "", { allowUnresolved = false } = {}) {
   const select = $("#hiresUpscaler");
   if (!select) return;
   const previous = preferred || select.value;
   select.replaceChildren();
   const supported = catalog().supported_neural || [];
-  if (!supported.length) {
+  if (allowUnresolved) {
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "No supported neural upscalers discovered";
+    placeholder.textContent = "Select a supported neural upscaler";
+    select.appendChild(placeholder);
+  }
+  if (!supported.length && !(catalog().interpolation_baselines || []).length) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "No hires upscalers available";
     placeholder.disabled = true;
     placeholder.selected = true;
     select.appendChild(placeholder);
   } else {
     supported.forEach((item) => addOption(select, item));
-    select.value = supported.some((item) => item.upscaler_id === previous) ? previous : supported[0].upscaler_id;
+    if (supported.length) {
+      if (supported.some((item) => item.upscaler_id === previous)) select.value = previous;
+      else if (!allowUnresolved) select.value = supported[0].upscaler_id;
+      else select.value = "";
+    }
+  }
+  const builtins = catalog().interpolation_baselines || [];
+  if (builtins.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Built-in fallback";
+    builtins.forEach((item) => addOption(group, item));
+    select.appendChild(group);
+    if (builtins.some((item) => item.upscaler_id === previous)) select.value = previous;
   }
   const unavailable = catalog().unavailable_neural || [];
   if (unavailable.length) {
@@ -264,9 +333,13 @@ function renderOptions(preferred = "") {
 export function initializeHiresUpscalers(payload = {}, current = {}) {
   state.upscalers = payload || {};
   const replayed = current.hires_enabled ? (current.hires_upscaler_id || current.hires_upscaler || "") : "";
-  const preferred = replayed || state.settings?.preferred_hires_upscaler_id || $("#hiresUpscaler")?.value || "";
-  if ($("#hiresStrategy")) $("#hiresStrategy").value = "pixel_neural";
-  renderOptions(preferred);
+  unresolvedNeuralSelectionRequired = requiresExplicitNeuralSelection(current);
+  const preferred = unresolvedNeuralSelectionRequired
+    ? ""
+    : (replayed || state.settings?.preferred_hires_upscaler_id || $("#hiresUpscaler")?.value || "");
+  renderOptions(preferred, { allowUnresolved: unresolvedNeuralSelectionRequired });
+  const selected = selectedDescriptor(preferred || $("#hiresUpscaler")?.value || "");
+  if ($("#hiresStrategy")) $("#hiresStrategy").value = selected?.strategy || current.hires_strategy || "pixel_neural";
 }
 
 export function bindHiresUpscalers(saveSessionSoon = null) {
@@ -279,9 +352,12 @@ export function bindHiresUpscalers(saveSessionSoon = null) {
   });
   $("#hiresUpscaler")?.addEventListener("change", async () => {
     clearHiresUpscalerError();
+    unresolvedNeuralSelectionRequired = false;
     renderStatus();
     const preferred = String($("#hiresUpscaler")?.value || "").trim();
-    if (preferred && preferred !== String(state.settings?.preferred_hires_upscaler_id || "")) {
+    const descriptor = selectedDescriptor(preferred);
+    if ($("#hiresStrategy")) $("#hiresStrategy").value = descriptor?.strategy || "pixel_neural";
+    if (preferred && !descriptor?.builtin && preferred !== String(state.settings?.preferred_hires_upscaler_id || "")) {
       try {
         const saved = await api.saveSettings({ preferred_hires_upscaler_id: preferred });
         state.settings = { ...state.settings, ...saved };

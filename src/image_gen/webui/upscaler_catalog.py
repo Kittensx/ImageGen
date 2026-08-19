@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -79,7 +80,17 @@ class WebUIUpscalerCatalog:
             "roots": discovery.get("roots") or [],
             "cache_path": discovery.get("cache_path") or "",
             "built_in_latent": [],
-            "interpolation_baselines": [],
+            "interpolation_baselines": [{
+                "upscaler_id": "builtin.pixel_resize.bicubic",
+                "display_name": "Built-in Bicubic Resize",
+                "sha256": hashlib.sha256(b"image-gen:builtin:pixel_resize:bicubic:v1").hexdigest(),
+                "selectable": True,
+                "available": True,
+                "native_scale": 0,
+                "architecture": "interpolation",
+                "strategy": "pixel_resize",
+                "builtin": True,
+            }],
             "neural": neural,
             "supported_neural": supported,
             "unavailable_neural": unavailable,
@@ -199,9 +210,18 @@ class WebUIUpscalerCatalog:
             or ""
         ).strip()
 
+        if strategy == "pixel_resize":
+            if selected_id != "builtin.pixel_resize.bicubic":
+                raise ValueError(
+                    f"Built-in pixel resize requires upscaler ID 'builtin.pixel_resize.bicubic', received {selected_id!r}."
+                )
+            request["hires_strategy"] = "pixel_resize"
+            request["hires_upscaler"] = selected_id
+            request["hires_upscaler_id"] = selected_id
+            return request
         if strategy != "pixel_neural":
             raise ValueError(
-                f"Neural upscaler ID {selected_id!r} requires hires_strategy='pixel_neural'."
+                f"Unsupported hires strategy {strategy!r}."
             )
         descriptor = self.descriptor(selected_id)
         if descriptor is None:

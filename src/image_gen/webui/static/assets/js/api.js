@@ -421,6 +421,18 @@ export const api = {
     method: "POST",
     body: JSON.stringify(values),
   }),
+  hiresProfiles: () => request("/api/hires-profiles"),
+  hiresProfileSchema: () => request("/api/hires-profiles/schema"),
+  hiresProfile: (profileId) => request(`/api/hires-profiles/${encodeURIComponent(profileId)}`),
+  resolveHiresAuto: (context) => request("/api/hires-profiles/resolve-auto", { method: "POST", body: JSON.stringify({ context: context || {} }) }),
+  saveHiresProfile: (values) => request("/api/hires-profiles", { method: "POST", body: JSON.stringify(values || {}) }),
+  duplicateHiresProfile: (profileId, name = "") => request(`/api/hires-profiles/${encodeURIComponent(profileId)}/duplicate`, {
+    method: "POST", body: JSON.stringify({ name }),
+  }),
+  deleteHiresProfile: (profileId) => request(`/api/hires-profiles/${encodeURIComponent(profileId)}`, { method: "DELETE" }),
+  hiresDefaultAssignments: () => request("/api/hires-default-assignments"),
+  saveHiresDefaultAssignment: (values) => request("/api/hires-default-assignments", { method: "POST", body: JSON.stringify(values || {}) }),
+  deleteHiresDefaultAssignment: (assignmentKey) => request(`/api/hires-default-assignments/${encodeURIComponent(assignmentKey)}`, { method: "DELETE" }),
   promptPresets: () => request("/api/prompt-presets"),
   savePromptPreset: (values) => request("/api/prompt-presets", {
     method: "POST",

@@ -1,0 +1,57 @@
+/* QOL: focused validation recovery surfaces. */
+.field-error-focus {
+  outline: 2px solid var(--danger);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.field-error-recovery {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+}
+.field-error-recovery[hidden] { display: none; }
+
+.parameter-range-button {
+  min-width: 2rem;
+  padding-inline: 0.45rem;
+  font-weight: 700;
+}
+.parameter-range-button.is-active {
+  outline: 1px solid var(--component-accent, var(--accent));
+}
+.parameter-range-dialog {
+  width: min(640px, calc(100vw - 2rem));
+}
+
+/* SDXL Lightning qualified-default controls: recommendations are user-overridable. */
+.sdxl-recommendation-controls {
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0.65rem;
+  background: var(--surface-raised, var(--surface-2));
+}
+
+.sdxl-recommendation-heading,
+.sdxl-recommendation-options {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.sdxl-recommendation-heading {
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+
+.sdxl-recommendation-options {
+  align-items: flex-start;
+}
+
+.sdxl-recommendation-controls.is-experimental {
+  border-style: dashed;
+}
+

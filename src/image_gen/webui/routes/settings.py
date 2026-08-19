@@ -3,16 +3,17 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 from fastapi import APIRouter, HTTPException
 
 from image_gen.runtime_options import build_runtime_command_from_status, resolve_runtime_startup_options
 from image_gen.webui.routes.payloads import NamedPayload, PromptPresetPayload
+from image_gen.webui.schema_utils import scope_plugin_profile_values
 
 
-def build_settings_router(*, context, store, theme_library, _runtime_startup_status) -> APIRouter:
+def build_settings_router(*, context, store, theme_library, registry, _runtime_startup_status) -> APIRouter:
     router = APIRouter()
 
     def _user_config_path() -> Path:
@@ -129,15 +130,57 @@ def build_settings_router(*, context, store, theme_library, _runtime_startup_sta
         return {"deleted": store.delete_prompt_preset(name)}
 
 
+    def _scope_scheduler_profile_values(
+        plugin_id: str | None,
+        values: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        requested = str(plugin_id or "").strip()
+        if not requested:
+            raise ValueError(
+                "Scheduler profiles require a scheduler plugin_id so their settings can be scoped safely."
+            )
+        descriptor = registry.resolve_descriptor(requested, kind="scheduler")
+        if descriptor is None:
+            raise ValueError(f"Unknown scheduler plugin_id: {requested!r}")
+        return scope_plugin_profile_values(values, descriptor.config_schema, kind="scheduler")
+
+
     @router.get("/api/profiles/{kind}")
     async def get_profiles(kind: str, plugin_id: str | None = None) -> list[dict[str, Any]]:
-        return store.list_profiles(kind, plugin_id)
+        records = store.list_profiles(kind, plugin_id)
+        if str(kind or "").strip().lower() != "scheduler":
+            return records
+
+        cleaned_records: list[dict[str, Any]] = []
+        try:
+            for record in records:
+                record_plugin_id = plugin_id or record.get("plugin_id")
+                values = _scope_scheduler_profile_values(record_plugin_id, record.get("values"))
+                cleaned = {**record, "values": values}
+                cleaned_records.append(cleaned)
+                if values != dict(record.get("values") or {}):
+                    store.save_profile(
+                        kind,
+                        str(record.get("name") or "Untitled"),
+                        values,
+                        record_plugin_id,
+                        overwrite=True,
+                    )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return cleaned_records
 
 
     @router.post("/api/profiles/{kind}")
     async def save_profile(kind: str, payload: NamedPayload) -> dict[str, Any]:
+        values = payload.values
+        if str(kind or "").strip().lower() == "scheduler":
+            try:
+                values = _scope_scheduler_profile_values(payload.plugin_id, values)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            return store.save_profile(kind, payload.name, payload.values, payload.plugin_id, overwrite=payload.overwrite)
+            return store.save_profile(kind, payload.name, values, payload.plugin_id, overwrite=payload.overwrite)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

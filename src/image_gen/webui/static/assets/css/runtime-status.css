@@ -1,0 +1,49 @@
+/* Phase 14K-12 compact runtime status and restart-state visibility. */
+.runtime-status-panel {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.runtime-status-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.runtime-status-list > div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.runtime-status-list dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.runtime-status-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.runtime-status-list--dialog {
+  padding: 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
+}
+
+
+.runtime-command-actions {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.runtime-command-actions .compact-button {
+  justify-self: start;
+}
+

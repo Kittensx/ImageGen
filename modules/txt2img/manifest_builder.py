@@ -138,6 +138,8 @@ def build_generation_manifest(
             ("hires_uniform_scale", None),
             ("hires_aspect_ratio_changed", False),
             ("hires_enabled", False),
+            ("hires_configuration_mode", "custom"),
+            ("hires_auto_resolution_record", {}),
             ("hires_steps", 20),
             ("hires_denoising_strength", 0.45),
             ("hires_step_policy", "a1111_fixed_steps_v1"),

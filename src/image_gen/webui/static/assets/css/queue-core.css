@@ -1,0 +1,117 @@
+.stack-list,
+.compact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.queue-card,
+.run-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.queue-card {
+  padding: 9px;
+}
+
+.queue-card header,
+.run-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.queue-card p,
+.queue-card small {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.queue-error {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+
+.queue-log-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.queue-cancel-button {
+  border-color: rgba(255, 126, 126, 0.72);
+  color: #ffd2d2;
+  background: rgba(126, 30, 30, 0.32);
+}
+
+.queue-cancel-button:hover:not(:disabled) {
+  border-color: #ff9b9b;
+  background: rgba(160, 38, 38, 0.5);
+}
+
+.queue-card.is-cancellable {
+  border-left-color: rgba(255, 126, 126, 0.58);
+}
+
+.failure-bundle-hint {
+  color: var(--sky-300);
+  font-size: 0.68rem;
+}
+
+.status-badge {
+  align-self: start;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: white;
+  background: #3a5c73;
+  font-size: 0.66rem;
+  text-transform: capitalize;
+}
+
+.status-badge.completed { background: #188551; }
+.status-badge.failed { background: #a33d3d; }
+.status-badge.running,
+.status-badge.cancelling { background: #1278bd; }
+
+.run-row {
+  align-items: center;
+  padding: 7px 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.preset-controls,
+.model-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.button-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.model-status {
+  margin: 0 0 10px;
+}
+
+.model-status div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.model-status dd {
+  margin: 0;
+  color: var(--text);
+}
+

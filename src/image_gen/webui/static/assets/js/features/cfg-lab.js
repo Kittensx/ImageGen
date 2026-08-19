@@ -15,6 +15,9 @@ const GUIDANCE_FIELDS = {
   cfg_early_floor_until_fraction: "#cfgEarlyFloorDurationNumber",
 };
 
+let rememberedUnlockedCfgRescale = 0;
+let cfgRescaleArchitectureLocked = false;
+
 const RANGE_PAIRS = [
   ["#cfgRescaleRange", "#cfgRescaleNumber"],
   ["#cfgCurveStrengthRange", "#cfgCurveStrengthNumber"],
@@ -24,6 +27,87 @@ const RANGE_PAIRS = [
   ["#cfgEarlyFloorValueRange", "#cfgEarlyFloorValueNumber"],
   ["#cfgEarlyFloorDurationRange", "#cfgEarlyFloorDurationNumber"],
 ];
+
+function normalizedModelPath(value) {
+  return String(value || "").trim().replaceAll("\\", "/").toLowerCase();
+}
+
+function selectedModelRecord() {
+  const requestedPath = $("#modelPath")?.value || "";
+  const normalizedRequested = normalizedModelPath(requestedPath);
+  return state.models.find((item) => normalizedModelPath(item.path) === normalizedRequested) || state.activeModel || null;
+}
+
+function modelFamilyForCfgRescaleGuard(model = null) {
+  const source = model || selectedModelRecord();
+  const raw = String(
+    source?.runtime_profile?.architecture
+      || source?.architecture
+      || source?.architecture_contract?.family
+      || source?.model_family
+      || source?.architecture_summary
+      || "",
+  ).trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.includes("sd3") || raw.includes("stable diffusion 3") || raw.includes("stable-diffusion-3") || raw.includes("flowmatch") || raw.includes("rectified flow")) {
+    return "sd3.x";
+  }
+  return raw;
+}
+
+function cfgRescaleLockedForCurrentArchitecture() {
+  return modelFamilyForCfgRescaleGuard() === "sd3.x";
+}
+
+function currentCfgRescaleValue() {
+  return Number.parseFloat($("#cfgRescaleNumber")?.value || $("#cfgRescaleRange")?.value || "0") || 0;
+}
+
+function setCfgRescaleInputs(value) {
+  const normalized = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const asText = String(normalized);
+  if ($("#cfgRescaleNumber")) $("#cfgRescaleNumber").value = asText;
+  if ($("#cfgRescaleRange")) $("#cfgRescaleRange").value = asText;
+}
+
+function updateCfgRescaleArchitectureState() {
+  const range = $("#cfgRescaleRange");
+  const number = $("#cfgRescaleNumber");
+  const status = $("#cfgRescaleStatus");
+  if (!range || !number || !status) return;
+  const locked = cfgRescaleLockedForCurrentArchitecture();
+
+  if (locked) {
+    const currentValue = currentCfgRescaleValue();
+    if (currentValue !== 0) rememberedUnlockedCfgRescale = currentValue;
+    setCfgRescaleInputs(0);
+    range.disabled = true;
+    number.disabled = true;
+    const message = "CFG rescale is fixed to 0 for SD3.x / FlowMatchEuler checkpoints because this flow path does not support guidance rescale.";
+    range.title = message;
+    number.title = message;
+    status.textContent = message;
+    status.className = "field-status warning";
+  } else {
+    range.disabled = false;
+    number.disabled = false;
+    range.title = "CFG rescale adjusts guidance saturation near the denoised prediction.";
+    number.title = range.title;
+    if (cfgRescaleArchitectureLocked && currentCfgRescaleValue() === 0 && rememberedUnlockedCfgRescale > 0) {
+      setCfgRescaleInputs(rememberedUnlockedCfgRescale);
+    }
+  }
+  cfgRescaleArchitectureLocked = locked;
+}
+
+export function enforceCfgRescaleRequestGuardrails(values = {}) {
+  const next = { ...values };
+  if (cfgRescaleLockedForCurrentArchitecture()) {
+    next.cfg_rescale = 0;
+    if ("hires_cfg_rescale" in next || next.hires_enabled) next.hires_cfg_rescale = 0;
+  }
+  return next;
+}
 
 export const CFG_PRESETS = {
   sdxl_lightning_recommended: {
@@ -435,6 +519,7 @@ export function applyCfgLabValues(values = {}) {
     const number = $(numberSelector);
     if (number) assignControl(rangeSelector, number.value);
   });
+  updateCfgRescaleArchitectureState();
   renderCfgCurvePreview();
   updateSamplerAvailability();
 }
@@ -602,6 +687,7 @@ export function renderCfgGraph(container, points, { compact = false, currentStep
 }
 
 export function renderCfgCurvePreview() {
+  updateCfgRescaleArchitectureState();
   syncPromptCfgBehaviorFromOptions();
   const model = configuredModel();
   renderCfgGraph($("#cfgCurvePreviewGraph"), model.points, { compact: true });
@@ -697,6 +783,10 @@ export function bindCfgLab({ collect = () => ({}), saveSession = () => {}, openV
     $(selector)?.addEventListener("input", () => { renderCfgCurvePreview(); saveSession(); });
     $(selector)?.addEventListener("change", () => { renderCfgCurvePreview(); saveSession(); });
   });
+  $("#modelPath")?.addEventListener("change", renderCfgCurvePreview);
+  window.addEventListener("image-gen-model-activated", renderCfgCurvePreview);
+  window.addEventListener("image-gen-model-unloaded", renderCfgCurvePreview);
+  window.addEventListener("image-gen-generation-values-applied", renderCfgCurvePreview);
   $("#samplerName")?.addEventListener("change", () => { updateSamplerAvailability(); renderCfgCurvePreview(); });
   $("#promptParserName")?.addEventListener("change", () => { syncPromptCfgBehaviorFromOptions(); updateSamplerAvailability(); renderCfgCurvePreview(); });
   $("#promptCfgBehavior")?.addEventListener("change", () => { writePromptCfgBehavior(); renderCfgCurvePreview(); saveSession(); });

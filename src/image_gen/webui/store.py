@@ -4,7 +4,7 @@ import json
 import re
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from image_gen.webui.default_assets import default_document, normalize_document
 from image_gen.webui.theme.contracts import normalize_legacy_theme_palette
@@ -181,6 +181,7 @@ class WebUIStore:
         self.settings_dir = self.root / "settings"
         self.recent_outputs_dir = self.root / "recent-outputs"
         self.default_assets_dir = self.root / "default-assets"
+        self._hires_profile_service = None
         for directory in (
             self.session_dir,
             self.profile_dir,
@@ -192,6 +193,20 @@ class WebUIStore:
             self.default_assets_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def hires_profile_service(self):
+        # WebUIStore is imported during process bootstrap before CUDA allocator
+        # options are applied. Keep the hires-profile subsystem lazy because its
+        # GenerationRequest schema imports Torch.
+        if self._hires_profile_service is None:
+            from image_gen.webui.hires_profiles import HiresProfileService, build_builtin_auto_profiles
+
+            self._hires_profile_service = HiresProfileService(
+                self.root,
+                builtin_profiles=build_builtin_auto_profiles(),
+            )
+        return self._hires_profile_service
 
     @staticmethod
     def _read(path: Path, default: Any) -> Any:
@@ -532,6 +547,79 @@ class WebUIStore:
             return True
         except OSError:
             return False
+
+    def list_hires_profiles(self) -> list[dict[str, Any]]:
+        return [profile.to_dict() for profile in self.hires_profile_service.list_profiles()]
+
+    def get_hires_profile(self, profile_id: str) -> dict[str, Any] | None:
+        profile = self.hires_profile_service.get_profile(profile_id)
+        return profile.to_dict() if profile is not None else None
+
+    def inspect_hires_profile(
+        self,
+        profile_id: str,
+        *,
+        choice_overrides: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.hires_profile_service.inspect_profile(
+            profile_id,
+            choice_overrides=choice_overrides,
+        ).to_dict()
+
+    def save_hires_profile(
+        self,
+        *,
+        name: str,
+        values: Mapping[str, Any],
+        included_fields: list[str] | tuple[str, ...] | None = None,
+        profile_id: str = "",
+        description: str = "",
+        compatibility: Mapping[str, Any] | None = None,
+        baseline_profile_id: str = "",
+        choice_overrides: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        profile, manifest = self.hires_profile_service.save_profile(
+            name=name,
+            values=values,
+            included_fields=included_fields,
+            profile_id=profile_id,
+            description=description,
+            compatibility=compatibility,
+            baseline_profile_id=baseline_profile_id,
+            choice_overrides=choice_overrides,
+        )
+        return {"profile": profile.to_dict(), "manifest": manifest.to_dict()}
+
+    def duplicate_hires_profile(
+        self,
+        profile_id: str,
+        *,
+        name: str,
+        choice_overrides: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        profile, manifest = self.hires_profile_service.duplicate_profile(
+            profile_id,
+            name=name,
+            choice_overrides=choice_overrides,
+        )
+        return {"profile": profile.to_dict(), "manifest": manifest.to_dict()}
+
+    def delete_hires_profile(self, profile_id: str) -> dict[str, Any]:
+        return self.hires_profile_service.delete_profile(profile_id)
+
+    def list_hires_default_assignments(self) -> list[dict[str, Any]]:
+        return [item.to_dict() for item in self.hires_profile_service.list_default_assignments()]
+
+    def save_hires_default_assignment(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self.hires_profile_service.save_default_assignment(payload).to_dict()
+
+    def delete_hires_default_assignment(self, assignment_key: str) -> bool:
+        return self.hires_profile_service.delete_default_assignment(assignment_key)
+
+    def resolve_hires_auto(self, context: Mapping[str, Any], *, choice_overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return self.hires_profile_service.resolve_auto(
+            context, choice_overrides=choice_overrides
+        ).to_dict()
 
     def list_prompt_presets(self) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []

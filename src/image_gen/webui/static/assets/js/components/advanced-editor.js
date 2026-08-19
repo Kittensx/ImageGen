@@ -617,11 +617,11 @@ export async function renderAdvancedEditor({
   const viewState = getViewState(kind);
   let profileInput;
   let syncProfilePresentation = () => {};
-  const triggerChange = () => {
+  const triggerChange = ({ persist = true } = {}) => {
     updateSafetyOverrideState(container, kind);
     applyEditorFilters(container, kind);
     syncProfilePresentation();
-    onChange();
+    if (persist) onChange();
   };
 
   const toolbar = document.createElement("div");
@@ -848,7 +848,7 @@ export async function renderAdvancedEditor({
     if (!profile) return false;
     profileInput.value = profile.name;
     applyProfileValues(container, profile.values || {});
-    triggerChange();
+    triggerChange({ persist: false });
     syncProfileStatus();
     if (announce) notify(`${kind[0].toUpperCase()}${kind.slice(1)} profile loaded.`);
     return true;
@@ -938,9 +938,15 @@ export async function renderAdvancedEditor({
     if (!file) return;
     try {
       const payload = JSON.parse(await file.text());
+      if (payload.kind && String(payload.kind) !== String(kind)) {
+        throw new Error(`This file is a ${payload.kind} profile, not a ${kind} profile.`);
+      }
+      if (payload.plugin_id && descriptor.plugin_id && String(payload.plugin_id) !== String(descriptor.plugin_id)) {
+        throw new Error(`This profile belongs to ${payload.plugin_id}, not ${descriptor.plugin_id}.`);
+      }
       applyProfileValues(container, payload.values || {});
       profileInput.value = String(payload.name || file.name.replace(/\.json$/i, "")).trim();
-      triggerChange();
+      triggerChange({ persist: false });
       syncProfileStatus();
       notify(`${kind[0].toUpperCase()}${kind.slice(1)} settings loaded from local file.`);
     } catch (error) {

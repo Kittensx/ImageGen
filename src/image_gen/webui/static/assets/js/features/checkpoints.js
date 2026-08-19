@@ -86,13 +86,28 @@ async function chooseRecentPreview({ assetId, title, loadCandidates, replaceFrom
   const updated = await replaceFromOutput(assetId, chosen.output_id);
   onApplied(updated);
 }
+function buildPreviewUrl(model = {}) {
+  const baseUrl = String(model?.preview_url || "").trim();
+  if (!baseUrl) return "";
+  const token = String(
+    model?.preview_revision
+    || model?.preview_modified_ns
+    || model?.catalog_revision
+    || model?.modified_ns
+    || Date.now()
+  ).trim();
+  if (!token) return baseUrl;
+  const sanitized = baseUrl.replace(/([?&])igcb=[^&]*(&|$)/, (_match, prefix, suffix) => (prefix === "?" && suffix ? "?" : prefix === "&" && suffix ? "&" : ""));
+  return `${sanitized}${sanitized.includes("?") ? "&" : "?"}igcb=${encodeURIComponent(token)}`;
+}
+
 function setPreview(image, fallback, model) {
   if (!image || !fallback) return;
   image.classList.remove("has-image");
   image.removeAttribute("src");
   fallback.classList.remove("is-hidden");
   fallback.textContent = String(model?.name || "CKPT").slice(0, 4).toUpperCase();
-  const url = String(model?.preview_url || "").trim();
+  const url = buildPreviewUrl(model);
   if (!url) return;
   image.onload = () => {
     image.classList.add("has-image");
@@ -102,7 +117,7 @@ function setPreview(image, fallback, model) {
     image.classList.remove("has-image");
     fallback.classList.remove("is-hidden");
   };
-  image.src = `${url}${url.includes("?") ? "&" : "?"}v=${Number(model.modified_ns || Date.now())}`;
+  image.src = url;
 }
 
 function modelMatchesFilter(model, filter) {
@@ -763,7 +778,7 @@ export function bindCheckpointWorkspace({
         loadCandidates: api.loadCheckpointPreviewCandidates,
         replaceFromOutput: api.replaceCheckpointPreviewFromOutput,
         onApplied: (updated) => {
-          selectedDetails = mergeCatalogModel({ ...selectedDetails, ...updated, preview_url: `${updated.preview_url}?r=${Date.now()}` }) || { ...selectedDetails, ...updated, preview_url: `${updated.preview_url}?r=${Date.now()}` };
+          selectedDetails = mergeCatalogModel({ ...selectedDetails, ...updated }) || { ...selectedDetails, ...updated };
           renderCards();
           renderDetails();
           renderCurrentModel();
@@ -783,8 +798,7 @@ export function bindCheckpointWorkspace({
       selectedDetails = mergeCatalogModel({
         ...selectedDetails,
         ...updated,
-        preview_url: `${updated.preview_url}?r=${Date.now()}`,
-      }) || { ...selectedDetails, ...updated, preview_url: `${updated.preview_url}?r=${Date.now()}` };
+      }) || { ...selectedDetails, ...updated };
       renderCards();
       renderDetails();
       renderCurrentModel();

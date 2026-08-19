@@ -1,10 +1,10 @@
 import { loadFragments } from "./fragments.js";
 import { configureBranding, productName } from "./branding.js?v=brand1";
 
-import { api } from "./api.js?v=cancel-controls1";
+import { api } from "./api.js?v=cancel-controls1-ha2";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
-import { renderAdvancedEditor } from "./components/advanced-editor.js?v=svg-profile2";
+import { renderAdvancedEditor } from "./components/advanced-editor.js?v=scheduler-profile-scope2";
 import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
 import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=sdxl-cfg-recommendations4";
@@ -35,9 +35,10 @@ import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js?v=responsive-action-bar1";
 import { applyCfgPreset, bindCfgLab } from "./features/cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
-import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=prompt-cards1";
+import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=r10.3";
 import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
-import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=civitai-connect1";
+import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=ha3";
+import { bindHiresProfiles } from "./features/hires-profiles.js?v=ha3";
 import { bindUserConfigEditor } from "./features/user-config-editor.js?v=qol1";
 import { bindParameterRanges } from "./features/parameter-ranges.js?v=qol2";
 import { bindSeedControls } from "./features/seed-controls.js?v=qol-seed-ui5";
@@ -103,8 +104,13 @@ function currentSchedulerPluginId() {
   return String(descriptor?.plugin_id || descriptor?.name || $("#schedulerName").value || "").trim();
 }
 
+function currentSchedulerPresetCatalogKey() {
+  const descriptor = currentSchedulerDescriptor();
+  return String(descriptor?.name || descriptor?.plugin_id || $("#schedulerName").value || "").trim();
+}
+
 function schedulerPresetSupportEnabled() {
-  return currentSchedulerPluginId() === "simple_kes";
+  return currentSchedulerPresetCatalogKey() === "simple_kes";
 }
 
 
@@ -736,14 +742,18 @@ async function refreshAdvancedEditors({ preservePresetSelection = false } = {}) 
     descriptor: samplerDescriptor($("#samplerName").value),
     kind: "sampler",
     currentValues: samplerValues,
+    onProfileStateChange: ({ values = {} } = {}) => {
+      samplerValues = { ...(values || {}) };
+    },
     onChange: () => {
       saveSessionSoon();
     },
   });
 
   const schedulerPluginId = currentSchedulerPluginId();
+  const schedulerPresetCatalogKey = currentSchedulerPresetCatalogKey();
   const builtinProfiles = schedulerPresetSupportEnabled()
-    ? (BUILTIN_SCHEDULER_PRESETS[schedulerPluginId] || [])
+    ? (BUILTIN_SCHEDULER_PRESETS[schedulerPresetCatalogKey] || [])
     : [];
   await renderAdvancedEditor({
     container: $("#schedulerAdvancedContent"),
@@ -752,7 +762,8 @@ async function refreshAdvancedEditors({ preservePresetSelection = false } = {}) 
     currentValues: schedulerValues,
     builtinProfiles,
     selectedProfileName: preservePresetSelection ? schedulerPresetName : "",
-    onProfileStateChange: ({ name = "", source = "" } = {}) => {
+    onProfileStateChange: ({ name = "", source = "", values = {} } = {}) => {
+      schedulerValues = { ...(values || {}) };
       schedulerPresetName = name;
       schedulerPresetPluginId = schedulerPluginId;
       schedulerPresetSource = source;
@@ -1200,6 +1211,11 @@ async function start() {
     bindOutputPatternBuilder();
     bindPromptTools({ saveSessionSoon });
     bindHiresUpscalers(saveSessionSoon);
+    await bindHiresProfiles({
+      collect: collectCurrentValues,
+      apply: async (values) => applyGenerationValues({ ...collectCurrentValues(), ...(values || {}) }),
+      saveSessionSoon,
+    });
     bindUserConfigEditor();
     window.addEventListener("image-gen-parameter-ranges-changed", saveSessionSoon);
     bindOutpaintPrototype(saveSessionSoon);

@@ -170,6 +170,17 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
         raise ValueError(
             "hires_schedule_replay_mode must be reconstruct or recorded_exact."
         )
+    normalized["hires_configuration_mode"] = str(
+        normalized.get("hires_configuration_mode") or "custom"
+    ).strip().casefold()
+    if normalized["hires_configuration_mode"] not in {"auto", "profile", "custom"}:
+        normalized["hires_configuration_mode"] = "custom"
+    normalized["hires_auto_resolution_record"] = dict(
+        normalized.get("hires_auto_resolution_record") or {}
+    )
+    normalized["hires_lifecycle_state"] = dict(
+        normalized.get("hires_lifecycle_state") or {}
+    )
     normalized["hires_strategy"] = str(
         normalized.get("hires_strategy") or "pixel_neural"
     ).strip().casefold()
@@ -177,13 +188,16 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["hires_upscaler_id"] = str(
         normalized.get("hires_upscaler_id") or normalized["hires_upscaler"]
     ).strip()
-    if normalized["hires_strategy"] != "pixel_neural":
+    if normalized["hires_strategy"] not in {"pixel_neural", "pixel_resize"}:
         if not normalized["hires_enabled"]:
             normalized["hires_strategy"] = "pixel_neural"
             normalized["hires_upscaler"] = ""
             normalized["hires_upscaler_id"] = ""
         else:
-            raise ValueError("hires_strategy must be pixel_neural.")
+            raise ValueError("hires_strategy must be pixel_neural or pixel_resize.")
+    if normalized["hires_strategy"] == "pixel_resize":
+        normalized["hires_upscaler"] = normalized["hires_upscaler_id"] or "builtin.pixel_resize.bicubic"
+        normalized["hires_upscaler_id"] = normalized["hires_upscaler"]
     normalized["hires_tile_size"] = _coerce_top_level_number(
         normalized.get("hires_tile_size"), integer=True, default=0
     )

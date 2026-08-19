@@ -1,4 +1,4 @@
-import { $, numberValue } from "../utils.js";
+import { $, clampedNumberValue, numberValue } from "../utils.js";
 import { readAdvancedValues } from "./advanced-editor.js";
 import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { normalizeHiresSizeMode, planHiresDimensions } from "./hires-dimensions.js";
@@ -89,6 +89,9 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_shortcut_profile_name: $("#hiresShortcutProfileName")?.value || $("#promptShortcutProfileName")?.value || "legacy_default",
     hires_shortcut_profile_snapshot: jsonValue("#hiresShortcutProfileSnapshot"),
     hires_enabled: hiresEnabled,
+    hires_configuration_mode: $("#hiresConfigurationMode")?.value || "custom",
+    hires_auto_resolution_record: jsonValue("#hiresAutoResolutionRecord"),
+    hires_lifecycle_state: jsonValue("#hiresLifecycleState"),
     hires_positive_prompt: $("#hiresPositivePrompt")?.value || "",
     hires_negative_prompt: $("#hiresNegativePrompt")?.value || "",
     hires_size_mode: hiresPlan.mode,
@@ -107,8 +110,8 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_sampler_name: $("#hiresSamplerName")?.value || "",
     hires_scheduler_name: $("#hiresSchedulerName")?.value || "",
     hires_cfg_scale: numberValue($("#hiresCfgScale"), null),
-    hires_cfg_rescale: numberValue($("#hiresCfgRescale"), null),
-    hires_strategy: "pixel_neural",
+    hires_cfg_rescale: clampedNumberValue($("#hiresCfgRescale"), 0, 1, null),
+    hires_strategy: $("#hiresStrategy")?.value || "pixel_neural",
     hires_upscaler: $("#hiresUpscaler")?.value || "",
     hires_upscaler_id: $("#hiresUpscaler")?.value || "",
     hires_tile_size: numberValue($("#hiresTileSize"), 0),
@@ -198,6 +201,8 @@ export function applyGenerationValues(values = {}) {
     hires_shortcut_profile_name: "#hiresShortcutProfileName",
     hires_positive_prompt: "#hiresPositivePrompt",
     hires_negative_prompt: "#hiresNegativePrompt",
+    hires_configuration_mode: "#hiresConfigurationMode",
+    hires_lifecycle_state: "#hiresLifecycleState",
     hires_size_mode: "#hiresSizeMode",
     hires_scale: "#hiresScale",
     hires_width: "#hiresWidth",
@@ -285,6 +290,8 @@ export function applyGenerationValues(values = {}) {
     $("#hiresEnabled").checked = Boolean(values.hires_enabled);
     $("#hiresEnabled").dispatchEvent(new Event("change", { bubbles: true }));
   }
+  if ($("#hiresAutoResolutionRecord")) $("#hiresAutoResolutionRecord").value = JSON.stringify(values.hires_auto_resolution_record || {});
+  if ($("#hiresLifecycleState")) $("#hiresLifecycleState").value = JSON.stringify(values.hires_lifecycle_state || {});
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = Boolean(values.hires_save_lowres);
   if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(values.hires_correction_fingerprint_enabled);
   if ($("#hiresSaveUpscaledPreDenoise")) $("#hiresSaveUpscaledPreDenoise").checked = Boolean(values.hires_save_upscaled_pre_denoise);

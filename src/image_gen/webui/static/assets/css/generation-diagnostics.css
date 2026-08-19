@@ -1,0 +1,344 @@
+/* Keep the full live frame visible. The preview stage owns its configured
+   height; controls and metadata live in the separate block below it. */
+.live-preview-stage.has-image {
+  min-height: 0;
+  flex: 0 0 auto;
+  align-self: center;
+  overflow: hidden;
+}
+
+.live-preview-stage.has-image.has-known-aspect {
+  width: min(
+    100%,
+    calc(clamp(240px, var(--live-preview-panel-height), 450px) * var(--live-preview-aspect-value, 1))
+  );
+  height: auto;
+  max-height: clamp(240px, var(--live-preview-panel-height), 450px);
+  aspect-ratio: var(--live-preview-aspect-ratio, auto);
+}
+
+.live-preview-stage.has-image img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+@media (max-width: 980px) {
+  .recent-output-filter-panel {
+    inset: 48px 8px auto 8px;
+    width: auto;
+    max-width: none;
+  }
+}
+
+/* Phase 11H CFG Lab and per-step guidance diagnostics */
+.cfg-lab-content {
+  display: grid;
+  gap: 14px;
+}
+
+.cfg-lab-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.cfg-lab-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cfg-lab-grid .field-block,
+.cfg-lab-toolbar .field-block {
+  margin: 0;
+}
+
+.cfg-range-control {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 92px;
+  gap: 8px;
+  align-items: center;
+}
+
+.cfg-range-control input[type="range"] {
+  width: 100%;
+}
+
+.cfg-kes-only.is-disabled {
+  opacity: 0.5;
+}
+
+.cfg-curve-preview,
+.cfg-output-diagnostics {
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--surface-raised, #162535) 82%, transparent);
+}
+
+.cfg-curve-preview header,
+.cfg-output-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.cfg-curve-preview header span,
+.cfg-output-heading span {
+  color: var(--text-subtle, #93a4b5);
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.cfg-curve-graph {
+  min-height: 190px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface, #101a24) 88%, transparent);
+}
+
+.cfg-series-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cfg-grid-line {
+  stroke: currentColor;
+  stroke-opacity: 0.12;
+  stroke-width: 1;
+}
+
+.cfg-axis-label {
+  fill: currentColor;
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.cfg-requested-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-opacity: 0.55;
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+}
+
+.cfg-effective-line {
+  fill: none;
+  stroke: var(--accent, #179ee7);
+  stroke-width: 3;
+}
+
+.cfg-effective-marker {
+  fill: var(--accent, #179ee7);
+  stroke: var(--surface, #101a24);
+  stroke-width: 1;
+}
+
+.cfg-output-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cfg-output-summary-grid article {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface, #101a24) 84%, transparent);
+}
+
+.cfg-output-summary-grid strong {
+  color: var(--text-subtle, #93a4b5);
+  font-size: 0.76rem;
+}
+
+.cfg-step-data-details {
+  margin-top: 10px;
+}
+
+.cfg-step-data-details pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 920px) {
+  .cfg-lab-toolbar,
+  .cfg-lab-grid,
+  .cfg-output-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Phase 11H-1 optional live CFG trajectory visual. */
+.live-cfg-preview {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-raised, #162535) 82%, transparent);
+}
+
+.live-cfg-preview[hidden] {
+  display: none !important;
+}
+
+.live-cfg-preview header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.live-cfg-preview header span {
+  color: var(--text-subtle, #93a4b5);
+  font-size: 0.76rem;
+  text-align: right;
+}
+
+.live-cfg-graph {
+  min-height: 132px;
+}
+
+.live-cfg-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--text-subtle, #93a4b5);
+  font-size: 0.76rem;
+}
+
+.cfg-live-cursor-line {
+  stroke: var(--accent, #179ee7);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  stroke-opacity: 0.9;
+}
+
+.cfg-live-cursor-marker {
+  fill: var(--surface, #101a24);
+  stroke: var(--accent, #179ee7);
+  stroke-width: 3;
+}
+
+.cfg-transition-marker {
+  fill: var(--warning, #f5b942);
+  stroke: var(--surface, #101a24);
+  stroke-width: 1;
+}
+
+/* Phase 13 adaptive component memory manager status. */
+.memory-status-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.memory-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.memory-status-grid article {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--surface-raised) 86%, transparent);
+}
+
+.memory-status-grid strong,
+.memory-component-status dt {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.memory-status-grid span {
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-component-status {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.memory-component-status > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.memory-component-status dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-actions {
+  display: grid;
+  gap: 0.3rem;
+  max-height: 8rem;
+  overflow: auto;
+  padding: 0.55rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--surface-raised) 72%, transparent);
+  font-size: 0.78rem;
+}
+
+.memory-actions > div::before {
+  content: "• ";
+  color: var(--accent-color);
+}
+
+#memoryPreviewStatus.warning {
+  color: var(--warning-text, #f4c15d);
+}
+
+
+.hires-size-grid .is-disabled {
+  opacity: 0.55;
+}
+
+.hires-size-grid .is-calculated {
+  opacity: 1;
+}
+
+.hires-size-grid .is-calculated input {
+  border-style: dashed;
+}
+
+.hires-schedule-summary {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--surface-raised) 78%, transparent);
+}
+
+.hires-schedule-summary.ready {
+  border-color: color-mix(in srgb, var(--accent-color) 58%, var(--border-subtle));
+}
+
+.hires-schedule-summary.warning,
+#hiresPairStatus.warning {
+  color: var(--warning-text, #f4c15d);
+}
+
+.hires-runtime-grid {
+  margin-top: 0.15rem;
+}
+

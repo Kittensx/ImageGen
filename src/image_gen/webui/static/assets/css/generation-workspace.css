@@ -1,0 +1,209 @@
+/* Phase UI-1: tabbed generation workspace, docking controls, and startup-default drawer. */
+.model-selector-block {
+  display: grid;
+  gap: 6px;
+}
+
+.model-selector-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: stretch;
+}
+
+.model-selector-row select {
+  min-width: 0;
+}
+
+.startup-defaults-trigger {
+  min-width: 92px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--sky-400) 42%, var(--line));
+  border-radius: 7px;
+  color: var(--sky-100);
+  background: color-mix(in srgb, var(--charcoal-800) 84%, transparent);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.startup-defaults-trigger:hover,
+.startup-defaults-trigger:focus-visible,
+.startup-defaults-trigger.is-active {
+  border-color: var(--sky-300);
+  color: white;
+  background: color-mix(in srgb, var(--sky-500) 22%, var(--charcoal-850));
+}
+
+.startup-defaults-count {
+  min-width: 20px;
+  min-height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: var(--sky-50);
+  background: color-mix(in srgb, var(--sky-500) 52%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.startup-defaults-disabled-control {
+  opacity: 0.72;
+}
+
+.startup-defaults-group,
+.active-prompt-assets-group {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.startup-defaults-group-heading,
+.active-prompt-assets-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--sky-200);
+}
+
+.startup-defaults-empty,
+.active-prompt-assets-empty {
+  padding: 9px;
+  border: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.12);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.active-prompt-assets-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.active-prompt-assets-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.active-prompt-assets-toolbar input {
+  min-width: 0;
+}
+
+.panel-drag-handle {
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: grab;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.panel-drag-handle:hover,
+.panel-drag-handle:focus-visible {
+  border-color: var(--line);
+  color: var(--sky-100);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.panel-drag-handle:active {
+  cursor: grabbing;
+}
+
+.panel-dock-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.panel-dock-menu > summary {
+  list-style: none;
+}
+
+.panel-dock-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-dock-menu-trigger {
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel-dock-menu[open] > .panel-dock-menu-trigger {
+  color: white;
+  background: color-mix(in srgb, var(--sky-500) 24%, transparent);
+}
+
+.panel-dock-menu-popup {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 80;
+  width: 190px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--charcoal-900);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.5);
+}
+
+.panel-dock-menu-popup small {
+  padding: 3px 6px 7px;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.panel-dock-menu-popup button {
+  min-height: 31px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--sky-100);
+  background: transparent;
+  text-align: left;
+  font-size: 0.7rem;
+}
+
+.panel-dock-menu-popup button:hover:not(:disabled),
+.panel-dock-menu-popup button:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--sky-400) 36%, transparent);
+  color: white;
+  background: color-mix(in srgb, var(--sky-500) 17%, transparent);
+}
+
+.panel-dock-menu-popup button:disabled {
+  opacity: 0.46;
+}
+
+.workspace-panel-collapse {
+  flex: 0 0 auto;
+}
+
+#activePromptAssetsPanel > :not(.panel-scale-exempt),
+#startupDefaultsDrawer > :not(.panel-scale-exempt),
+#runtimeStatusPanel > :not(.panel-scale-exempt) {
+  zoom: var(--panel-ui-scale, 1);
+}
+

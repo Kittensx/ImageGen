@@ -1,0 +1,159 @@
+/* Component Phase 05: Model / Component Registry browser. */
+.component-registry-dialog {
+  width: min(1500px, calc(100vw - 2rem));
+  max-width: none;
+}
+
+.component-registry-shell {
+  display: grid;
+  gap: 0.85rem;
+  min-height: min(780px, calc(100vh - 5rem));
+}
+
+.component-registry-heading,
+.component-registry-toolbar,
+.component-registry-pane-heading,
+.component-registry-card-heading,
+.component-registry-policy-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.component-registry-heading,
+.component-registry-pane-heading,
+.component-registry-card-heading {
+  justify-content: space-between;
+}
+
+.component-registry-heading p {
+  margin: 0.25rem 0 0;
+}
+
+.component-registry-toolbar {
+  flex-wrap: wrap;
+}
+
+.component-registry-toolbar input[type="search"] {
+  min-width: min(420px, 100%);
+  flex: 1 1 320px;
+}
+
+.component-registry-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.15fr) minmax(380px, 1.25fr);
+  gap: 0.8rem;
+  min-height: 0;
+}
+
+.component-registry-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  min-width: 0;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0.75rem;
+  padding: 0.7rem;
+  background: var(--surface-raised, var(--surface-2));
+}
+
+.component-registry-pane h3 {
+  margin: 0;
+}
+
+.component-registry-list,
+.component-registry-detail {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 0.55rem;
+}
+
+.component-registry-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0.65rem;
+  background: var(--surface, var(--surface-1));
+}
+
+.component-registry-card.is-selectable {
+  cursor: pointer;
+}
+
+.component-registry-card.is-selected {
+  outline: 2px solid var(--component-accent, var(--accent));
+  outline-offset: 1px;
+}
+
+.component-registry-card code,
+.component-registry-detail code,
+.component-registry-path {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.component-registry-path {
+  font-size: 0.82rem;
+  opacity: 0.85;
+}
+
+.component-registry-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.component-registry-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.45rem;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.component-registry-detail-section {
+  display: grid;
+  gap: 0.35rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+
+.component-registry-detail-section:last-child {
+  border-bottom: 0;
+}
+
+.component-registry-detail-section h4 {
+  margin: 0;
+}
+
+.component-registry-json {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 1100px) {
+  .component-registry-layout {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .component-registry-detail-pane {
+    grid-column: 1 / -1;
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 760px) {
+  .component-registry-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .component-registry-detail-pane {
+    grid-column: auto;
+  }
+}

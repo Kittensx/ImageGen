@@ -37,5 +37,7 @@ This folder contains public, user-facing IMAGE_GEN help. It is intentionally sep
 * [Theme Manager](theme_manager/overview.md)
 * [Persistent Generation Queue](generation/persistent_queue.md)
 * [Model Loading and Runtime Reuse](generation/model_loading_and_runtime_reuse.md)
+* [Generation Pipeline Stages](generation/generation_pipeline_stages.md)
+* [Prompt Tools Frontend](generation/prompt_tools_frontend.md)
 
 More categories are added as their public workflows stabilize.

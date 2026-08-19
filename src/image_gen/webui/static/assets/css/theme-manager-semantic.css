@@ -1,0 +1,134 @@
+/* TM-02 semantic theme roles and local package library. */
+.theme-semantic-section {
+  grid-column: 1 / -1;
+}
+
+.theme-semantic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.theme-preview-component {
+  position: relative;
+  border-color: var(--component-border) !important;
+  background: var(--component-surface) !important;
+  color: var(--text-primary, var(--text));
+}
+
+.theme-preview-component > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--component-accent);
+}
+
+.theme-preview-component small {
+  color: var(--text-secondary, var(--muted));
+}
+
+.theme-contrast-report {
+  display: block;
+  padding: 9px 11px;
+  border: 1px solid var(--component-border, var(--line));
+  border-radius: var(--radius-small);
+  background: var(--theme-surface-secondary, var(--charcoal-800));
+  color: var(--text-primary, var(--text));
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.theme-contrast-report.is-valid {
+  border-color: color-mix(in srgb, var(--success) 60%, var(--component-border, var(--line)));
+}
+
+.theme-contrast-report.is-invalid {
+  border-color: color-mix(in srgb, var(--danger) 72%, var(--component-border, var(--line)));
+}
+
+.theme-contrast-report.is-warning {
+  border-color: color-mix(in srgb, var(--warning) 72%, var(--component-border, var(--line)));
+}
+
+.settings-warning.is-error {
+  color: color-mix(in srgb, var(--danger) 72%, white);
+}
+
+.theme-local-library {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--component-border, var(--line));
+  border-radius: var(--radius);
+  background: var(--theme-surface-secondary, var(--charcoal-900));
+}
+
+.theme-local-library > header > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.theme-local-library small,
+.theme-package-row small {
+  color: var(--text-secondary, var(--muted));
+}
+
+.theme-local-import {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.theme-package-list {
+  display: grid;
+  gap: 7px;
+}
+
+.theme-package-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--component-border, var(--line));
+  border-radius: var(--radius-small);
+  background: var(--component-surface, var(--charcoal-850));
+}
+
+.theme-package-row > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.theme-package-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.theme-package-actions button {
+  min-height: 34px;
+}
+
+@media (max-width: 900px) {
+  .theme-semantic-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .theme-semantic-grid,
+  .theme-local-import,
+  .theme-package-row {
+    grid-template-columns: 1fr;
+  }
+
+  .theme-package-actions {
+    justify-content: flex-start;
+  }
+}
+

@@ -92,6 +92,9 @@ _EDITABLE_FIELDS = {
     "hires_uniform_scale",
     "hires_aspect_ratio_changed",
     "hires_enabled",
+    "hires_configuration_mode",
+    "hires_auto_resolution_record",
+    "hires_lifecycle_state",
     "hires_steps",
     "hires_denoising_strength",
     "hires_step_policy",
@@ -252,6 +255,9 @@ _PRESERVABLE_BACKEND_FIELDS = {
     "hires_uniform_scale",
     "hires_aspect_ratio_changed",
     "hires_enabled",
+    "hires_configuration_mode",
+    "hires_auto_resolution_record",
+    "hires_lifecycle_state",
     "hires_steps",
     "hires_denoising_strength",
     "hires_step_policy",
@@ -1103,37 +1109,48 @@ class ReplayService:
             or ""
         ).strip()
         strategy = str(raw_request.get("hires_strategy") or "pixel_neural").strip().casefold()
-        if strategy != "pixel_neural":
-            return [
-                f"Recorded neural upscaler ID {selected!r} requires hires_strategy='pixel_neural'; replay will not fall back."
-            ]
-        if self.upscaler_catalog is None:
-            return [
-                "Exact pixel-neural replay cannot validate the current upscaler catalog."
-            ]
         identity = self._recorded_hires_runtime_identity(manifest)
         expected_id = str(identity.get("upscaler_id") or selected)
         expected_hash = str(identity.get("upscaler_sha256") or "").casefold()
-        descriptor = self.upscaler_catalog.descriptor(expected_id)
-        if descriptor is None:
-            return [
-                f"Recorded neural upscaler {expected_id!r} is missing. Refresh the catalog or restore the exact model; replay will not substitute another file."
-            ]
-        if not descriptor.selectable:
-            return [
-                f"Recorded neural upscaler {expected_id!r} is present but not selectable: {descriptor.load_status}."
-            ]
-        if len(expected_hash) != 64:
-            return [
-                f"Recorded neural upscaler {expected_id!r} lacks the full SHA-256 required for exact replay."
-            ]
-        if descriptor.sha256.casefold() != expected_hash:
-            return [
-                f"Recorded neural upscaler hash mismatch for {expected_id!r}: expected {expected_hash}, found {descriptor.sha256.casefold()}. The same filename with different content is rejected."
-            ]
-        raw_request["hires_strategy"] = "pixel_neural"
-        raw_request["hires_upscaler"] = descriptor.upscaler_id
-        raw_request["hires_upscaler_id"] = descriptor.upscaler_id
+        if strategy == "pixel_resize":
+            from image_gen.runtime.hires_fix import BUILTIN_PIXEL_RESIZE_ID, BUILTIN_PIXEL_RESIZE_SHA256
+
+            if expected_id != BUILTIN_PIXEL_RESIZE_ID:
+                return [f"Recorded built-in hires resize identity {expected_id!r} is not supported for exact replay."]
+            if expected_hash and expected_hash != BUILTIN_PIXEL_RESIZE_SHA256:
+                return [
+                    f"Recorded built-in hires resize hash mismatch: expected {BUILTIN_PIXEL_RESIZE_SHA256}, found {expected_hash}."
+                ]
+            raw_request["hires_strategy"] = "pixel_resize"
+            raw_request["hires_upscaler"] = BUILTIN_PIXEL_RESIZE_ID
+            raw_request["hires_upscaler_id"] = BUILTIN_PIXEL_RESIZE_ID
+        else:
+            if strategy != "pixel_neural":
+                return [f"Recorded hires strategy {strategy!r} is not supported for exact replay."]
+            if self.upscaler_catalog is None:
+                return [
+                    "Exact pixel-neural replay cannot validate the current upscaler catalog."
+                ]
+            descriptor = self.upscaler_catalog.descriptor(expected_id)
+            if descriptor is None:
+                return [
+                    f"Recorded neural upscaler {expected_id!r} is missing. Refresh the catalog or restore the exact model; replay will not substitute another file."
+                ]
+            if not descriptor.selectable:
+                return [
+                    f"Recorded neural upscaler {expected_id!r} is present but not selectable: {descriptor.load_status}."
+                ]
+            if len(expected_hash) != 64:
+                return [
+                    f"Recorded neural upscaler {expected_id!r} lacks the full SHA-256 required for exact replay."
+                ]
+            if descriptor.sha256.casefold() != expected_hash:
+                return [
+                    f"Recorded neural upscaler hash mismatch for {expected_id!r}: expected {expected_hash}, found {descriptor.sha256.casefold()}. The same filename with different content is rejected."
+                ]
+            raw_request["hires_strategy"] = "pixel_neural"
+            raw_request["hires_upscaler"] = descriptor.upscaler_id
+            raw_request["hires_upscaler_id"] = descriptor.upscaler_id
 
         expected_vae_hash = str(identity.get("vae_sha256") or "").casefold()
         if len(expected_vae_hash) != 64:

@@ -74,16 +74,24 @@ class HiresDimensionPlan:
         return asdict(self)
 
 
-def resolve_hires_dimensions(values: Mapping[str, Any] | Any) -> HiresDimensionPlan:
+def resolve_hires_dimensions(
+    values: Mapping[str, Any] | Any,
+    *,
+    dimension_multiple: int = 8,
+) -> HiresDimensionPlan:
     source: Mapping[str, Any]
     if isinstance(values, Mapping):
         source = values
     else:
         source = vars(values)
 
-    dimension_multiple = 8
-    base_width = _normalize_base_dimension(_positive_int(source.get("width"), 512), multiple=dimension_multiple)
-    base_height = _normalize_base_dimension(_positive_int(source.get("height"), 512), multiple=dimension_multiple)
+    dimension_multiple = max(1, int(dimension_multiple or 8))
+    # Keep the historical base-dimension normalization on the VAE's 8-pixel
+    # grid. The architecture-specific multiple applies to the *internal*
+    # second-pass canvas; it must not silently change the user's requested
+    # base size or a scale-from-base target (for example 360 -> 368 -> 552).
+    base_width = _normalize_base_dimension(_positive_int(source.get("width"), 512), multiple=8)
+    base_height = _normalize_base_dimension(_positive_int(source.get("height"), 512), multiple=8)
     mode = str(source.get("hires_size_mode") or "same_as_base").strip().lower()
     if mode not in _VALID_MODES:
         raise ValueError(

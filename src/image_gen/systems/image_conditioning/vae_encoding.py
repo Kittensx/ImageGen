@@ -275,6 +275,30 @@ def _upscale_provenance(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
             "production_supported": None,
         }
     source = dict(metadata)
+    if bool(source.get("builtin_resize", False)):
+        upscaler_id = str(source.get("upscaler_id") or "").strip()
+        upscaler_sha256 = str(source.get("upscaler_sha256") or "").strip().casefold()
+        if upscaler_id != "builtin.pixel_resize.bicubic":
+            raise ValueError("Built-in resize provenance has an unexpected upscaler_id.")
+        if not _SHA256_RE.fullmatch(upscaler_sha256):
+            raise ValueError("Built-in resize provenance must include a complete SHA-256 identity.")
+        return {
+            "provided": True,
+            "production_supported": True,
+            "schema_version": str(source.get("schema_version") or "image-gen-builtin-pixel-resize-v1"),
+            "upscaler_id": upscaler_id,
+            "upscaler_sha256": upscaler_sha256,
+            "runtime_qualification_status": "builtin_qualified",
+            "incoming_tensor_device": str(source.get("output_device") or "cpu"),
+            "incoming_tensor_dtype": str(source.get("output_dtype") or "torch.float32"),
+            "tile_coordinate_version": "not_applicable_builtin_resize",
+            "blend_window_version": "not_applicable_builtin_resize",
+            "overlap_unit": "not_applicable_builtin_resize",
+            "exact_resize_filter": str(source.get("exact_resize_filter") or "bicubic"),
+            "final_size_correction_filter": str(source.get("final_size_correction_filter") or "bicubic"),
+            "aspect_policy": str(source.get("aspect_policy") or "stretch"),
+            "padding_mode": str(source.get("padding_mode") or "reflect"),
+        }
     runtime = dict(source.get("runtime_qualification") or {})
     status = str(runtime.get("status") or source.get("runtime_qualification_status") or "")
     if status not in {"qualified_cpu", "qualified_cuda"}:

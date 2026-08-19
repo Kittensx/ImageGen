@@ -127,15 +127,29 @@ function sourceUrlFor(model = {}) {
 function previewUrlFor(model = {}) {
   const url = String(model?.preview_url || "").trim();
   if (!url) return "";
-  if (/[?&](?:v|r)=/.test(url)) return url;
   const revision = String(
     model?.preview_revision
     || model?.preview_modified_ns
     || model?.catalog_revision
-    || "",
+    || model?.modified_ns
+    || Date.now()
   ).trim();
   if (!revision) return url;
-  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(revision)}`;
+  const sanitized = url.replace(/([?&])igcb=[^&]*(&|$)/, (_match, prefix, suffix) => (prefix === "?" && suffix ? "?" : prefix === "&" && suffix ? "&" : ""));
+  return `${sanitized}${sanitized.includes("?") ? "&" : "?"}igcb=${encodeURIComponent(revision)}`;
+}
+
+function mergePreviewState(primary = {}, secondary = {}) {
+  const preferred = secondary?.has_preview || secondary?.preview_url || secondary?.preview_path ? secondary : primary;
+  return {
+    ...primary,
+    ...secondary,
+    preview_url: String(preferred?.preview_url || "").trim(),
+    preview_path: String(preferred?.preview_path || "").trim(),
+    preview_revision: String(preferred?.preview_revision || "").trim(),
+    preview_modified_ns: preferred?.preview_modified_ns ?? secondary?.preview_modified_ns ?? primary?.preview_modified_ns ?? 0,
+    has_preview: Boolean(preferred?.has_preview || preferred?.preview_url || preferred?.preview_path),
+  };
 }
 
 function selectedCheckpointPath() {
@@ -510,7 +524,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     negativeContainer?.replaceChildren();
     const enrichDefault = (item) => {
       const catalog = loras.find((model) => sameAsset(item, model));
-      return { ...clone(catalog || {}), ...clone(item), preview_url: item.preview_url || catalog?.preview_url || "" };
+      return mergePreviewState(clone(item), clone(catalog || {}));
     };
     if (!positive.length) {
       const empty = document.createElement("div");
@@ -540,7 +554,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     const previewWrap = document.createElement("span");
     previewWrap.className = "lora-active-preview";
     const catalog = loras.find((model) => sameAsset(asset, model));
-    const previewUrl = previewUrlFor({ ...catalog, ...asset, preview_url: asset.preview_url || catalog?.preview_url || "" });
+    const previewUrl = previewUrlFor(mergePreviewState(catalog || {}, asset));
     if (previewUrl) {
       const image = document.createElement("img");
       image.src = previewUrl;

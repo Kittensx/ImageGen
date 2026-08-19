@@ -317,6 +317,9 @@ class GenerationRequest:
     hires_uniform_scale: Optional[float] = None
     hires_aspect_ratio_changed: bool = False
     hires_enabled: bool = False
+    hires_configuration_mode: str = "custom"
+    hires_auto_resolution_record: dict[str, Any] = field(default_factory=dict)
+    hires_lifecycle_state: dict[str, Any] = field(default_factory=dict)
     hires_steps: int = 20
     hires_denoising_strength: float = 0.45
     # Phase 14M-1 freezes the existing arithmetic under a versioned name.
@@ -502,6 +505,9 @@ class GenerationRequest:
             ),
             "hires_aspect_ratio_changed": bool(self.hires_aspect_ratio_changed),
             "hires_enabled": bool(self.hires_enabled),
+            "hires_configuration_mode": str(self.hires_configuration_mode or "custom"),
+            "hires_auto_resolution_record": _json_safe(self.hires_auto_resolution_record),
+            "hires_lifecycle_state": _json_safe(self.hires_lifecycle_state),
             "hires_steps": int(self.hires_steps or 20),
             "hires_denoising_strength": float(self.hires_denoising_strength or 0.45),
             "hires_step_policy": str(self.hires_step_policy or "a1111_fixed_steps_v1"),

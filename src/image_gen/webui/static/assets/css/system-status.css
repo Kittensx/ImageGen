@@ -1,0 +1,201 @@
+/* Shared subsystem health/status indicators.
+   Colors are encoded in standalone SVG assets; motion expresses expected transition. */
+.status-light-strip,
+.status-light-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.system-status-indicator {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.system-status-indicator:hover {
+  border-color: color-mix(in srgb, var(--sky-300) 42%, transparent);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.system-status-indicator:focus-visible {
+  outline: 2px solid var(--sky-300);
+  outline-offset: 2px;
+}
+
+.system-status-indicator__icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  transform-origin: center;
+  transition: transform 140ms ease, filter 180ms ease, opacity 180ms ease;
+}
+
+.system-status-indicator:hover .system-status-indicator__icon {
+  transform: scale(1.12);
+}
+
+.system-status-indicator:active .system-status-indicator__icon {
+  transform: scale(0.92);
+}
+
+.system-status-indicator[data-status="transitioning"] .system-status-indicator__icon {
+  animation: system-status-green-pulse 1550ms ease-in-out infinite;
+}
+
+.system-status-indicator[data-status="warning"] .system-status-indicator__icon {
+  filter: drop-shadow(0 0 5px rgba(242, 184, 75, 0.24));
+}
+
+.system-status-indicator[data-status="critical"] .system-status-indicator__icon {
+  filter: drop-shadow(0 0 6px rgba(239, 98, 98, 0.30));
+}
+
+.system-status-indicator[data-status="inactive"] .system-status-indicator__icon {
+  opacity: 0.72;
+}
+
+@keyframes system-status-green-pulse {
+  0%, 100% {
+    transform: scale(0.88);
+    opacity: 0.62;
+    filter: drop-shadow(0 0 0 rgba(72, 212, 123, 0));
+  }
+  50% {
+    transform: scale(1.10);
+    opacity: 1;
+    filter: drop-shadow(0 0 7px rgba(72, 212, 123, 0.62));
+  }
+}
+
+.system-status-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 32px));
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--charcoal-900);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
+}
+
+.system-status-dialog::backdrop {
+  background: rgba(3, 10, 16, 0.68);
+}
+
+.system-status-dialog__surface {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.system-status-dialog__header,
+.system-status-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.system-status-dialog__header {
+  border-bottom: 1px solid var(--line);
+}
+
+.system-status-dialog__actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+}
+
+.system-status-dialog__title-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.system-status-dialog__title-group > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.system-status-dialog__title-group span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.system-status-dialog__icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+.system-status-dialog__body {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.system-status-dialog__body p {
+  margin: 0;
+}
+
+.system-status-dialog__facts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.system-status-dialog__facts:empty {
+  display: none;
+}
+
+.system-status-dialog__facts > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.65fr) minmax(0, 1.35fr);
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.system-status-dialog__facts dt {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.system-status-dialog__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.field-label-with-status,
+.panel-heading-title-with-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.worker-pill .status-light-strip {
+  margin-right: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .system-status-indicator__icon,
+  .system-status-indicator[data-status="transitioning"] .system-status-indicator__icon {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+

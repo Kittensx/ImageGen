@@ -80,6 +80,29 @@ class PipelineCompositionRoot:
     def _denoiser_kind(self) -> str:
         return str(getattr(self.components, "denoiser_kind", "unet") or "unet")
 
+
+    def _latent_patch_multiple(self) -> int:
+        """Return the denoiser's latent-grid patch requirement.
+
+        The VAE scale factor converts pixels to latent cells. Transformer
+        denoisers such as SD3 then patchify that latent grid again, so their
+        latent height/width must be divisible by the transformer patch size.
+        Runtime profile evidence is preferred; module config is a fallback.
+        """
+
+        if self._denoiser_kind() != "transformer":
+            return 1
+        profile = dict(getattr(self.components, "model_runtime_profile", {}) or {})
+        raw = profile.get("transformer_patch_size")
+        if raw in (None, ""):
+            config = getattr(self._denoiser_module(), "config", None)
+            raw = getattr(config, "patch_size", None) if config is not None else None
+        try:
+            value = int(raw or 1)
+        except (TypeError, ValueError):
+            value = 1
+        return max(1, value)
+
     @staticmethod
     def _infer_device(components: PipelineComponents) -> torch.device:
         for module in (getattr(components, "denoiser", None) or getattr(components, "unet", None), components.vae, components.text_encoder):
@@ -150,6 +173,7 @@ class PipelineCompositionRoot:
             scheduling=SchedulingSystem(self.scheduler_adapter),
             latent_preparation=LatentPreparationSystem(
                 latent_scale_factor=self.latent_scale_factor,
+                latent_patch_multiple=self._latent_patch_multiple(),
                 device=self.device,
                 dtype=self.dtype,
                 latent_channels=self.latent_vae_contract.latent_channels,

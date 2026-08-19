@@ -84,6 +84,7 @@ from image_gen.webui.routes.outputs import build_outputs_router
 from image_gen.webui.routes.replay import build_replay_router
 from image_gen.webui.routes.workspace import build_workspace_router, _deep_merge_dict
 from image_gen.webui.routes.settings import build_settings_router
+from image_gen.webui.routes.hires_profiles import build_hires_profiles_router
 from image_gen.webui.routes.jobs_api import build_jobs_router, encode_sse_event
 from image_gen.webui.routes.static_pages import build_static_pages_router
 from image_gen.webui.routes.payloads import (
@@ -572,7 +573,16 @@ def create_app(
         context=context,
         store=store,
         theme_library=theme_library,
+        registry=jobs.registry,
         _runtime_startup_status=_runtime_startup_status,
+    ))
+
+
+    app.include_router(build_hires_profiles_router(
+        store=store,
+        catalog=catalog,
+        upscaler_catalog=upscaler_catalog,
+        prompt_configuration=prompt_configuration,
     ))
 
 

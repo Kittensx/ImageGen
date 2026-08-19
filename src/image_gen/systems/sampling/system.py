@@ -32,6 +32,8 @@ class GenerationDimensionPlan:
     generation_width: int
     generation_height: int
     latent_scale_factor: int
+    latent_patch_multiple: int
+    pixel_alignment_multiple: int
     crop_left: int
     crop_top: int
     crop_right: int
@@ -51,6 +53,8 @@ class GenerationDimensionPlan:
             "generation_width": int(self.generation_width),
             "generation_height": int(self.generation_height),
             "latent_scale_factor": int(self.latent_scale_factor),
+            "latent_patch_multiple": int(self.latent_patch_multiple),
+            "pixel_alignment_multiple": int(self.pixel_alignment_multiple),
             "crop_required": bool(self.crop_required),
             "crop_mode": "center",
             "crop_left": int(self.crop_left),
@@ -67,16 +71,21 @@ class LatentPreparationSystem:
         self,
         *,
         latent_scale_factor: int = 8,
+        latent_patch_multiple: int = 1,
         device: torch.device,
         dtype: torch.dtype,
         latent_channels: int = 4,
     ) -> None:
         self.latent_scale_factor = int(latent_scale_factor)
+        self.latent_patch_multiple = int(latent_patch_multiple)
+        self.pixel_alignment_multiple = self.latent_scale_factor * self.latent_patch_multiple
         self.device = device
         self.dtype = dtype
         self.latent_channels = int(latent_channels)
         if self.latent_scale_factor < 1:
             raise ValueError("latent_scale_factor must be at least 1.")
+        if self.latent_patch_multiple < 1:
+            raise ValueError("latent_patch_multiple must be at least 1.")
 
     @staticmethod
     def _align_up(value: int, multiple: int) -> int:
@@ -88,8 +97,8 @@ class LatentPreparationSystem:
         if requested_width <= 0 or requested_height <= 0:
             raise ValueError("Generation width and height must be positive.")
 
-        generation_width = self._align_up(requested_width, self.latent_scale_factor)
-        generation_height = self._align_up(requested_height, self.latent_scale_factor)
+        generation_width = self._align_up(requested_width, self.pixel_alignment_multiple)
+        generation_height = self._align_up(requested_height, self.pixel_alignment_multiple)
         width_delta = generation_width - requested_width
         height_delta = generation_height - requested_height
         crop_left = width_delta // 2
@@ -100,6 +109,8 @@ class LatentPreparationSystem:
             generation_width=generation_width,
             generation_height=generation_height,
             latent_scale_factor=self.latent_scale_factor,
+            latent_patch_multiple=self.latent_patch_multiple,
+            pixel_alignment_multiple=self.pixel_alignment_multiple,
             crop_left=crop_left,
             crop_top=crop_top,
             crop_right=width_delta - crop_left,
