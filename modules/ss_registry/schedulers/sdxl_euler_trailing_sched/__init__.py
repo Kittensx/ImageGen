@@ -137,6 +137,10 @@ PLUGIN_DESCRIPTOR = {
         "supports_hires_refinement": True,
         "scheduler_family": "sdxl_euler",
         "schedule_domain": "vp_sigma",
+        # This scheduler is the canonical SDXL trailing-Euler schedule.  Keep
+        # sampler compatibility explicit so WebUI capability filtering and
+        # runtime validation share the same authoritative pair contract.
+        "compatible_samplers": ["simple_euler"],
     },
     "config_schema": {
         "type": "object",

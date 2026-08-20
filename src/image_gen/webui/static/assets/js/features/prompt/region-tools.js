@@ -1,5 +1,6 @@
 import { $, notify } from "../../utils.js";
 import { planHiresDimensions } from "../../components/hires-dimensions.js?v=0.1.79";
+import { generationSpatialRequirements } from "../generation-capabilities.js";
 import { saveSessionSoon } from "./runtime.js";
 
 const REGION_BUILDER_TARGETS = {
@@ -35,6 +36,7 @@ export function regionBuilderDimensions(target = regionBuilderTarget) {
     return { width: baseWidth, height: baseHeight, pass: "base" };
   }
 
+  const spatial = generationSpatialRequirements();
   const plan = planHiresDimensions({
     baseWidth,
     baseHeight,
@@ -42,6 +44,8 @@ export function regionBuilderDimensions(target = regionBuilderTarget) {
     scale: $("#hiresScale")?.value || 1.5,
     targetWidth: $("#hiresWidth")?.value,
     targetHeight: $("#hiresHeight")?.value,
+    dimensionMultiple: spatial.pixelAlignmentMultiple,
+    baseDimensionMultiple: spatial.latentScaleFactor,
     enabled: true,
   });
   return {

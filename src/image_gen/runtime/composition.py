@@ -19,6 +19,7 @@ from image_gen.systems.diagnostics import DiagnosticsSystem
 from image_gen.systems.sampling import LatentPreparationSystem, SamplingSystem
 from image_gen.systems.scheduling import SchedulingSystem
 from image_gen.systems.memory import AdaptiveComponentMemoryManager
+from image_gen.runtime.spatial_requirements import resolve_latent_patch_multiple
 from modules.component_placement import component_matches_placement, place_component
 
 
@@ -82,26 +83,16 @@ class PipelineCompositionRoot:
 
 
     def _latent_patch_multiple(self) -> int:
-        """Return the denoiser's latent-grid patch requirement.
+        """Return the denoiser latent-grid patch requirement from shared runtime evidence."""
 
-        The VAE scale factor converts pixels to latent cells. Transformer
-        denoisers such as SD3 then patchify that latent grid again, so their
-        latent height/width must be divisible by the transformer patch size.
-        Runtime profile evidence is preferred; module config is a fallback.
-        """
-
-        if self._denoiser_kind() != "transformer":
-            return 1
-        profile = dict(getattr(self.components, "model_runtime_profile", {}) or {})
-        raw = profile.get("transformer_patch_size")
-        if raw in (None, ""):
-            config = getattr(self._denoiser_module(), "config", None)
-            raw = getattr(config, "patch_size", None) if config is not None else None
-        try:
-            value = int(raw or 1)
-        except (TypeError, ValueError):
-            value = 1
-        return max(1, value)
+        denoiser = self._denoiser_module()
+        config = getattr(denoiser, "config", None) if denoiser is not None else None
+        return resolve_latent_patch_multiple(
+            denoiser_kind=self._denoiser_kind(),
+            runtime_profile=dict(getattr(self.components, "model_runtime_profile", {}) or {}),
+            denoiser_config=config,
+            fail_closed=False,
+        )
 
     @staticmethod
     def _infer_device(components: PipelineComponents) -> torch.device:

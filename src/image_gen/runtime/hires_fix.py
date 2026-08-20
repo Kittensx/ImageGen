@@ -402,8 +402,13 @@ def resolve_hires_execution_plan(
     request: GenerationRequest,
     *,
     dimension_multiple: int = 8,
+    base_dimension_multiple: int = 8,
 ) -> HiresExecutionPlan:
-    dimensions = resolve_hires_dimensions(request, dimension_multiple=dimension_multiple)
+    dimensions = resolve_hires_dimensions(
+        request,
+        dimension_multiple=dimension_multiple,
+        base_dimension_multiple=base_dimension_multiple,
+    )
     enabled = bool(getattr(request, "hires_enabled", False))
     raw_steps = getattr(request, "hires_steps", 20)
     steps = int(20 if raw_steps is None else raw_steps)

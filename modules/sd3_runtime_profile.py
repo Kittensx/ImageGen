@@ -30,6 +30,7 @@ class SD3RuntimeProfile:
     scheduler_shift: float = 3.0
     vae_class: str = "AutoencoderKL"
     vae_latent_channels: int = 16
+    latent_scale_factor: int = 8
     vae_scaling_factor: float = 1.5305
     vae_shift_factor: float = 0.0609
     vae_sample_size: int = 1024
@@ -44,6 +45,7 @@ class SD3RuntimeProfile:
     enforce_cfg: bool = False
     enforce_sampler_scheduler: bool = False
     generation_qualified: bool = True
+    conditioning_roles: tuple[str, ...] = ("clip_l", "clip_g", "t5xxl")
     source_note: str = (
         "SD3-11 qualified reference settings. These are recommendations only; "
         "sampler, scheduler, steps, and CFG remain user-controlled."
@@ -74,6 +76,7 @@ class SD3RuntimeProfile:
             "scheduler_shift": self.scheduler_shift,
             "vae_class": self.vae_class,
             "vae_latent_channels": self.vae_latent_channels,
+            "latent_scale_factor": self.latent_scale_factor,
             "vae_scaling_factor": self.vae_scaling_factor,
             "vae_shift_factor": self.vae_shift_factor,
             "vae_sample_size": self.vae_sample_size,
@@ -90,6 +93,7 @@ class SD3RuntimeProfile:
             "enforce_cfg": self.enforce_cfg,
             "enforce_sampler_scheduler": self.enforce_sampler_scheduler,
             "generation_qualified": self.generation_qualified,
+            "conditioning_roles": list(self.conditioning_roles),
             "source_note": self.source_note,
         }
 

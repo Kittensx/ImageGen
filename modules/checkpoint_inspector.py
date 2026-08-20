@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Mapping, Set
 from safetensors import safe_open
 from safetensors.torch import load_file
 
+from image_gen.runtime.spatial_requirements import checkpoint_spatial_evidence
 from modules.model_qualification_registry import qualification_for_sha256
 from modules.sd2_runtime_profile import normalize_prediction_type
 
@@ -135,6 +136,10 @@ class ArchitectureContract:
     denoising_domain: str = ""
     denoiser_type: str = ""
     latent_channels: int | None = None
+    latent_scale_factor: int | None = None
+    latent_patch_multiple: int | None = None
+    pixel_alignment_multiple: int | None = None
+    spatial_source: str = ""
     summary: str = ""
     source: str = ""
 
@@ -146,6 +151,10 @@ class ArchitectureContract:
             "denoising_domain": self.denoising_domain,
             "denoiser_type": self.denoiser_type,
             "latent_channels": self.latent_channels,
+            "latent_scale_factor": self.latent_scale_factor,
+            "latent_patch_multiple": self.latent_patch_multiple,
+            "pixel_alignment_multiple": self.pixel_alignment_multiple,
+            "spatial_source": self.spatial_source,
             "summary": self.summary,
             "source": self.source,
         }
@@ -159,6 +168,10 @@ def build_architecture_contract(
     denoising_domain: str | None = None,
     denoiser_type: str | None = None,
     latent_channels: Any = None,
+    latent_scale_factor: Any = None,
+    latent_patch_multiple: Any = None,
+    pixel_alignment_multiple: Any = None,
+    spatial_source: str | None = None,
     summary: str | None = None,
     source: str | None = None,
 ) -> ArchitectureContract:
@@ -191,6 +204,19 @@ def build_architecture_contract(
         elif normalized_architecture in {"sd1.x", "sd2.x", "sdxl"}:
             resolved_latent_channels = 4
 
+    def _optional_positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    resolved_latent_scale = _optional_positive_int(latent_scale_factor)
+    resolved_latent_patch = _optional_positive_int(latent_patch_multiple)
+    resolved_pixel_alignment = _optional_positive_int(pixel_alignment_multiple)
+    if resolved_pixel_alignment is None and resolved_latent_scale and resolved_latent_patch:
+        resolved_pixel_alignment = resolved_latent_scale * resolved_latent_patch
+
     pieces = []
     if family_display and family_display != "Unknown":
         pieces.append(family_display)
@@ -212,6 +238,10 @@ def build_architecture_contract(
         denoising_domain=resolved_domain,
         denoiser_type=resolved_denoiser,
         latent_channels=resolved_latent_channels,
+        latent_scale_factor=resolved_latent_scale,
+        latent_patch_multiple=resolved_latent_patch,
+        pixel_alignment_multiple=resolved_pixel_alignment,
+        spatial_source=str(spatial_source or "").strip(),
         summary=resolved_summary,
         source=resolved_source,
     )
@@ -241,6 +271,10 @@ class CheckpointReport:
     text_encoder_packaging: str = ""
     checkpoint_packaging: str = ""
     latent_channels: int | None = None
+    latent_scale_factor: int | None = None
+    latent_patch_multiple: int | None = None
+    pixel_alignment_multiple: int | None = None
+    spatial_source: str = ""
     flow_matching: bool = False
     denoising_domain: str = ""
     key_prefix_counts: dict[str, int] = field(default_factory=dict)
@@ -268,6 +302,10 @@ class CheckpointReport:
             denoising_domain=self.denoising_domain,
             denoiser_type=self.denoiser_type,
             latent_channels=self.latent_channels,
+            latent_scale_factor=self.latent_scale_factor,
+            latent_patch_multiple=self.latent_patch_multiple,
+            pixel_alignment_multiple=self.pixel_alignment_multiple,
+            spatial_source=self.spatial_source,
             summary=self.architecture_summary,
             source=self.architecture_source or self.prediction_type_source,
         )
@@ -299,6 +337,10 @@ class CheckpointReport:
             "text_encoder_packaging": self.text_encoder_packaging,
             "checkpoint_packaging": self.checkpoint_packaging,
             "latent_channels": self.latent_channels,
+            "latent_scale_factor": self.latent_scale_factor,
+            "latent_patch_multiple": self.latent_patch_multiple,
+            "pixel_alignment_multiple": self.pixel_alignment_multiple,
+            "spatial_source": self.spatial_source,
             "flow_matching": self.flow_matching,
             "denoising_domain": self.denoising_domain,
             "key_prefix_counts": dict(self.key_prefix_counts),
@@ -431,10 +473,23 @@ class CheckpointInspector:
         has_te2 = any(self._is_sdxl_text_encoder_2_key(key) for key in keys)
         architecture, _, model_dimension = self._detect_architecture(keys, shapes, has_te2)
         prediction_type, prediction_source = detect_prediction_type(metadata, architecture, filename=path.name)
+        has_sd3_transformer = self._has_sd3_transformer_signature(keys)
+        has_unet = any(key.startswith("model.diffusion_model.") for key in keys) and not has_sd3_transformer
+        denoiser_type = "transformer" if has_sd3_transformer else ("unet" if has_unet else "")
+        spatial_evidence = checkpoint_spatial_evidence(
+            keys=keys,
+            shapes=shapes,
+            denoiser_kind=denoiser_type,
+        )
         return build_architecture_contract(
             architecture,
             prediction_type,
             model_dimension,
+            denoiser_type=denoiser_type,
+            latent_scale_factor=spatial_evidence.get("latent_scale_factor"),
+            latent_patch_multiple=spatial_evidence.get("latent_patch_multiple"),
+            pixel_alignment_multiple=spatial_evidence.get("pixel_alignment_multiple"),
+            spatial_source=spatial_evidence.get("source"),
             source=prediction_source or "checkpoint_header_preflight",
         )
 
@@ -501,6 +556,11 @@ class CheckpointInspector:
                 prediction_type = _normalize_prediction_type(qualification.prediction_type)
                 prediction_source = qualification.source
         model_name, model_name_source = detect_model_name(metadata, path.stem)
+        spatial_evidence = checkpoint_spatial_evidence(
+            keys=keys,
+            shapes=shapes,
+            denoiser_kind=denoiser_type,
+        )
         contract = build_architecture_contract(
             architecture,
             prediction_type,
@@ -508,6 +568,10 @@ class CheckpointInspector:
             denoising_domain=denoising_domain,
             denoiser_type=denoiser_type,
             latent_channels=latent_channels,
+            latent_scale_factor=spatial_evidence.get("latent_scale_factor"),
+            latent_patch_multiple=spatial_evidence.get("latent_patch_multiple"),
+            pixel_alignment_multiple=spatial_evidence.get("pixel_alignment_multiple"),
+            spatial_source=spatial_evidence.get("source"),
             source=prediction_source or ("checkpoint_header_structural" if architecture == "sd3.x" else ""),
         )
 
@@ -535,6 +599,10 @@ class CheckpointInspector:
             text_encoder_packaging=text_encoder_packaging,
             checkpoint_packaging=checkpoint_packaging,
             latent_channels=latent_channels,
+            latent_scale_factor=contract.latent_scale_factor,
+            latent_patch_multiple=contract.latent_patch_multiple,
+            pixel_alignment_multiple=contract.pixel_alignment_multiple,
+            spatial_source=contract.spatial_source,
             flow_matching=flow_matching,
             denoising_domain=denoising_domain,
             key_prefix_counts=prefix_counts,

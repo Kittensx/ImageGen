@@ -60,11 +60,14 @@ def build_outpaint_canvas_contract(
     internal_target_width: int | None = None,
     internal_target_height: int | None = None,
     latent_scale_factor: int = 8,
+    pixel_alignment_multiple: int | None = None,
 ) -> dict[str, Any]:
     requested_w = int(requested_target_width or plan.target_width)
     requested_h = int(requested_target_height or plan.target_height)
     internal_w = int(internal_target_width or plan.target_width)
     internal_h = int(internal_target_height or plan.target_height)
+    latent_multiple = max(1, int(latent_scale_factor or 1))
+    target_multiple = max(1, int(pixel_alignment_multiple or latent_multiple))
     source_bounds = {
         "x0": int(plan.source_x),
         "y0": int(plan.source_y),
@@ -88,11 +91,13 @@ def build_outpaint_canvas_contract(
         "bottom_expansion": int(plan.bottom_expansion),
         "anchor_policy": str(plan.anchor),
         "alignment_requirements": {
-            "target_width_multiple_of": int(latent_scale_factor),
-            "target_height_multiple_of": int(latent_scale_factor),
+            "target_width_multiple_of": target_multiple,
+            "target_height_multiple_of": target_multiple,
+            "pixel_alignment_multiple": target_multiple,
+            "vae_latent_scale_factor": latent_multiple,
             "exact_latent_embedding_requires": {
-                "source_x_multiple_of": int(latent_scale_factor),
-                "source_y_multiple_of": int(latent_scale_factor),
+                "source_x_multiple_of": latent_multiple,
+                "source_y_multiple_of": latent_multiple,
             },
         },
     }

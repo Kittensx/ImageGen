@@ -157,15 +157,18 @@ class JobQueuePersistence:
         recovery_at = _utc_now()
         job.resume_image_index = attempted
         job.resume_completed_images = completed
-        job.status = "queued"
-        job.worker_stage = "queued_after_session_restart"
+        # Fail safe per job rather than freezing the whole scheduler. A recovered
+        # generation must still require explicit user intent before it resumes,
+        # but fresh work queued after restart should be able to run normally.
+        job.status = "paused"
+        job.worker_stage = "paused_after_session_restart"
         job.completed_at = None
         job.return_code = None
         job.error = None
         job.pause_after_current_requested = False
-        job.pause_requested_at = None
-        job.paused_at = None
-        job.queue_paused_from_status = None
+        job.pause_requested_at = recovery_at
+        job.paused_at = recovery_at
+        job.queue_paused_from_status = "queued"
         job.scheduler_suspended = False
         job.skip_current_requested = False
         job.skip_requested_at = None
@@ -179,13 +182,14 @@ class JobQueuePersistence:
             "source_status": source_status,
             "resume_image_index": attempted,
             "resume_completed_images": completed,
-            "requires_queue_resume": True,
+            "requires_job_resume": True,
+            "scheduler_left_available": True,
         }
         job.model_runtime_diagnostics = diagnostics
         log_lines = list(getattr(job, "log_lines", []) or [])
         log_lines.append(
             "SESSION RECOVERY: generation was interrupted by application shutdown/restart; "
-            "the queue is held until explicitly resumed."
+            "this recovered job is paused until explicitly resumed. New queue work may continue."
         )
         job.log_lines = log_lines[-80:]
 
@@ -216,6 +220,7 @@ class JobQueuePersistence:
         restored_queued_ids: set[str] = set()
         restored_paused_ids: set[str] = set()
         interrupted_ids: list[str] = []
+        legacy_recovery_ids: list[str] = []
         ignored_terminal_ids: list[str] = []
         corrupt_job_ids: list[str] = []
 
@@ -248,10 +253,22 @@ class JobQueuePersistence:
                 ignored_terminal_ids.append(job_id)
                 continue
 
+            diagnostics = getattr(job, "model_runtime_diagnostics", {}) or {}
+            session_recovery = diagnostics.get("session_recovery") if isinstance(diagnostics, Mapping) else {}
+            legacy_recovery_queue = bool(
+                source_status == "queued"
+                and isinstance(session_recovery, Mapping)
+                and session_recovery.get("requires_queue_resume") is True
+                and session_recovery.get("requires_job_resume") is not True
+            )
             if source_status in _INTERRUPTED_JOB_STATUSES or recover_cancelled or recover_dequeued:
                 self._normalize_interrupted_job(job, source_status=source_status)
                 interrupted_ids.append(job_id)
-                restored_queued_ids.add(job_id)
+                restored_paused_ids.add(job_id)
+            elif legacy_recovery_queue:
+                self._normalize_interrupted_job(job, source_status="legacy_recovery_queue")
+                legacy_recovery_ids.append(job_id)
+                restored_paused_ids.add(job_id)
             elif source_status == "paused":
                 self._normalize_paused_job(job)
                 restored_paused_ids.add(job_id)
@@ -284,19 +301,28 @@ class JobQueuePersistence:
         else:
             manager._queue_available.clear()
 
-        saved_pause = bool(state.get("queue_pause_requested", False))
-        force_pause = bool(interrupted_ids)
-        queue_pause_requested = saved_pause or force_pause
+        # Preserve only an explicit saved global queue hold. Interrupted jobs
+        # are recovered as individually paused items above, so they cannot run
+        # unexpectedly and also cannot strand unrelated new jobs behind a
+        # process-wide pause after restart.
+        saved_queue_pause = bool(state.get("queue_pause_requested", False))
+        saved_pause_owner = str(state.get("queue_pause_owner_job_id") or "") or None
+        legacy_recovery_hold_cleared = bool(
+            saved_queue_pause
+            and saved_pause_owner
+            and saved_pause_owner in set(legacy_recovery_ids)
+        )
+        queue_pause_requested = saved_queue_pause and not legacy_recovery_hold_cleared
         if queue_pause_requested:
             manager._queue_resume_event.clear()
         else:
             manager._queue_resume_event.set()
         manager._queue_pause_requested_at = (
-            str(state.get("queue_pause_requested_at") or "") or (_utc_now() if force_pause else None)
+            (str(state.get("queue_pause_requested_at") or "") or None)
+            if queue_pause_requested
+            else None
         )
-        manager._queue_pause_owner_job_id = (
-            str(state.get("queue_pause_owner_job_id") or "") or (interrupted_ids[0] if interrupted_ids else None)
-        )
+        manager._queue_pause_owner_job_id = saved_pause_owner if queue_pause_requested else None
 
         for job in restored.values():
             persist = getattr(manager, "_persist_job", None)
@@ -313,6 +339,8 @@ class JobQueuePersistence:
             "queue_order": list(queue_order),
             "paused_job_ids": sorted(restored_paused_ids),
             "interrupted_job_ids": list(interrupted_ids),
+            "legacy_recovery_job_ids": list(legacy_recovery_ids),
+            "legacy_recovery_hold_cleared": legacy_recovery_hold_cleared,
             "queue_pause_requested": queue_pause_requested,
             "ignored_terminal_job_ids": sorted(ignored_terminal_ids),
             "corrupt_job_ids": sorted(corrupt_job_ids),

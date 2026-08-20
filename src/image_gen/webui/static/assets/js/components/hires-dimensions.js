@@ -41,10 +41,13 @@ export function planHiresDimensions({
   targetWidth = 0,
   targetHeight = 0,
   dimensionMultiple = HIRES_DIMENSION_MULTIPLE,
+  baseDimensionMultiple = HIRES_DIMENSION_MULTIPLE,
   enabled = true,
 } = {}) {
-  const resolvedBaseWidth = normalizeBaseHiresDimension(baseWidth || 512, dimensionMultiple);
-  const resolvedBaseHeight = normalizeBaseHiresDimension(baseHeight || 512, dimensionMultiple);
+  const resolvedBaseMultiple = Math.max(1, Math.round(Number(baseDimensionMultiple) || HIRES_DIMENSION_MULTIPLE));
+  const resolvedDimensionMultiple = Math.max(1, Math.round(Number(dimensionMultiple) || resolvedBaseMultiple));
+  const resolvedBaseWidth = normalizeBaseHiresDimension(baseWidth || 512, resolvedBaseMultiple);
+  const resolvedBaseHeight = normalizeBaseHiresDimension(baseHeight || 512, resolvedBaseMultiple);
   const resolvedMode = normalizeHiresSizeMode(mode, enabled);
   const requestedScale = Math.max(1, Math.min(8, Number(scale) || 1.5));
 
@@ -58,8 +61,8 @@ export function planHiresDimensions({
     requestedHeight = clampHiresDimension(targetHeight, resolvedBaseHeight);
   }
 
-  const internalWidth = alignHiresDimension(requestedWidth, dimensionMultiple);
-  const internalHeight = alignHiresDimension(requestedHeight, dimensionMultiple);
+  const internalWidth = alignHiresDimension(requestedWidth, resolvedDimensionMultiple);
+  const internalHeight = alignHiresDimension(requestedHeight, resolvedDimensionMultiple);
   const axisScaleWidth = Number((requestedWidth / resolvedBaseWidth).toFixed(6));
   const axisScaleHeight = Number((requestedHeight / resolvedBaseHeight).toFixed(6));
   const uniform = Math.abs(axisScaleWidth - axisScaleHeight) <= HIRES_SCALE_TOLERANCE;
@@ -91,6 +94,7 @@ export function planHiresDimensions({
     aspect_ratio_changed: aspectRatioChanged,
     alignment_applied: internalWidth !== requestedWidth || internalHeight !== requestedHeight,
     alignment_correction_required: internalWidth !== requestedWidth || internalHeight !== requestedHeight,
-    dimension_multiple: dimensionMultiple,
+    dimension_multiple: resolvedDimensionMultiple,
+    base_dimension_multiple: resolvedBaseMultiple,
   };
 }

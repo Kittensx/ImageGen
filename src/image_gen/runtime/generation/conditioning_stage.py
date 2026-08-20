@@ -92,6 +92,14 @@ class ConditioningStageMixin:
                 internal_target_width=int(request.width),
                 internal_target_height=int(request.height),
                 latent_scale_factor=int(self.latent_scale_factor),
+                pixel_alignment_multiple=int(
+                    getattr(
+                        self.systems.latent_preparation,
+                        "pixel_alignment_multiple",
+                        self.latent_scale_factor,
+                    )
+                    or self.latent_scale_factor
+                ),
             )
             outpaint_region_contract = build_outpaint_region_contract(
                 outpaint_plan,

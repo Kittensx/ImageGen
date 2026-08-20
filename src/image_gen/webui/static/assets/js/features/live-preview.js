@@ -297,12 +297,16 @@ function statusText(progress) {
       : "Failed";
   }
   if (status === "completed") return "Completed";
+  if (status === "paused") return "Paused";
+  if (status === "preparing_model") return "Preparing model";
+  if (status === "warming_model") return "Loading model";
   if (status === "finalizing" && pendingSaves > 0) {
     return completedSaves > 0
       ? `Saving output · ${completedSaves} completed · ${pendingSaves} pending`
       : `Saving output · ${pendingSaves} pending`;
   }
   if (status === "queued") return "Queued";
+  if (status === "finalizing") return "Finalizing";
   if (status === "cancelling") return "Cancelling";
   if (progress.step > 0 && progress.total > 0) return `Step ${progress.step} / ${progress.total}`;
   return currentJob?.request?.unlimited ? "Generating forever" : "Generating";
@@ -385,12 +389,16 @@ function renderCurrent() {
       ? "Image preview suspended"
       : state.livePreview.status === "queued"
         ? "Generation queued"
-        : "Waiting for first frame";
+        : state.livePreview.status === "paused"
+          ? "Generation paused"
+          : "Waiting for first frame";
     placeholder.querySelector("span").textContent = previewSuspended
       ? `${state.livePreview.imageDecodeSuspensionReason || "Preview decoding was suspended to preserve VRAM."} CFG telemetry and generation progress continue.`
       : state.livePreview.status === "queued"
         ? "The preview panel will start updating when sampling begins."
-        : "The first decoded frame will appear shortly.";
+        : state.livePreview.status === "paused"
+          ? "This queue item is paused and is not consuming generation time."
+          : "The first decoded frame will appear shortly.";
   }
 
   applyPreviewGeometry(stage, image);
@@ -401,7 +409,11 @@ function renderCurrent() {
     percent: state.livePreview.progress,
   };
   $("#livePreviewStep").textContent = statusText(progress);
-  $("#livePreviewPercent").textContent = progress.percent == null ? "—" : `${Math.round(progress.percent)}%`;
+  const hasStarted = Boolean(state.livePreview.startedAt);
+  const preStartStatus = ["queued", "paused"].includes(String(state.livePreview.status || ""));
+  $("#livePreviewPercent").textContent = progress.percent == null || (!hasStarted && preStartStatus)
+    ? "—"
+    : `${Math.round(progress.percent)}%`;
   renderSamplingTiming();
   $("#livePreviewJobStatus").textContent = `Status: ${state.livePreview.status || "idle"}`;
   $("#livePreviewModel").textContent = `Model: ${state.livePreview.modelName || "—"}`;
@@ -522,8 +534,8 @@ export function renderLivePreviewJob(job, { forceLatest = false } = {}) {
   state.livePreview.totalSteps = progress.total;
   state.livePreview.progress = progress.percent;
   state.livePreview.status = job.status || "queued";
-  state.livePreview.startedAt = job.started_at || job.created_at || null;
-  state.livePreview.completedAt = job.completed_at || null;
+  state.livePreview.startedAt = job.started_at || null;
+  state.livePreview.completedAt = job.completed_at || (job.status === "paused" ? job.paused_at || null : null);
   state.livePreview.modelName = modelName(job) || "";
   state.livePreview.samplerName = job.request?.sampler_name || "";
   state.livePreview.schedulerName = job.request?.scheduler_name || "";

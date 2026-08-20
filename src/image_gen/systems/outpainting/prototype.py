@@ -578,6 +578,7 @@ def resolve_outpaint_shape_target(
     target_mode: str,
     target_width: int = 0,
     target_height: int = 0,
+    dimension_multiple: int = 8,
 ) -> dict[str, Any]:
     bw = _positive_int(base_width, field="base_width")
     bh = _positive_int(base_height, field="base_height")
@@ -609,8 +610,12 @@ def resolve_outpaint_shape_target(
         )
     if tw == bw and th == bh:
         raise ValueError("Post-generation expansion target must add canvas space beyond the base generation.")
-    if tw % 8 or th % 8:
-        raise ValueError("Post-generation expansion target width and height must be divisible by 8.")
+    multiple = _positive_int(dimension_multiple, field="dimension_multiple")
+    if tw % multiple or th % multiple:
+        raise ValueError(
+            "Post-generation expansion target width and height must be divisible by "
+            f"the active model's {multiple}-pixel alignment requirement."
+        )
 
     return {
         "contract_version": OUTPAINT_SHAPE_EXPANSION_CONTRACT_VERSION,
@@ -619,6 +624,7 @@ def resolve_outpaint_shape_target(
         "base_height": bh,
         "target_width": tw,
         "target_height": th,
+        "dimension_multiple": multiple,
     }
 
 

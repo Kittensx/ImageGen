@@ -41,6 +41,7 @@ class RequestPreparationStageMixin:
                 )
                 or self.latent_scale_factor
             ),
+            base_dimension_multiple=int(self.latent_scale_factor),
         )
         if outpaint_enabled:
             if hires_execution_plan.enabled or bool(getattr(request, "hires_enabled", False)):
@@ -49,9 +50,18 @@ class RequestPreparationStageMixin:
                 )
             if int(getattr(request, "batch_size", 1) or 1) != 1:
                 raise ValueError("Existing-image expansion currently requires batch_size=1.")
-            if int(request.width) % 8 or int(request.height) % 8:
+            outpaint_alignment = int(
+                getattr(
+                    self.systems.latent_preparation,
+                    "pixel_alignment_multiple",
+                    self.latent_scale_factor,
+                )
+                or self.latent_scale_factor
+            )
+            if int(request.width) % outpaint_alignment or int(request.height) % outpaint_alignment:
                 raise ValueError(
-                    "Existing-image expansion requires target width and height divisible by 8 so source geometry is not altered by latent alignment."
+                    "Existing-image expansion requires target width and height divisible by "
+                    f"the active model's {outpaint_alignment}-pixel alignment requirement so source geometry is not altered."
                 )
         request.hires_dimension_plan_version = str(hires_execution_plan.dimensions.contract_version)
         request.hires_dimension_plan = hires_execution_plan.dimensions.to_dict()

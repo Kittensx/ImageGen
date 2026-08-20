@@ -4,6 +4,10 @@ import { applyCfgLabValues, readCfgLabValues } from "../features/cfg-lab.js?v=0.
 import { normalizeHiresSizeMode, planHiresDimensions } from "./hires-dimensions.js";
 import { applyParameterRanges, cfgEffectiveRangeLocks, collectParameterRanges } from "../features/parameter-ranges.js?v=qol2";
 import { collectSeedValues, syncSeedControlsFromGenerationValues } from "../features/seed-controls.js?v=qol-seed-ui5";
+import {
+  generationSpatialRequirements,
+  loadGenerationCapabilityPreferences,
+} from "../features/generation-capabilities.js";
 
 function normalizedHiresSizeMode(value, enabled = true) {
   return normalizeHiresSizeMode(value, enabled);
@@ -30,6 +34,7 @@ export function collectGenerationValues(selectionMetadata = {}) {
   if (cfgLocks.minimum !== null) samplerKwargs.cfg_effective_min_lock = cfgLocks.minimum;
   if (cfgLocks.maximum !== null) samplerKwargs.cfg_effective_max_lock = cfgLocks.maximum;
   const hiresEnabled = Boolean($("#hiresEnabled")?.checked);
+  const spatial = generationSpatialRequirements();
   const hiresPlan = planHiresDimensions({
     baseWidth: numberValue($("#width"), 640),
     baseHeight: numberValue($("#height"), 960),
@@ -37,6 +42,8 @@ export function collectGenerationValues(selectionMetadata = {}) {
     scale: numberValue($("#hiresScale"), 1.5),
     targetWidth: numberValue($("#hiresWidth"), 0),
     targetHeight: numberValue($("#hiresHeight"), 0),
+    dimensionMultiple: spatial.pixelAlignmentMultiple,
+    baseDimensionMultiple: spatial.latentScaleFactor,
     enabled: hiresEnabled,
   });
   return {
@@ -51,6 +58,9 @@ export function collectGenerationValues(selectionMetadata = {}) {
     ),
     advanced_model_allow_digital_components: Boolean($("#advancedModelAllowDigitalComponents")?.checked ?? true),
     advanced_model_t5_device: $("#advancedModelT5Device")?.value || "cpu",
+    sd3_t5_enabled: Boolean($("#sd3T5Enabled")?.checked),
+    sd3_t5_source: $("#sd3T5Source")?.value || "auto",
+    text_encoder_3_device: $("#sd3T5Device")?.value || "auto",
     sd2_runtime_profile_override: $("#sd2RuntimeProfileOverride")?.value || null,
     sd2_dedicated_generation: Boolean($("#sd2DedicatedGeneration")?.checked),
     width: numberValue($("#width"), 640),
@@ -163,6 +173,9 @@ export function collectGenerationValues(selectionMetadata = {}) {
 }
 
 export function applyGenerationValues(values = {}) {
+  if (Object.prototype.hasOwnProperty.call(values, "_webui_capability_preferences")) {
+    loadGenerationCapabilityPreferences(values._webui_capability_preferences || {});
+  }
   const normalizedValues = {
     ...values,
     hires_upscaler: values.hires_upscaler_id || values.hires_upscaler,
@@ -301,6 +314,9 @@ export function applyGenerationValues(values = {}) {
     $("#advancedModelAllowDigitalComponents").checked = values.advanced_model_allow_digital_components !== false;
   }
   if ($("#advancedModelT5Device")) $("#advancedModelT5Device").value = String(values.advanced_model_t5_device || "cpu");
+  if ($("#sd3T5Enabled") && values.sd3_t5_enabled !== undefined) $("#sd3T5Enabled").checked = Boolean(values.sd3_t5_enabled);
+  if ($("#sd3T5Source") && values.sd3_t5_source !== undefined) $("#sd3T5Source").value = String(values.sd3_t5_source || "auto");
+  if ($("#sd3T5Device")) $("#sd3T5Device").value = String(values.text_encoder_3_device || "auto");
   if ($("#sd2DedicatedGeneration")) $("#sd2DedicatedGeneration").checked = Boolean(values.sd2_dedicated_generation);
   if ($("#saveTxt")) $("#saveTxt").checked = Boolean(values.save_txt);
   if ($("#saveJson")) $("#saveJson").checked = values.save_json !== false;

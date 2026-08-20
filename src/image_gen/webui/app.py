@@ -67,6 +67,7 @@ from image_gen.webui.civitai_asset_metadata import (
 )
 from image_gen.webui.image_refs import decode_external_image_ref, is_within_root
 from image_gen.webui.jobs import GenerationJobManager
+from image_gen.webui.generation_capabilities import GenerationCapabilityService
 from image_gen.webui.model_selection import ModelSelectionUnavailableError, WebUIModelSelectionState
 from modules.registry import ComponentRegistryService, ComponentSelectionService
 from image_gen.webui.output_details import load_image_file_details, load_output_details
@@ -171,6 +172,13 @@ def create_app(
     model_selection = WebUIModelSelectionState(context)
     component_selection = ComponentSelectionService(context)
     component_registry = ComponentRegistryService(context, registry=component_selection.registry)
+    generation_capabilities = GenerationCapabilityService(
+        model_selection=model_selection,
+        catalog=catalog,
+        upscaler_catalog=upscaler_catalog,
+        component_selection=component_selection,
+        context=context,
+    )
     selections = WebUISelectionResolver(jobs.registry)
     replay = ReplayService(context, jobs, model_selection, upscaler_catalog=upscaler_catalog)
     batch_replay = BatchReplayService(replay, jobs, model_selection)
@@ -504,6 +512,7 @@ def create_app(
         upscaler_catalog=upscaler_catalog,
         jobs=jobs,
         model_selection=model_selection,
+        generation_capabilities=generation_capabilities,
         prompt_configuration=prompt_configuration,
         selections=selections,
         store=store,
@@ -533,6 +542,7 @@ def create_app(
         component_selection=component_selection,
         jobs=jobs,
         model_selection=model_selection,
+        generation_capabilities=generation_capabilities,
         _default_asset_payload=_default_asset_payload,
         _webui_failure=_webui_failure,
     ))
@@ -591,6 +601,7 @@ def create_app(
         catalog=catalog,
         component_selection=component_selection,
         model_selection=model_selection,
+        generation_capabilities=generation_capabilities,
         prompt_configuration=prompt_configuration,
         upscaler_catalog=upscaler_catalog,
         _preview_media_type=_preview_media_type,

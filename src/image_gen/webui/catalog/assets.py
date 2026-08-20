@@ -43,6 +43,7 @@ from image_gen.webui.schema_utils import normalize_config_schema
 from modules.checkpoint_inspector import CheckpointInspector, detect_model_name
 from modules.project_context import ProjectContext
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
+from image_gen.runtime.lora_inventory import discover_lora_library_roots, scan_lora_library_files, summarize_lora_scan_roots
 
 from .contracts import (
     ASSET_CATALOG_CONTRACT_VERSION,
@@ -251,7 +252,9 @@ class AssetCatalogMixin:
         if asset_type == "checkpoint":
             return [self.context.checkpoints_dir, *self._additional_roots()], set(MODEL_EXTENSIONS)
         if asset_type == "lora":
-            return [self.context.lora_dir], set(_LORA_EXTENSIONS)
+            root_report = discover_lora_library_roots(self.context)
+            roots = [Path(str(item.get("path") or "")).expanduser().resolve(strict=False) for item in root_report.get("roots") or []]
+            return roots, set(_LORA_EXTENSIONS)
         if asset_type == "vae":
             return [self.context.vae_dir], set(MODEL_EXTENSIONS)
         if asset_type == "textual_inversion":
@@ -282,19 +285,39 @@ class AssetCatalogMixin:
                 if kind not in _ASSET_TYPES:
                     raise KeyError(kind)
                 records = list(getattr(self, self._collection_attribute(kind)))
-                catalogs[kind] = {
+                payload = {
                     "asset_type": kind,
                     "plural_key": _ASSET_PLURAL_KEYS[kind],
                     "revision": int(self._catalog_revisions.get(kind, 0)),
                     "refreshed_at": str(self._catalog_refreshed_at.get(kind, "")),
                     "count": len(records),
                 }
+                if kind == "lora":
+                    payload["scan_roots"] = dict(getattr(self, "_lora_root_report", {"roots": [], "diagnostics": [], "summary": {}}))
+                catalogs[kind] = payload
         return {
             "contract_version": ASSET_CATALOG_CONTRACT_VERSION,
             "catalogs": catalogs,
         }
 
     def refresh_asset_type(self, asset_type: str) -> dict[str, Any]:
+        if asset_type == "lora":
+            root_report = discover_lora_library_roots(self.context)
+            items = scan_lora_library_files(root_report.get("roots") or [])
+            for item in items:
+                path = Path(str(item.get("path") or "")).expanduser().resolve()
+                item["embedded_name"] = self._embedded_safetensors_name(path, asset_type)
+            scan_root_summary = summarize_lora_scan_roots(root_report.get("roots") or [], items)
+            self._lora_root_report = {
+                **scan_root_summary,
+                "diagnostics": list(root_report.get("diagnostics") or []),
+            }
+            with self._catalog_lock:
+                self._bump_catalog_revision(asset_type)
+                records = self._catalog_entries(items, asset_type=asset_type)
+                setattr(self, self._collection_attribute(asset_type), records)
+            return self.asset_payload(asset_type)
+
         roots, extensions = self._asset_scan_config(asset_type)
         items = self._scan_files(roots, extensions)
         for item in items:

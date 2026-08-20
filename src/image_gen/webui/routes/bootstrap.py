@@ -14,13 +14,17 @@ from image_gen.systems.asset_hub import ASSET_HUB_CONTRACT_VERSION
 from image_gen.systems.outpainting import plan_outpaint_canvas
 from image_gen.webui.catalog import ASSET_CATALOG_CONTRACT_VERSION
 from image_gen.webui.help_center import HELP_CENTER_CONTRACT_VERSION
+from image_gen.webui.generation_capabilities import (
+    GENERATION_CAPABILITY_CONTRACT_VERSION,
+    GENERATION_CAPABILITY_SCHEMA,
+)
 from image_gen.webui.output_details import load_image_file_details
 from image_gen.webui.theme import THEME_LIBRARY_SCHEMA_VERSION
 from image_gen.webui.upscaler_catalog import UPSCALER_CATALOG_CONTRACT_VERSION
 from image_gen.webui.workspace import WORKSPACE_CONTRACT_VERSION
 
 
-def build_bootstrap_router(*, context, catalog, upscaler_catalog, jobs, model_selection, prompt_configuration, selections, store, theme_library, theme_storage_warning, _default_asset_payload, _runtime_startup_status, _visible_recent_outputs, WEBUI_VERSION) -> APIRouter:
+def build_bootstrap_router(*, context, catalog, upscaler_catalog, jobs, model_selection, generation_capabilities, prompt_configuration, selections, store, theme_library, theme_storage_warning, _default_asset_payload, _runtime_startup_status, _visible_recent_outputs, WEBUI_VERSION) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/bootstrap")
@@ -52,6 +56,7 @@ def build_bootstrap_router(*, context, catalog, upscaler_catalog, jobs, model_se
             effective_source,
             fallback_payload=defaults,
             migrate_legacy_auto_fallback=True,
+            repair_incompatible_explicit=True,
         )
         effective_generation = effective_selection.payload
 
@@ -84,6 +89,12 @@ def build_bootstrap_router(*, context, catalog, upscaler_catalog, jobs, model_se
                 "asset_catalog_contract_version": ASSET_CATALOG_CONTRACT_VERSION,
                 "prompt_asset_contract_version": PROMPT_ASSET_CONTRACT_VERSION,
                 "upscaler_catalog_contract_version": UPSCALER_CATALOG_CONTRACT_VERSION,
+                "generation_capability_contract_version": GENERATION_CAPABILITY_CONTRACT_VERSION,
+                "generation_capability_schema": GENERATION_CAPABILITY_SCHEMA,
+                "generation_capability_routes": [
+                    "/api/generation/capabilities",
+                    "/api/models/active",
+                ],
                 "model_activation_routes": [
                     "/api/models/activate",
                     "/api/model/activate",
@@ -210,6 +221,7 @@ def build_bootstrap_router(*, context, catalog, upscaler_catalog, jobs, model_se
             **prompt_configuration.bootstrap_payload(),
             "models": catalog.model_payload(),
             "active_model": model_selection.current_payload(),
+            "generation_capabilities": generation_capabilities.resolve_active(request=effective_generation),
             "model_runtime": jobs.model_runtime_status(),
             "recent_outputs": _visible_recent_outputs(),
             "prompt_presets": store.list_prompt_presets(),

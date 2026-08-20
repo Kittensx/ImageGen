@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 
 from image_gen.contracts import PipelineComponents, resolve_latent_vae_contract
+from image_gen.runtime.model_load_variant import sanitize_model_load_runtime_settings
 from image_gen.systems.validation.capabilities import capability_for
 from image_gen.systems.memory.telemetry import MemoryTelemetry
 from image_gen.contracts.vae_provenance import attach_vae_provenance
@@ -84,7 +85,7 @@ class ModelLoadingSystem:
         load_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         telemetry = MemoryTelemetry(device=load_device)
         before_memory = telemetry.capture("before_checkpoint_component_load").to_dict()
-        extras = dict(request_extras or {})
+        extras = sanitize_model_load_runtime_settings(request_extras)
         allow_sd2_validation = bool(extras.get("sd2_dedicated_generation"))
         allow_sdxl_validation = bool(
             extras.get("sdxl_phase08_validation")

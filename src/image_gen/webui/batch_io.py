@@ -39,7 +39,7 @@ _ALIASES = {
 _REQUEST_FIELDS = {
     "positive_prompt", "negative_prompt", "seed", "width", "height", "steps",
     "cfg_scale", "batch_size", "batch_count", "sampler_name", "scheduler_name",
-    "model_path", "vae_path", "sd2_runtime_profile_override", "sd3_runtime_profile_override", "sd3_text_encoder_source", "advanced_models_enabled", "advanced_model_family", "advanced_model_components", "advanced_model_allow_digital_components", "advanced_model_composition_sha256", "advanced_model_t5_device", "text_encoder_3_device", "model_enforce_recommended_steps", "model_enforce_recommended_cfg", "sd2_dedicated_generation", "sampler_kwargs", "scheduler_kwargs", "cfg_rescale",
+    "model_path", "vae_path", "sd2_runtime_profile_override", "sd3_runtime_profile_override", "sd3_text_encoder_source", "sd3_t5_enabled", "sd3_t5_source", "advanced_models_enabled", "advanced_model_family", "advanced_model_components", "advanced_model_allow_digital_components", "advanced_model_composition_sha256", "advanced_model_t5_device", "text_encoder_3_device", "model_enforce_recommended_steps", "model_enforce_recommended_cfg", "sd2_dedicated_generation", "sampler_kwargs", "scheduler_kwargs", "cfg_rescale",
     "compatibility_mode", "clip_skip", "tiling", "prompt_parser_name", "prompt_parser_kwargs",
     "prompt_shortcut_profile_name", "prompt_shortcut_profile_snapshot", "prompt_parser_preset_name",
     "base_prompt_parser_name", "base_shortcut_profile_name", "hires_prompt_parser_mode",

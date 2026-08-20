@@ -69,6 +69,7 @@ class HiresDimensionPlan:
     alignment_applied: bool
     alignment_correction_required: bool
     dimension_multiple: int = 8
+    base_dimension_multiple: int = 8
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -78,6 +79,7 @@ def resolve_hires_dimensions(
     values: Mapping[str, Any] | Any,
     *,
     dimension_multiple: int = 8,
+    base_dimension_multiple: int = 8,
 ) -> HiresDimensionPlan:
     source: Mapping[str, Any]
     if isinstance(values, Mapping):
@@ -86,12 +88,20 @@ def resolve_hires_dimensions(
         source = vars(values)
 
     dimension_multiple = max(1, int(dimension_multiple or 8))
-    # Keep the historical base-dimension normalization on the VAE's 8-pixel
-    # grid. The architecture-specific multiple applies to the *internal*
-    # second-pass canvas; it must not silently change the user's requested
-    # base size or a scale-from-base target (for example 360 -> 368 -> 552).
-    base_width = _normalize_base_dimension(_positive_int(source.get("width"), 512), multiple=8)
-    base_height = _normalize_base_dimension(_positive_int(source.get("height"), 512), multiple=8)
+    base_dimension_multiple = max(1, int(base_dimension_multiple or 8))
+    # Base dimensions normalize on the active VAE's pixel-to-latent grid.
+    # The denoiser may impose a stricter patch multiple only on the internal
+    # second-pass canvas. Keeping these concepts separate preserves exact
+    # requested sizes while allowing future VAEs/denoisers to advertise new
+    # geometry without family-specific branches.
+    base_width = _normalize_base_dimension(
+        _positive_int(source.get("width"), 512),
+        multiple=base_dimension_multiple,
+    )
+    base_height = _normalize_base_dimension(
+        _positive_int(source.get("height"), 512),
+        multiple=base_dimension_multiple,
+    )
     mode = str(source.get("hires_size_mode") or "same_as_base").strip().lower()
     if mode not in _VALID_MODES:
         raise ValueError(
@@ -149,6 +159,7 @@ def resolve_hires_dimensions(
         alignment_applied=alignment_applied,
         alignment_correction_required=alignment_applied,
         dimension_multiple=dimension_multiple,
+        base_dimension_multiple=base_dimension_multiple,
     )
 
 

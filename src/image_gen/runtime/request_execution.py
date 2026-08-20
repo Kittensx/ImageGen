@@ -88,6 +88,12 @@ class RequestExecutionMixin:
         base_height = int(getattr(request, "outpaint_shape_base_height", 0) or request.height)
         request.outpaint_shape_base_width = base_width
         request.outpaint_shape_base_height = base_height
+        latent_preparation = getattr(getattr(pipeline, "systems", None), "latent_preparation", None)
+        pixel_alignment_multiple = int(
+            getattr(latent_preparation, "pixel_alignment_multiple", 0)
+            or getattr(pipeline, "latent_scale_factor", 0)
+            or 8
+        )
         try:
             target = resolve_outpaint_shape_target(
                 base_width=base_width,
@@ -95,6 +101,7 @@ class RequestExecutionMixin:
                 target_mode=str(getattr(request, "outpaint_shape_target_mode", "square") or "square"),
                 target_width=int(getattr(request, "outpaint_shape_target_width", 0) or 0),
                 target_height=int(getattr(request, "outpaint_shape_target_height", 0) or 0),
+                dimension_multiple=pixel_alignment_multiple,
             )
         except Exception as exc:
             raise RuntimeError(format_outpaint_failure("outpaint_source_handoff", str(exc))) from exc

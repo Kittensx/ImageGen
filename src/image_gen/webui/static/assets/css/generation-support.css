@@ -55,3 +55,55 @@
   border-style: dashed;
 }
 
+
+/* GFP-03: capability-aware control states. Error treatment uses outline shape,
+   text/status messaging, aria-invalid, and the theme danger role so color is
+   never the only indicator. */
+.capability-invalid {
+  border-color: var(--danger) !important;
+  outline: 2px double var(--danger);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--danger);
+}
+
+.capability-invalid::before {
+  content: "!";
+}
+
+.capability-fixed:disabled {
+  cursor: not-allowed;
+  opacity: 0.82;
+  border-style: dashed;
+}
+
+/* GFP-03: optional whole-checkpoint conditioning surfaced only when the
+   authoritative capability contract resolves a usable T5/T5XXL source. */
+.model-t5-control {
+  margin-top: 0.25rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0.65rem;
+  background: var(--surface-raised, var(--surface-2));
+}
+
+.model-t5-control[hidden],
+.model-t5-control.is-hidden {
+  display: none;
+}
+
+.model-t5-control #sd3T5DeviceBlock {
+  margin-top: 0.25rem;
+}
+
+.field-status.error::before {
+  content: "!";
+  display: inline-grid;
+  min-width: 1.1em;
+  min-height: 1.1em;
+  margin-right: 0.35em;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-weight: 800;
+  line-height: 1;
+}

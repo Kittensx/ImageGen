@@ -11,6 +11,10 @@ import torch
 from image_gen.webui.job_request_normalization import _coerce_boolean, _coerce_top_level_number
 from image_gen.webui.job_store import _utc_now
 from image_gen.webui.model_runtime import ModelRuntimeUnavailable
+from image_gen.runtime.model_load_variant import (
+    MODEL_LOAD_VARIANT_FIELDS,
+    sanitize_model_load_runtime_settings,
+)
 from image_gen.webui.randomization import apply_parameter_ranges, iter_seed_plan, parse_seed_plan
 
 
@@ -27,18 +31,20 @@ class ResidentJobExecutorMixin:
             raise ValueError("A checkpoint model path is required for activation.")
         runtime_settings = self._model_runtime_settings()
         if runtime_overrides:
-            for key in (
+            activation_keys = (
                 "_advanced_model_resolved",
                 "advanced_models_enabled",
                 "advanced_model_family",
                 "advanced_model_components",
                 "advanced_model_allow_digital_components",
-                "advanced_model_composition_sha256",
                 "advanced_model_t5_device",
                 "text_encoder_3_device",
-            ):
+                *MODEL_LOAD_VARIANT_FIELDS,
+            )
+            for key in activation_keys:
                 if key in runtime_overrides:
                     runtime_settings[key] = runtime_overrides[key]
+        runtime_settings = sanitize_model_load_runtime_settings(runtime_settings)
         completion = await self.model_runtime.activate(
             resolved_path,
             runtime_settings=runtime_settings,
@@ -72,6 +78,9 @@ class ResidentJobExecutorMixin:
         if selection:
             result["selection"] = dict(selection)
         return {**completion, "status": status, "result": result}
+
+    async def supersede_model_activation(self, model_path: str) -> bool:
+        return await self.model_runtime.supersede_activation(str(model_path or ""))
 
     async def unload_model(self) -> dict[str, Any]:
         completion = await self.model_runtime.unload()

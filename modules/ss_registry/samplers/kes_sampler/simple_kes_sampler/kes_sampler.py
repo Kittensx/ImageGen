@@ -375,8 +375,7 @@ class KESSampler(SamplerTraceMixin):
             sigma = sigmas[i]
             sigma_next = sigmas[i + 1]
             timestep = timesteps[i]
-            timestep_next = timesteps[i + 1]
-            
+
             latent_before = x.detach()
 
             step_requested_cfg_scale, prompt_cfg_step = requested_cfg_scale_for_step(
@@ -497,6 +496,12 @@ class KESSampler(SamplerTraceMixin):
             dt = sigma_next - sigma
 
             if sampler_type == "heun" and i < (sigmas.numel() - 2):
+                # Fixed-step schedulers commonly expose N timesteps for N+1
+                # sigma endpoints. Only the Heun corrector needs the next
+                # timestep, and this branch never runs on the terminal sigma
+                # transition, so resolve it lazily here.
+                timestep_next = timesteps[i + 1]
+
                 # Predictor
                 x_pred = denoised + (sigma_next * noise)
 

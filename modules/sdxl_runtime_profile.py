@@ -129,11 +129,13 @@ _PROFILES: dict[str, SDXLRuntimeProfile] = {
         native_height=1024,
         recommended_steps=(20, 30, 40, 50),
         source_note=(
-            "SDXL Refiner is detected as a distinct profile, but IMAGE_GEN does not block it from "
-            "normal generation; second-stage/refiner chaining remains an optional workflow concern."
+            "SDXL Refiner is detected as a distinct second-stage profile with its own conditioning and UNet contract. "
+            "The current normal txt2img runtime intentionally does not execute that second-stage pipeline."
         ),
+        generation_qualified=False,
         qualification_note=(
-            "Runtime profile settings are recommendations only; generation is not gated by profile qualification."
+            "SDXL Refiner is structurally recognized and available for qualification, but normal txt2img execution "
+            "is not yet implemented for the distinct second-stage Refiner pipeline."
         ),
     ),
 }

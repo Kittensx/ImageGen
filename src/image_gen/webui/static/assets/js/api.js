@@ -147,6 +147,10 @@ export const api = {
     method: "POST",
     body: JSON.stringify({ force: Boolean(force), strength }),
   }),
+  generationCapabilities: (payload = {}) => request("/api/generation/capabilities", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  }),
   activateModel: (modelPath) => request("/api/models/activate", {
     method: "POST",
     body: JSON.stringify({ model_path: modelPath }),

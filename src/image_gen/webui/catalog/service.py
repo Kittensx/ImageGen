@@ -91,6 +91,7 @@ class WebUICatalog(
         # Compatibility alias for older extensions/tests; the implementation is generic.
         self._civitai_lora_client = self._civitai_client
         self._output_summary_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        self._lora_root_report: dict[str, Any] = {"roots": [], "diagnostics": [], "summary": {}}
         self.refresh_models()
 
     def reload_plugins(self) -> None:
@@ -112,5 +113,10 @@ class WebUICatalog(
             "samplers": self._descriptor_payload("sampler"),
             "schedulers": self._descriptor_payload("scheduler"),
         }
+
+    def validate_pair(self, sampler: str, scheduler: str):
+        """Forward sampler/scheduler compatibility to the canonical runtime registry."""
+
+        return self._registry.validate_pair(sampler, scheduler)
 
 __all__ = ["ASSET_CATALOG_CONTRACT_VERSION", "WebUICatalog"]

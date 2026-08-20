@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 from image_gen.contracts import PROMPT_ASSET_CONTRACT_VERSION, normalize_prompt_asset_list
@@ -55,6 +56,16 @@ def _coerce_top_level_number(value: Any, *, integer: bool, default: Any = None) 
         return default
     return int(number) if integer else float(number)
 
+def _coerce_unit_interval_or_none(value: Any) -> float | None:
+    number = _coerce_top_level_number(value, integer=False, default=None)
+    if number is None:
+        return None
+    numeric = float(number)
+    if not math.isfinite(numeric) or numeric < 0.0 or numeric > 1.0:
+        return None
+    return numeric
+
+
 def _coerce_boolean(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
@@ -67,6 +78,21 @@ def _coerce_boolean(value: Any, default: bool = False) -> bool:
 
 def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, Any]:
     normalized = dict(payload or {})
+    spatial_requirements = dict(normalized.get("_generation_spatial_requirements") or {})
+    try:
+        latent_scale_factor = max(1, int(spatial_requirements.get("latent_scale_factor") or 8))
+    except (TypeError, ValueError):
+        latent_scale_factor = 8
+    try:
+        pixel_alignment_multiple = max(
+            1,
+            int(spatial_requirements.get("pixel_alignment_multiple") or latent_scale_factor),
+        )
+    except (TypeError, ValueError):
+        pixel_alignment_multiple = latent_scale_factor
+    spatial_requirements["latent_scale_factor"] = latent_scale_factor
+    spatial_requirements["pixel_alignment_multiple"] = pixel_alignment_multiple
+    normalized["_generation_spatial_requirements"] = spatial_requirements
     normalized["width"] = _coerce_top_level_number(normalized.get("width"), integer=True, default=640)
     normalized["height"] = _coerce_top_level_number(normalized.get("height"), integer=True, default=960)
     normalized["steps"] = _coerce_top_level_number(normalized.get("steps"), integer=True, default=20)
@@ -74,6 +100,23 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["batch_count"] = _coerce_top_level_number(normalized.get("batch_count"), integer=True, default=1)
     normalized["cfg_scale"] = _coerce_top_level_number(normalized.get("cfg_scale"), integer=False, default=7.0)
     normalized["cfg_rescale"] = _coerce_top_level_number(normalized.get("cfg_rescale"), integer=False, default=0.0)
+    if "sd3_t5_enabled" in normalized:
+        normalized["sd3_t5_enabled"] = _coerce_boolean(normalized.get("sd3_t5_enabled"), default=False)
+    if "sd3_t5_source" in normalized:
+        t5_source = str(normalized.get("sd3_t5_source") or "auto").strip().lower().replace("-", "_")
+        if t5_source.startswith("component:"):
+            digest = t5_source.split(":", 1)[1].strip().lower()
+            t5_source = (
+                f"component:{digest}"
+                if len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+                else "auto"
+            )
+        elif t5_source not in {"auto", "embedded", "external", "shared", "standalone"}:
+            t5_source = "auto"
+        normalized["sd3_t5_source"] = {"shared": "external", "standalone": "external"}.get(t5_source, t5_source)
+    if "text_encoder_3_device" in normalized:
+        t5_device = str(normalized.get("text_encoder_3_device") or "auto").strip().lower()
+        normalized["text_encoder_3_device"] = t5_device if t5_device in {"auto", "cpu", "cuda", "off"} else "auto"
     normalized["prompt_cfg_pass_schedules"] = dict(
         normalized.get("prompt_cfg_pass_schedules") or {}
     )
@@ -154,8 +197,11 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["hires_cfg_scale"] = _coerce_top_level_number(
         normalized.get("hires_cfg_scale"), integer=False, default=None
     )
-    normalized["hires_cfg_rescale"] = _coerce_top_level_number(
-        normalized.get("hires_cfg_rescale"), integer=False, default=None
+    # GFP-01 safety freeze: an invalid hires override must not survive request
+    # normalization. ``None`` deliberately restores inheritance from the valid
+    # base CFG rescale in the hires runtime instead of preserving bad input.
+    normalized["hires_cfg_rescale"] = _coerce_unit_interval_or_none(
+        normalized.get("hires_cfg_rescale")
     )
     normalized["hires_recorded_schedule_replay"] = dict(
         normalized.get("hires_recorded_schedule_replay") or {}
@@ -423,6 +469,7 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
             target_mode=normalized["outpaint_shape_target_mode"],
             target_width=int(normalized["outpaint_shape_target_width"] or 0),
             target_height=int(normalized["outpaint_shape_target_height"] or 0),
+            dimension_multiple=pixel_alignment_multiple,
         )
         normalized["outpaint_shape_base_width"] = int(shape_target["base_width"])
         normalized["outpaint_shape_base_height"] = int(shape_target["base_height"])
@@ -435,8 +482,14 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
             raise ValueError("Existing-image expansion requires batch_size=1.")
         if not normalized["outpaint_source_image"]:
             raise ValueError("Choose a source image before enabling existing-image expansion.")
-        if int(normalized.get("width") or 0) % 8 or int(normalized.get("height") or 0) % 8:
-            raise ValueError("Existing-image expansion target width and height must be divisible by 8.")
+        if (
+            int(normalized.get("width") or 0) % pixel_alignment_multiple
+            or int(normalized.get("height") or 0) % pixel_alignment_multiple
+        ):
+            raise ValueError(
+                "Existing-image expansion target width and height must be divisible by "
+                f"the active model's {pixel_alignment_multiple}-pixel alignment requirement."
+            )
     seed_plan = parse_seed_plan(
         normalized.get("seed"),
         mode=normalized.get("batch_seed_mode"),

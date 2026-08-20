@@ -11,6 +11,7 @@ from image_gen.contracts import GenerationRequest
 from image_gen.contracts.vae_provenance import read_vae_provenance
 from image_gen.runtime.composition import PipelineCompositionRoot
 from image_gen.runtime.model_preflight import _advanced_model_family
+from image_gen.runtime.model_load_variant import model_load_variant_fingerprint, model_load_variant_payload
 from image_gen.systems.diagnostics import DiagnosticSession
 from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
 from image_gen.systems.upscaling import StandaloneNeuralUpscaler, UpscalerModelRegistry, discover_upscalers
@@ -538,15 +539,12 @@ class PipelineFactoryMixin:
                 vae_override_identity = (str(resolved_vae.resolve()), int(vae_stat.st_size), int(vae_stat.st_mtime_ns))
             else:
                 vae_override_identity = (vae_override_path, -1, -1)
+        # Keep cache identity and resident identity on the same canonical
+        # composition contract. Device placement remains a separate cache
+        # dimension because it can change hydration/placement without changing
+        # which components logically make up the model.
         load_variant_key = (
-            bool(extras.get("sd2_dedicated_generation")),
-            str(extras.get("sd2_runtime_profile_override") or ""),
-            str(extras.get("sdxl_runtime_profile_override") or ""),
-            str(extras.get("sd3_runtime_profile_override") or ""),
-            str(extras.get("sd3_text_encoder_source") or "auto"),
-            str(extras.get("sd3_clip_l_source") or ""),
-            str(extras.get("sd3_clip_g_source") or ""),
-            str(extras.get("advanced_model_composition_sha256") or ""),
+            model_load_variant_fingerprint(extras),
             str(extras.get("text_encoder_3_device") or ""),
             *vae_override_identity,
         )
@@ -657,6 +655,10 @@ class PipelineFactoryMixin:
                 device=runtime_device,
                 dtype=runtime_dtype,
             )
+        components = getattr(loaded, "components", None)
+        if components is not None:
+            setattr(components, "runtime_load_variant", model_load_variant_payload(extras))
+            setattr(components, "runtime_load_variant_fingerprint", model_load_variant_fingerprint(extras))
         report = getattr(getattr(loaded, "load_plan", None), "report", None)
         report_path = getattr(report, "model_path", None)
         model_provenance.update(
@@ -685,7 +687,7 @@ class PipelineFactoryMixin:
         )
         component_devices: dict[str, str] = {}
         component_dtypes: dict[str, str] = {}
-        for component_name in ("unet", "text_encoder", "text_encoder_2", "vae"):
+        for component_name in ("unet", "text_encoder", "text_encoder_2", "text_encoder_3", "vae"):
             module = getattr(getattr(loaded, "components", None), component_name, None)
             if module is None:
                 continue

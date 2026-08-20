@@ -17,8 +17,8 @@ import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civita
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
 import { bindWorkspaceLayout } from "./features/layout.js?v=responsive-action-bar1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
-import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-grid-qol1";
-import { bindLoraWorkspace } from "./features/loras.js?v=asset-grid-qol1";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-preview-recovery1";
+import { bindLoraWorkspace } from "./features/loras.js?v=lora-catalog-preview-recovery1";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindHomeWorkspace } from "./features/home.js?v=home-shell1";
 import { bindHomeComponents } from "./features/home-components.js?v=content-capabilities2";
@@ -44,6 +44,11 @@ import { bindParameterRanges } from "./features/parameter-ranges.js?v=qol2";
 import { bindSeedControls } from "./features/seed-controls.js?v=qol-seed-ui5";
 import { bindOutpaintPrototype } from "./features/outpaint-prototype.js?v=0.1.84";
 import { bindAdvancedModels } from "./features/advanced-models.js?v=component-phase05";
+import {
+  applyGenerationCapabilities,
+  generationCapabilityPreferencesSnapshot,
+  refreshGenerationCapabilities,
+} from "./features/generation-capabilities.js";
 
 const PROMPT_ASSET_CONTRACT_VERSION = "image-gen-prompt-assets-v1";
 
@@ -68,6 +73,9 @@ let samplerValues = {};
 let schedulerValues = {};
 let schedulerUserSelected = false;
 let modelActivationPromise = Promise.resolve(null);
+let modelActivationSequence = 0;
+let modelActivationInFlight = false;
+let modelActivationTarget = "";
 let modelRuntimeReadyPath = "";
 let schedulerPresetPluginId = "";
 let schedulerPresetName = "";
@@ -90,6 +98,9 @@ function pluginValue(descriptors, requested, fallback = "") {
 }
 
 function preferredSchedulerForSampler(samplerName) {
+  const capabilityPreferred = String(state.generationCapabilities?.controls?.scheduler_name?.preferred_name || "").trim();
+  const allowed = state.generationCapabilities?.controls?.scheduler_name?.allowed_names || [];
+  if (capabilityPreferred && allowed.includes(capabilityPreferred)) return capabilityPreferred;
   const descriptor = samplerDescriptor(samplerName);
   const preferred = descriptor?.capabilities?.preferred_scheduler;
   return pluginValue(state.schedulers, preferred, samplerName === "kes" ? "simple_kes" : "standard_karras");
@@ -332,10 +343,10 @@ function renderModelRecommendationControls(activeModel = null, { applyDefaults =
   const samplerSchedulerStatus = $("#sdxlRecommendedSamplerScheduler");
   if (stepsLabel) {
     const label = recommendedSteps.length ? recommendedSteps.join(", ") : (preferredSteps > 0 ? String(preferredSteps) : "model default");
-    stepsLabel.textContent = `Use recommended steps (${label})`;
+    stepsLabel.textContent = `Auto-use recommended steps (${label})`;
   }
   if (cfgLabel) {
-    const cfgText = Number.isFinite(recommendedCfg) ? `Use recommended CFG (${recommendedCfg})` : "Use the model's recommended CFG";
+    const cfgText = Number.isFinite(recommendedCfg) ? `Auto-use recommended CFG (${recommendedCfg})` : "Auto-use the model's recommended CFG";
     cfgLabel.textContent = recommendedCfgPreset ? `${cfgText} + recommended CFG Lab preset` : cfgText;
   }
   if (profileLabel) profileLabel.textContent = profileId;
@@ -431,8 +442,23 @@ async function activateSelectedModel({ quiet = false } = {}) {
     throw new Error("Choose a checkpoint model first.");
   }
 
+  const requestedIdentity = normalizedModelPath(requestedPath);
+  if (modelActivationInFlight && modelActivationTarget === requestedIdentity) {
+    return modelActivationPromise;
+  }
+
+  const activationSequence = ++modelActivationSequence;
+  modelActivationInFlight = true;
+  modelActivationTarget = requestedIdentity;
   setModelReadyState(false, "Activating selected checkpoint…", "loading");
+
+  const isCurrentActivation = () => (
+    activationSequence === modelActivationSequence
+    && normalizedModelPath($("#modelPath")?.value || "") === requestedIdentity
+  );
+
   const activation = api.activateModel(requestedPath).then((payload) => {
+    if (!isCurrentActivation()) return null;
     const active = payload.active_model;
     if (!active?.resolved_path) {
       throw new Error("The backend did not return an activated checkpoint.");
@@ -442,8 +468,13 @@ async function activateSelectedModel({ quiet = false } = {}) {
       throw new Error("The checkpoint selection completed, but the model is not resident on the execution device.");
     }
     state.activeModel = active;
-    if (state.bootstrap) state.bootstrap.model_runtime = payload.model_runtime || state.bootstrap.model_runtime;
+    state.generationCapabilities = payload.generation_capabilities || state.generationCapabilities;
+    if (state.bootstrap) {
+      state.bootstrap.model_runtime = payload.model_runtime || state.bootstrap.model_runtime;
+      state.bootstrap.generation_capabilities = payload.generation_capabilities || state.bootstrap.generation_capabilities;
+    }
     renderModelArchitectureStatus(active);
+    applyGenerationCapabilities(payload.generation_capabilities || null);
     window.dispatchEvent(new CustomEvent("image-gen-model-activated", {
       detail: { activeModel: active, defaultAssets: payload.default_assets || null },
     }));
@@ -464,11 +495,21 @@ async function activateSelectedModel({ quiet = false } = {}) {
     }
     return active;
   }).catch((error) => {
+    // A newer dropdown selection may intentionally terminate an obsolete model
+    // hydration. Never let that stale response clear the newer selection state.
+    if (!isCurrentActivation()) return null;
     state.activeModel = null;
+    state.generationCapabilities = null;
     modelRuntimeReadyPath = "";
     renderModelArchitectureStatus(null);
+    applyGenerationCapabilities(null);
     setModelReadyState(false, `Model activation failed: ${error.message}`, "error");
     throw error;
+  }).finally(() => {
+    if (activationSequence === modelActivationSequence) {
+      modelActivationInFlight = false;
+      modelActivationTarget = "";
+    }
   });
   modelActivationPromise = activation;
   return activation;
@@ -513,8 +554,10 @@ async function applyStartupModelBehavior(bootstrap, current = {}) {
 
   if (!state.models.length) {
     state.activeModel = null;
+    state.generationCapabilities = null;
     modelRuntimeReadyPath = "";
     renderModelArchitectureStatus(null);
+    applyGenerationCapabilities(null);
     setModelReadyState(false, "No checkpoints are installed. Add a checkpoint to the model library before generating.", "subtle");
     return;
   }
@@ -523,6 +566,7 @@ async function applyStartupModelBehavior(bootstrap, current = {}) {
     state.activeModel = active || null;
     modelRuntimeReadyPath = "";
     renderModelArchitectureStatus(state.activeModel);
+    refreshGenerationCapabilities().catch((error) => console.warn("Unable to refresh generation capabilities", error));
     setModelReadyState(false, "Start with no model is active. Choose a checkpoint before generating.", "subtle");
     return;
   }
@@ -861,7 +905,10 @@ async function refreshOutputs(options = {}) {
 
 const saveSessionSoon = debounce(async () => {
   try {
-    await api.saveSession(collectCurrentValues());
+    await api.saveSession({
+      ...collectCurrentValues(),
+      _webui_capability_preferences: generationCapabilityPreferencesSnapshot(),
+    });
   } catch (error) {
     console.error("Unable to save session", error);
   }
@@ -916,6 +963,12 @@ function bindAdvancedButtons() {
     schedulerPresetName = "";
     schedulerPresetPluginId = currentSchedulerPluginId();
     schedulerPresetSource = "";
+    await refreshAdvancedEditors();
+    saveSessionSoon();
+  });
+  $("#generationForm")?.addEventListener("image-gen-capability-auto-repaired", async () => {
+    samplerValues = {};
+    schedulerValues = {};
     await refreshAdvancedEditors();
     saveSessionSoon();
   });
@@ -1086,6 +1139,7 @@ async function start() {
     state.bootstrap = bootstrap;
     state.settings = bootstrap.settings || {};
     state.activeModel = bootstrap.active_model || null;
+    state.generationCapabilities = bootstrap.generation_capabilities || null;
     setCatalogs(bootstrap);
     state.recentOutputs = bootstrap.recent_outputs || [];
 
@@ -1111,6 +1165,7 @@ async function start() {
     populatePlugins(current);
     initializeHiresUpscalers(bootstrap.upscalers || {}, current);
     applyGenerationValues(current);
+    applyGenerationCapabilities(state.generationCapabilities);
     [
       ["#sdxlEnforceRecommendedSteps", "steps"],
       ["#sdxlEnforceRecommendedCfg", "cfg"],
@@ -1143,6 +1198,19 @@ async function start() {
       const control = $(selector);
       if (!control) return;
       control.addEventListener("change", () => renderModelRecommendationControls(state.activeModel));
+    });
+    ["#samplerName", "#schedulerName", "#hiresEnabled", "#hiresStrategy", "#hiresUpscaler", "#vaePath", "#sd3T5Enabled", "#sd3T5Source", "#sd3T5Device"].forEach((selector) => {
+      const control = $(selector);
+      if (!control) return;
+      control.addEventListener("change", () => {
+        const changedField = selector === "#samplerName"
+          ? "sampler_name"
+          : (selector === "#schedulerName" ? "scheduler_name" : "");
+        refreshGenerationCapabilities({ changedField }).catch((error) => console.warn("Unable to refresh generation capabilities", error));
+      });
+    });
+    window.addEventListener("image-gen-advanced-models-changed", () => {
+      refreshGenerationCapabilities().catch((error) => console.warn("Unable to refresh generation capabilities", error));
     });
     applyVaeSelectionPolicy();
     initializePromptTools(current);

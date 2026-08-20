@@ -43,6 +43,19 @@ def _snapshot_hash(plan: Any, component_role: str) -> str:
     return ""
 
 
+def _normalize_enabled(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    token = str(value).strip().lower()
+    if token in {"1", "true", "yes", "on", "enabled", "enable"}:
+        return True
+    if token in {"0", "false", "no", "off", "disabled", "disable", ""}:
+        return False
+    return bool(default)
+
+
 def _normalize_source(value: Any, default: str = "auto") -> str:
     token = str(value or default).strip().lower().replace("-", "_")
     aliases = {
@@ -52,9 +65,14 @@ def _normalize_source(value: Any, default: str = "auto") -> str:
         "checkpoint": "embedded",
     }
     token = aliases.get(token, token)
+    if token.startswith("component:"):
+        digest = token.split(":", 1)[1].strip().lower()
+        if len(digest) == 64 and all(char in "0123456789abcdef" for char in digest):
+            return f"component:{digest}"
+        raise ValueError(f"Invalid SD3 text-encoder component selector {value!r}.")
     if token not in {"auto", "embedded", "external"}:
         raise ValueError(
-            f"Unsupported SD3 text-encoder source policy {value!r}; expected auto, embedded, or external."
+            f"Unsupported SD3 text-encoder source policy {value!r}; expected auto, embedded, external, or component:<sha256>."
         )
     return token
 
@@ -92,11 +110,13 @@ def _load_external_state(
     context: ProjectContext,
     role: str,
     expected_component_sha256: str,
+    selected_component_sha256: str = "",
 ) -> tuple[dict[str, Any], SD3TextEncoderSourceSelection]:
+    selected_digest = str(selected_component_sha256 or "").strip().lower()
     resolution = resolve_shared_text_encoder(
         context,
         role,
-        expected_component_sha256=expected_component_sha256 or None,
+        expected_component_sha256=selected_digest or expected_component_sha256 or None,
     )
     selected = resolution.selected
     if selected is None:
@@ -106,8 +126,14 @@ def _load_external_state(
             f"Checked: {checked}"
         )
     selected = Path(selected).resolve()
-    if expected_component_sha256:
-        matched = str(resolution.matched_component_sha256 or "").strip().lower()
+    matched = str(resolution.matched_component_sha256 or "").strip().lower()
+    if selected_digest:
+        if matched != selected_digest:
+            raise RuntimeError(
+                f"SD3 external {role} component selection could not be resolved to the requested component identity. "
+                "Refresh the asset registry before using this T5 selection."
+            )
+    elif expected_component_sha256:
         if matched != expected_component_sha256:
             raise RuntimeError(
                 f"SD3 external {role} selection was requested for a checkpoint that already embeds that component, "
@@ -132,12 +158,17 @@ def prepare_sd3_text_encoder_states(
     context: ProjectContext,
     request_extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resolve CLIP-L/G state sources for normal SD3 generation.
+    """Resolve text-encoder state sources for normal SD3 generation.
 
-    ``auto`` preserves embedded encoders when present and falls back to the
-    shared TextEncoders library for plain checkpoints. Explicit external source
-    selection is fingerprint-checked against embedded components when an exact
-    embedded identity is available.
+    CLIP-L/G preserve the established ``auto`` policy: use an embedded encoder
+    when present and otherwise resolve the matching shared TextEncoders asset.
+
+    T5/T5XXL is optional.  When ``sd3_t5_enabled`` is omitted we preserve the
+    pre-GFP behavior (embedded T5 remains enabled; an external T5 is not pulled
+    in automatically).  An explicit true value enables either the embedded T5
+    or a resolvable shared T5 asset.  Explicit false removes T5 from the mapped
+    state before component construction, so the runtime uses the validated
+    CLIP-L + CLIP-G zero-sequence path instead.
     """
     if getattr(plan, "sd3_contract", None) is None:
         return {}
@@ -184,7 +215,55 @@ def prepare_sd3_text_encoder_states(
         setattr(mapped, component_role, state)
         evidence["roles"][role] = selection.to_dict()
 
+    t5_component_role = "text_encoder_3"
+    embedded_t5 = bool(getattr(mapped, t5_component_role))
+    t5_enabled = _normalize_enabled(extras.get("sd3_t5_enabled"), default=embedded_t5)
+    t5_policy = _normalize_source(extras.get("sd3_t5_source"), "auto")
+    if not t5_enabled:
+        setattr(mapped, t5_component_role, {})
+        evidence["roles"]["t5xxl"] = {
+            "role": "t5xxl",
+            "source_kind": "disabled",
+            "source_path": "",
+            "source_layout": "disabled_by_request",
+            "expected_component_sha256": _snapshot_hash(plan, t5_component_role),
+            "matched_component_sha256": "",
+        }
+    else:
+        use_embedded_t5 = t5_policy == "embedded" or (t5_policy == "auto" and embedded_t5)
+        if use_embedded_t5:
+            if not embedded_t5:
+                raise ValueError(
+                    "SD3 T5 source is set to embedded, but this checkpoint does not contain text_encoder_3."
+                )
+            evidence["roles"]["t5xxl"] = SD3TextEncoderSourceSelection(
+                role="t5xxl",
+                source_kind="embedded",
+                source_path=str(getattr(getattr(plan, "report", None), "model_path", "") or ""),
+                source_layout="checkpoint",
+                expected_component_sha256=_snapshot_hash(plan, t5_component_role),
+                matched_component_sha256=_snapshot_hash(plan, t5_component_role),
+            ).to_dict()
+        else:
+            expected_hash = _snapshot_hash(plan, t5_component_role) if embedded_t5 else ""
+            selected_component_sha256 = (
+                t5_policy.split(":", 1)[1]
+                if t5_policy.startswith("component:")
+                else ""
+            )
+            state, selection = _load_external_state(
+                context=context,
+                role="t5xxl",
+                expected_component_sha256=expected_hash,
+                selected_component_sha256=selected_component_sha256,
+            )
+            setattr(mapped, t5_component_role, state)
+            evidence["roles"]["t5xxl"] = selection.to_dict()
+
+    evidence["t5_enabled"] = bool(t5_enabled)
+    evidence["t5_policy"] = t5_policy
     evidence["mode"] = "+".join(
         f"{role}:{payload['source_kind']}" for role, payload in evidence["roles"].items()
     )
     return evidence
+

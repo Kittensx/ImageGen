@@ -14,7 +14,7 @@ def encode_sse_event(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def build_jobs_router(*, jobs, catalog, component_selection, model_selection, prompt_configuration, upscaler_catalog, _preview_media_type, _webui_failure) -> APIRouter:
+def build_jobs_router(*, jobs, catalog, component_selection, model_selection, prompt_configuration, upscaler_catalog, generation_capabilities, _preview_media_type, _webui_failure) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/jobs")
@@ -126,6 +126,7 @@ def build_jobs_router(*, jobs, catalog, component_selection, model_selection, pr
                 )
                 authoritative_payload = dict(prepared_payload)
                 authoritative_payload["model_path"] = resolved_composition["base_source_path"]
+                authoritative_payload["advanced_model_family"] = resolved_composition["family"]
                 # Advanced Models owns the VAE choice. Do not apply the normal
                 # checkpoint-mode VAE override on top of the selected component.
                 authoritative_payload["vae_path"] = None
@@ -135,33 +136,12 @@ def build_jobs_router(*, jobs, catalog, component_selection, model_selection, pr
                     resolved_composition.get("digital_components_allowed", True)
                 )
                 authoritative_payload["text_encoder_3_device"] = resolved_composition["t5_device"]
-                selection_id = f"advanced-{resolved_composition['composition_short_hash']}"
+                selected_model_payload = generation_capabilities.model_context_for_advanced_composition(
+                    resolved_composition
+                )
+                selection_id = str(selected_model_payload["selection_id"])
                 authoritative_payload["_webui_model_selection_id"] = selection_id
                 authoritative_payload["_webui_model_requested_path"] = ""
-                selected_model_payload = {
-                    "selection_id": selection_id,
-                    "requested_path": "",
-                    "resolved_path": resolved_composition["base_source_path"],
-                    "model_name": f"Advanced {resolved_composition['family_label']} composition",
-                    "extension": Path(resolved_composition["base_source_path"]).suffix.lower(),
-                    "model_filename": "",
-                    "model_name_source": "advanced_component_composition",
-                    "size_bytes": 0,
-                    "modified_ns": 0,
-                    "selected_at": "",
-                    "source": "advanced_models",
-                    "status": "ready",
-                    "architecture": resolved_composition["family"],
-                    "architecture_variant": "",
-                    "prediction_type": "",
-                    "conditioning_dimension": None,
-                    "architecture_summary": f"Advanced component composition / {resolved_composition['family_label']}",
-                    "architecture_source": "component_registry",
-                    "checkpoint_kind": "component_composition",
-                    "architecture_contract": {},
-                    "runtime_profile": {},
-                    "advanced_model_composition": resolved_composition,
-                }
             else:
                 authoritative_payload, selected_model = model_selection.enforce(prepared_payload)
                 selected_model_payload = selected_model.to_dict()
@@ -176,6 +156,10 @@ def build_jobs_router(*, jobs, catalog, component_selection, model_selection, pr
                 status_code=409,
             ) from exc
         try:
+            authoritative_payload = generation_capabilities.enforce_request(
+                authoritative_payload,
+                active_model=selected_model_payload,
+            )
             authoritative_payload = upscaler_catalog.validate_request(authoritative_payload)
             job = await jobs.submit(
                 authoritative_payload,

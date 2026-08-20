@@ -178,6 +178,8 @@ class ResidencyMixin:
                 if components is not None and str(getattr(components, "model_identity", "") or "").startswith("advanced:")
                 else ""
             ),
+            "runtime_load_variant": dict(getattr(components, "runtime_load_variant", {}) or {}) if components is not None else {},
+            "runtime_load_variant_fingerprint": str(getattr(components, "runtime_load_variant_fingerprint", "") or "") if components is not None else "",
             "cache_entries": len(self._loaded_model_cache),
             "cpu_loaded": cpu_loaded,
             "gpu_loaded": gpu_loaded,

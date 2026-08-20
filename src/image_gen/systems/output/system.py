@@ -325,6 +325,8 @@ class OutputSystem:
         for field_name in (
             "sd3_runtime_profile_override",
             "sd3_text_encoder_source",
+            "sd3_t5_enabled",
+            "sd3_t5_source",
             "advanced_models_enabled",
             "advanced_model_family",
             "advanced_model_components",

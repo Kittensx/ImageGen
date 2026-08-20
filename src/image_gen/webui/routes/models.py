@@ -8,18 +8,28 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from image_gen.webui.model_selection import ModelSelectionUnavailableError
+from image_gen.webui.model_runtime import ModelRuntimeCommandSuperseded
 from image_gen.webui.routes.payloads import ModelActivationPayload
 
 
-def build_models_router(*, context, catalog, component_registry, component_selection, jobs, model_selection, _default_asset_payload, _webui_failure) -> APIRouter:
+def build_models_router(*, context, catalog, component_registry, component_selection, jobs, model_selection, generation_capabilities, _default_asset_payload, _webui_failure) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/models/active")
     async def active_model() -> dict[str, Any]:
         return {
             "active_model": model_selection.current_payload(),
+            "generation_capabilities": generation_capabilities.resolve_active(),
             "model_runtime": jobs.model_runtime_status(),
         }
+
+
+    @router.post("/api/generation/capabilities")
+    async def generation_capability_contract(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        # GFP-02 authority boundary: Advanced Models are resolved through the
+        # component registry inside GenerationCapabilityService. Browser family
+        # labels are never promoted directly into a capability architecture.
+        return generation_capabilities.resolve_request(dict(payload or {}))
 
 
     @router.get("/api/models/runtime-status")
@@ -240,6 +250,7 @@ def build_models_router(*, context, catalog, component_registry, component_selec
             "unloaded": True,
             "result": result,
             "active_model": None,
+            "generation_capabilities": generation_capabilities.resolve_for_model({}, request={}),
             "model_runtime": jobs.model_runtime_status(),
             "default_assets": _default_asset_payload(None),
         }
@@ -267,6 +278,11 @@ def build_models_router(*, context, catalog, component_registry, component_selec
                     "Wait for the active job to finish or cancel it before changing models."
                 ),
             )
+        # Checkpoint dropdown changes are user intent, not a FIFO load queue. If a
+        # previous activation is still hydrating a different checkpoint, supersede
+        # it so the newest selection does not wait behind an obsolete multi-GB load.
+        if not current_job_id:
+            await jobs.supersede_model_activation(requested_model_path)
         try:
             selected = model_selection.activate(payload.model_path)
         except ModelSelectionUnavailableError as exc:
@@ -284,6 +300,8 @@ def build_models_router(*, context, catalog, component_registry, component_selec
                 selected.resolved_path,
                 selection=selected.to_dict(),
             )
+        except ModelRuntimeCommandSuperseded as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (OSError, ValueError, RuntimeError) as exc:
             raise _webui_failure(
                 "model_gpu_activation",
@@ -298,6 +316,7 @@ def build_models_router(*, context, catalog, component_registry, component_selec
             ) from exc
         return {
             "active_model": selected.to_dict(),
+            "generation_capabilities": generation_capabilities.resolve_for_model(selected.to_dict(), request={"model_path": selected.resolved_path}),
             "model_runtime": jobs.model_runtime_status(),
             "default_assets": _default_asset_payload(selected.to_dict()),
             "activation": activation,

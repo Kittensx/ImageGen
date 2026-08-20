@@ -10,10 +10,11 @@ import {
 import { showOutput, upsertRecentOutput } from "./gallery.js?v=0.1.46";
 import { openOutputDetailsData } from "./output-details.js";
 import { preflightCurrentPrompt } from "./prompt-tools.js?v=r10.3";
-import { enforceCfgRescaleRequestGuardrails } from "./cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { resetGenerateControl, setGenerateControlState } from "../components/generation-control.js?v=0.1.0";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 import { setActionIcon } from "../components/action-icons.js?v=0.1.0";
+import { generationCapabilityBlocksSubmission, refreshGenerationCapabilities } from "./generation-capabilities.js";
+import { enforceCfgRescaleRequestGuardrails } from "./cfg-lab.js?v=0.1.47-lightning-recommendation";
 
 let refreshOutputs = async () => {};
 let collectValues = () => ({});
@@ -29,19 +30,10 @@ let eventStreamFailures = 0;
 let eventStreamDisabledUntil = 0;
 let workerState = {};
 
-function validateHiresUpscalerSelection(values = {}) {
-  if (!values.hires_enabled) return null;
-  const strategy = String(values.hires_strategy || "").trim().toLowerCase();
-  const upscalerId = String(values.hires_upscaler_id || values.hires_upscaler || "").trim();
-  if (strategy === "pixel_neural" && !upscalerId) {
-    return "Neural hires is enabled, but no supported upscaler is selected. Choose a neural upscaler or disable hires before generating.";
-  }
-  return null;
-}
-
 function setSubmissionBusy(active, phase = "submitting", stage = "") {
+  const capabilityBlocked = generationCapabilityBlocksSubmission();
   const button = $("#generateButton");
-  if (button) button.disabled = active;
+  if (button) button.disabled = active || capabilityBlocked;
   if (active) {
     setGenerateControlState({ phase, status: stage || "Queueing…", busy: true });
   } else {
@@ -49,7 +41,7 @@ function setSubmissionBusy(active, phase = "submitting", stage = "") {
   }
   ["#generateMenuButton", "#infinityButton"].forEach((selector) => {
     const control = $(selector);
-    if (control) control.disabled = active;
+    if (control) control.disabled = active || capabilityBlocked;
   });
 }
 
@@ -233,7 +225,10 @@ function monitoredJob() {
 function renderQueueSubsystemStatus() {
   const online = Boolean(workerState?.online);
   const queued = (state.jobs || []).filter((job) => job.status === "queued").length;
-  const active = (state.jobs || []).filter((job) => ACTIVE_JOB_STATUSES.has(String(job.status || ""))).length;
+  const active = (state.jobs || []).filter((job) => {
+    const status = String(job.status || "");
+    return ACTIVE_JOB_STATUSES.has(status) && status !== "paused";
+  }).length;
   const failed = (state.jobs || []).filter((job) => job.status === "failed").length;
   const paused = Boolean(workerState?.queue_pause_requested || workerState?.queue_paused);
   let status = "healthy";
@@ -998,8 +993,10 @@ async function pollJobs() {
 
 export async function acceptQueuedJob(job, { message = "Generation added to the queue." } = {}) {
   if (!job?.job_id) throw new Error("The server did not return a queued job identifier.");
-  state.activeJobId = job.job_id;
+  const previouslyMonitored = monitoredJob();
+  const shouldMonitorNewJob = !activeJob() && (!previouslyMonitored || isTerminalStatus(previouslyMonitored.status));
   upsertJob({ ...job, request: job.request || {}, status: job.status || "queued" });
+  if (shouldMonitorNewJob) state.activeJobId = job.job_id;
   renderQueue(state.jobs);
   renderLivePreviewJob(monitoredJob(), { forceLatest: true });
   connectEventStream(monitoredJob());
@@ -1012,12 +1009,7 @@ async function submit(unlimited) {
   submitInFlight = true;
   setSubmissionBusy(true, "validating", "Validating…");
   try {
-    const values = enforceCfgRescaleRequestGuardrails({ ...collectValues(), unlimited: Boolean(unlimited) });
-    const hiresUpscalerError = validateHiresUpscalerSelection(values);
-    if (hiresUpscalerError) {
-      $("#hiresUpscaler")?.focus();
-      throw new Error(hiresUpscalerError);
-    }
+    const values = { ...collectValues(), unlimited: Boolean(unlimited) };
     setSubmissionBusy(true, "validating_prompt", "Validating prompt…");
     const promptPreflight = await preflightCurrentPrompt(values);
     const promptErrors = promptPreflight.blocking_errors || [];
@@ -1053,18 +1045,25 @@ async function submit(unlimited) {
         ? (state.activeModel.selection_id || values._webui_model_selection_id || "")
         : "";
     }
+    setSubmissionBusy(true, "resolving_capabilities", "Resolving capabilities…");
+    await refreshGenerationCapabilities();
+    if (generationCapabilityBlocksSubmission()) {
+      const reason = state.generationCapabilityBlockingReasons?.[0]?.message || "Generation settings require attention before queueing.";
+      throw new Error(reason);
+    }
+    const guardedValues = enforceCfgRescaleRequestGuardrails({ ...values, ...collectValues() });
     setSubmissionBusy(true, "queueing", "Queueing…");
-    const job = await api.submitJob(values);
-    const modelWillActivateOnWorker = values.advanced_models_enabled || !state.activeModel || state.activeModel.resolved_path !== values.model_path;
+    const job = await api.submitJob(guardedValues);
+    const modelWillActivateOnWorker = guardedValues.advanced_models_enabled || !state.activeModel || state.activeModel.resolved_path !== guardedValues.model_path;
     const message = unlimited
       ? "Generate forever started."
-      : values.advanced_models_enabled
+      : guardedValues.advanced_models_enabled
         ? "Generation added to the queue. The worker will assemble the selected component composition."
         : modelWillActivateOnWorker
           ? "Generation added to the queue. The worker will activate the selected checkpoint and then load it for the run."
           : "Generation added to the queue.";
     await acceptQueuedJob(
-      { ...job, request: job.request || values },
+      { ...job, request: job.request || guardedValues },
       { message },
     );
     scheduleRecentOutputsPolling();

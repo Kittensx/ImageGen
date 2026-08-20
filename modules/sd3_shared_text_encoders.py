@@ -60,6 +60,30 @@ class SharedTextEncoderResolution:
         }
 
 
+@dataclass(frozen=True)
+class SharedTextEncoderSourceOption:
+    role: str
+    source_key: str
+    label: str
+    source_kind: str
+    source_path: str
+    source_layout: str
+    component_sha256: str = ""
+    asset_sha256: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "role": self.role,
+            "value": self.source_key,
+            "label": self.label,
+            "source_kind": self.source_kind,
+            "source_path": self.source_path,
+            "source_layout": self.source_layout,
+            "component_sha256": self.component_sha256,
+            "asset_sha256": self.asset_sha256,
+        }
+
+
 def normalize_text_encoder_role(role: str) -> str:
     key = str(role or "").strip().lower()
     return ROLE_ALIASES.get(key, key)
@@ -273,6 +297,113 @@ def _resolve_registered_hash_relocation(
         path, digest = next(iter(unique_paths.values()))
         return path, digest, tuple(checked)
     return None, None, tuple(checked)
+
+
+def available_shared_text_encoder_sources(
+    context: ProjectContext,
+    role: str,
+) -> tuple[SharedTextEncoderSourceOption, ...]:
+    """Return qualified standalone sources that can be explicitly selected.
+
+    The option key is content-based (``component:<sha256>``) whenever the asset
+    registry has component identity. This keeps UI persistence and resident-model
+    identity independent of filenames or folder moves. A unique legacy/canonical
+    file that is not yet component-registered is exposed as ``external`` so the
+    existing resolver can register it on first use.
+    """
+
+    key = normalize_text_encoder_role(role)
+    component_role = text_encoder_component_role(key)
+    options: list[SharedTextEncoderSourceOption] = []
+    seen_keys: set[str] = set()
+    seen_paths: set[str] = set()
+
+    registry = _registry_for_context(context)
+    if registry is not None:
+        try:
+            snapshots = registry.list_component_snapshots(limit=1000000)
+        except (OSError, ValueError, RuntimeError):
+            snapshots = []
+        for snapshot in snapshots:
+            if str(getattr(snapshot, "component_role", "") or "") != component_role:
+                continue
+            digest = str(getattr(snapshot, "component_sha256", "") or "").strip().lower()
+            if not digest:
+                continue
+            source_key = f"component:{digest}"
+            if source_key in seen_keys:
+                continue
+            try:
+                resolution = resolve_shared_text_encoder(
+                    context,
+                    key,
+                    expected_component_sha256=digest,
+                )
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if resolution.selected is None:
+                continue
+            path = Path(resolution.selected).resolve()
+            if not _file_ready(path):
+                continue
+            asset = registry.get_asset_by_path(str(path))
+            if asset is None:
+                continue
+            managed_category = str(asset.managed_category or "").strip().casefold()
+            asset_type = str(asset.asset_type or "").strip().casefold()
+            try:
+                in_text_encoder_root = path.is_relative_to(text_encoder_root(context))
+            except AttributeError:
+                try:
+                    path.relative_to(text_encoder_root(context))
+                    in_text_encoder_root = True
+                except ValueError:
+                    in_text_encoder_root = False
+            if not (in_text_encoder_root or managed_category == "textencoders" or asset_type == "text_encoder"):
+                continue
+            seen_keys.add(source_key)
+            seen_paths.add(str(path).casefold())
+            label = str(asset.filename or path.name or f"T5 {digest[:12]}")
+            options.append(
+                SharedTextEncoderSourceOption(
+                    role=key,
+                    source_key=source_key,
+                    label=label,
+                    source_kind="external",
+                    source_path=str(path),
+                    source_layout=str(resolution.source_layout or "asset_registry"),
+                    component_sha256=digest,
+                    asset_sha256=str(asset.sha256 or resolution.registered_sha256 or "").strip().lower(),
+                )
+            )
+
+    try:
+        fallback = resolve_shared_text_encoder(context, key)
+    except (OSError, ValueError, RuntimeError):
+        fallback = None
+    if fallback is not None and fallback.selected is not None:
+        path = Path(fallback.selected).resolve()
+        path_key = str(path).casefold()
+        if path_key not in seen_paths:
+            options.append(
+                SharedTextEncoderSourceOption(
+                    role=key,
+                    source_key="external",
+                    label=path.name,
+                    source_kind="external",
+                    source_path=str(path),
+                    source_layout=str(fallback.source_layout or "filesystem"),
+                    component_sha256=str(fallback.matched_component_sha256 or "").strip().lower(),
+                    asset_sha256=str(fallback.registered_sha256 or "").strip().lower(),
+                )
+            )
+
+    return tuple(
+        sorted(
+            options,
+            key=lambda item: (item.label.casefold(), item.component_sha256, item.source_path.casefold()),
+        )
+    )
 
 
 def register_shared_text_encoder_asset(

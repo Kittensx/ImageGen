@@ -28,6 +28,12 @@ _PREBOOTSTRAP_RUNTIME_STARTUP_OPTIONS = prebootstrap_runtime_startup(sys.argv[1:
 import torch
 
 from image_gen.runtime.scheduler_settings import normalize_scheduler_payload
+from image_gen.runtime.model_load_variant import (
+    MODEL_LOAD_VARIANT_FIELDS,
+    model_load_variant_matches_resident,
+    sanitize_model_load_runtime_settings,
+    update_model_load_runtime_settings,
+)
 from image_gen.systems.registry import RuntimeRegistrySystem
 from modules.project_context import ProjectContext
 from modules.txt2img.async_output_pipeline import AsyncOutputSaveQueue, OutputSaveTicket
@@ -258,7 +264,8 @@ class ResidentTxt2ImgModelRuntime:
         if not torch.cuda.is_available():
             extras["model_runtime_execution_device"] = "cpu"
             extras["model_runtime_retention_device"] = "cpu"
-        self.runtime_settings.update(extras)
+        extras = sanitize_model_load_runtime_settings(extras)
+        update_model_load_runtime_settings(self.runtime_settings, extras)
         runner = self._ensure_runner()
         current = runner.resident_model_status()
         current_path = str(current.get("model_path") or "")
@@ -267,14 +274,16 @@ class ResidentTxt2ImgModelRuntime:
         requested_composition = str(extras.get("advanced_model_composition_sha256") or "")
         current_composition = str(current.get("composition_sha256") or "")
         composition_matches = requested_composition == current_composition
+        load_variant_matches = model_load_variant_matches_resident(extras, current)
         extras["model_runtime_event_callback"] = self._runner_event
         reused_resident_model = bool(
             current.get("resident")
             and current_path
             and current_resolved == requested_path
             and composition_matches
+            and load_variant_matches
         )
-        if current_path and (current_resolved != requested_path or not composition_matches):
+        if current_path and (current_resolved != requested_path or not composition_matches or not load_variant_matches):
             self.emit_status(
                 "unloading",
                 action="automatic_model_swap",
@@ -336,7 +345,7 @@ class ResidentTxt2ImgModelRuntime:
         )
         payload, _resolution = normalize_scheduler_payload(payload)
         request, payload_extras = payload_to_generation_request(payload)
-        return request, payload_extras
+        return request, sanitize_model_load_runtime_settings(payload_extras)
 
     def run_job(self, command: dict[str, Any]) -> dict[str, Any]:
         job_id = str(command.get("job_id") or uuid.uuid4().hex[:12])
@@ -358,21 +367,24 @@ class ResidentTxt2ImgModelRuntime:
             and os.path.normcase(str(Path(str(resident_before.get("model_path"))).resolve()))
             == os.path.normcase(str(Path(str(self.selected_model_path)).resolve()))
             and requested_composition == current_composition
+            and model_load_variant_matches_resident(payload_extras, resident_before)
         )
         if not resident_reuse_candidate and self.selected_model_path:
             activation_settings = dict(self.runtime_settings)
-            for key in (
+            activation_keys = (
                 "_advanced_model_resolved",
                 "advanced_models_enabled",
                 "advanced_model_family",
                 "advanced_model_components",
                 "advanced_model_allow_digital_components",
-                "advanced_model_composition_sha256",
                 "advanced_model_t5_device",
                 "text_encoder_3_device",
-            ):
+                *MODEL_LOAD_VARIANT_FIELDS,
+            )
+            for key in activation_keys:
                 if key in payload_extras:
                     activation_settings[key] = payload_extras[key]
+            activation_settings = sanitize_model_load_runtime_settings(activation_settings)
             self.activate({
                 "model_path": self.selected_model_path,
                 "runtime_settings": activation_settings,

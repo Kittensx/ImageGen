@@ -220,6 +220,30 @@ class PluginRegistry:
         }
 
         sampler_token = normalize_identity(sampler_caps.sampler_name).replace(" ", "_")
+        scheduler_token = normalize_identity(scheduler_descriptor.name).replace(" ", "_")
+
+        compatible_samplers = {
+            normalize_identity(value).replace(" ", "_")
+            for value in scheduler_caps.get("compatible_samplers", []) or []
+            if normalize_identity(value)
+        }
+        if compatible_samplers and sampler_token not in compatible_samplers:
+            reasons.append(
+                f"scheduler {scheduler_descriptor.name} requires one of the declared compatible samplers: "
+                + ", ".join(sorted(compatible_samplers))
+            )
+
+        compatible_schedulers = {
+            normalize_identity(value).replace(" ", "_")
+            for value in sampler_descriptor.capabilities.get("compatible_schedulers", []) or []
+            if normalize_identity(value)
+        }
+        if compatible_schedulers and scheduler_token not in compatible_schedulers:
+            reasons.append(
+                f"sampler {sampler_descriptor.name} requires one of the declared compatible schedulers: "
+                + ", ".join(sorted(compatible_schedulers))
+            )
+
         is_kes_sampler = sampler_token in {
             "kes",
             "kes_sampler",

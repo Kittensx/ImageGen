@@ -17,6 +17,26 @@
       </div>
       <small id="modelLoadStatus" class="field-status">Waiting for backend model activation…</small>
       <small id="modelArchitectureStatus" class="field-status subtle">Architecture: waiting for activation.</small>
+      <small id="generationCapabilityStatus" class="field-status subtle visually-hidden">Capability contract: waiting for model binding.</small>
+      <div class="field-block model-t5-control" id="modelT5Control" hidden>
+        <label class="checkbox-row">
+          <input type="checkbox" id="sd3T5Enabled" name="sd3_t5_enabled" aria-describedby="sd3T5Status">
+          <span>Enable T5 / T5XXL conditioning</span>
+        </label>
+        <label class="field-block" id="sd3T5SourceBlock">
+          <span>T5 model</span>
+          <select id="sd3T5Source" name="sd3_t5_source" aria-label="T5 model" aria-describedby="sd3T5Status"></select>
+        </label>
+        <label class="field-block" id="sd3T5DeviceBlock" hidden>
+          <span>T5 device</span>
+          <select id="sd3T5Device" name="text_encoder_3_device" aria-label="T5 execution device" aria-describedby="sd3T5Status">
+            <option value="auto">Auto — follow active memory profile</option>
+            <option value="cpu">CPU — qualified low-VRAM path</option>
+            <option value="cuda">CUDA — explicit high-VRAM path</option>
+          </select>
+        </label>
+        <small id="sd3T5Status" class="field-status subtle">T5 availability follows the active model capability contract.</small>
+      </div>
     </div>
 
     <div class="field-block advanced-models-block">
@@ -320,7 +340,7 @@
           </label>
           <label class="field-block">
             <span>Upscaler</span>
-            <select id="hiresUpscaler" name="hires_upscaler">
+            <select id="hiresUpscaler" name="hires_upscaler" aria-describedby="hiresUpscalerStatus">
               <option value="" selected disabled>Refresh to discover supported .pth upscalers</option>
             </select>
           </label>
@@ -417,7 +437,8 @@
           </label>
           <label class="field-block">
             <span>Hires CFG rescale</span>
-            <input id="hiresCfgRescale" name="hires_cfg_rescale" type="number" min="0" max="1" step="0.01" placeholder="Inherit base rescale">
+            <input id="hiresCfgRescale" name="hires_cfg_rescale" type="number" min="0" max="1" step="0.01" placeholder="Inherit base rescale" aria-describedby="hiresCfgRescaleStatus">
+            <small id="hiresCfgRescaleStatus" class="field-status subtle">Inherits base CFG rescale when left blank.</small>
           </label>
         </div>
         <small id="hiresPairStatus" class="field-status subtle">The second pass inherits the base sampler, scheduler, and CFG settings.</small>
@@ -698,16 +719,16 @@
       </div>
       <div class="sdxl-recommendation-options">
         <label class="checkbox-row">
-          <input id="sdxlEnforceRecommendedSteps" name="sdxl_enforce_recommended_steps" type="checkbox" checked>
-          <span id="sdxlRecommendedStepsLabel">Use recommended steps</span>
+          <input id="sdxlEnforceRecommendedSteps" name="sdxl_enforce_recommended_steps" type="checkbox">
+          <span id="sdxlRecommendedStepsLabel">Auto-use recommended steps</span>
         </label>
         <label class="checkbox-row">
-          <input id="sdxlEnforceRecommendedCfg" name="sdxl_enforce_recommended_cfg" type="checkbox" checked>
-          <span id="sdxlRecommendedCfgLabel">Use recommended CFG</span>
+          <input id="sdxlEnforceRecommendedCfg" name="sdxl_enforce_recommended_cfg" type="checkbox">
+          <span id="sdxlRecommendedCfgLabel">Auto-use recommended CFG</span>
         </label>
       </div>
       <small class="field-status subtle">
-        Fields always remain editable. When a recommendation is checked, that recommended value is used for generation; if the visible field differs, IMAGE_GEN warns instead of failing. Uncheck the recommendation to make your custom field value authoritative. When a model profile recommends a CFG Lab preset, enabling its CFG recommendation also selects that preset on activation.
+        Manual Steps and CFG are authoritative by default. Enable an Auto-use recommendation only when you want IMAGE_GEN to substitute the model profile recommendation for generation; if the visible field differs, IMAGE_GEN warns instead of failing. When a model profile recommends a CFG Lab preset, enabling its CFG recommendation also selects that preset on activation.
       </small>
       <div id="sdxlRecommendedSamplerScheduler" class="field-status subtle">
         Recommended sampler/scheduler will appear when a model profile provides them.
@@ -782,8 +803,8 @@
 
           <label class="field-block cfg-range-field">
             <span>Canonical CFG rescale</span>
-            <span class="cfg-range-control"><input id="cfgRescaleRange" type="range" min="0" max="1" step="0.01" value="0"><input id="cfgRescaleNumber" name="cfg_rescale" type="number" min="0" max="1" step="0.01" value="0"></span>
-            <small>Blends guided-output variance toward the conditional branch. This remains the canonical shared CFG rescale path.</small>
+            <span class="cfg-range-control"><input id="cfgRescaleRange" type="range" min="0" max="1" step="0.01" value="0" aria-describedby="cfgRescaleStatus"><input id="cfgRescaleNumber" name="cfg_rescale" type="number" min="0" max="1" step="0.01" value="0" aria-describedby="cfgRescaleStatus"></span>
+            <small id="cfgRescaleStatus" class="field-status subtle">Blends guided-output variance toward the conditional branch. This remains the canonical shared CFG rescale path.</small>
           </label>
           <label class="field-block cfg-range-field cfg-kes-only">
             <span>Curve strength</span>
@@ -865,18 +886,20 @@
     <label class="field-block plugin-field">
       <span>Sampler</span>
       <span class="input-action-row">
-        <select id="samplerName" name="sampler_name"></select>
+        <select id="samplerName" name="sampler_name" aria-describedby="samplerCapabilityStatus"></select>
         <button class="ui-action-button ui-icon-control" id="samplerSettingsButton" type="button" aria-label="Sampler settings" title="Sampler settings"><span class="ui-icon" data-icon="settings" aria-hidden="true"></span></button>
       </span>
     </label>
+    <small id="samplerCapabilityStatus" class="field-status subtle">Sampler compatibility will resolve after model binding.</small>
 
     <label class="field-block plugin-field">
       <span>Scheduler</span>
       <span class="input-action-row">
-        <select id="schedulerName" name="scheduler_name"></select>
+        <select id="schedulerName" name="scheduler_name" aria-describedby="schedulerCapabilityStatus"></select>
         <button class="ui-action-button ui-icon-control" id="schedulerSettingsButton" type="button" aria-label="Scheduler settings" title="Scheduler settings"><span class="ui-icon" data-icon="settings" aria-hidden="true"></span></button>
       </span>
     </label>
+    <small id="schedulerCapabilityStatus" class="field-status subtle">Scheduler compatibility will resolve after model binding.</small>
 
     <label class="field-block">
       <span>Generation Profile</span>
@@ -938,12 +961,20 @@
       <button class="primary-button split-arrow ui-icon-control" id="generateMenuButton" type="button" aria-label="Generation options" title="Generation options"><span class="ui-icon" data-icon="chevron-down" aria-hidden="true"></span></button>
       <button class="infinity-button ui-icon-control" id="infinityButton" type="button"><span class="ui-icon" data-icon="infinity" aria-hidden="true"></span><span id="infinityButtonLabel">Generate Forever</span></button>
     </div>
+    <div class="queue-master-control-row">
+      <button class="secondary-button queue-master-control-button ui-icon-control" id="pauseGenerationButton" type="button" aria-label="Pause queue" title="Pause queue">
+        <span class="ui-icon" data-icon="pause" aria-hidden="true"></span>
+        <span class="queue-master-control-copy">
+          <strong id="queueMasterButtonLabel">Pause Queue</strong>
+          <span id="queueMasterButtonStatus">Pause queued work safely after the current image.</span>
+        </span>
+      </button>
+    </div>
     <div class="region-builder-launch-row">
       <button class="secondary-button" id="openRegionBuilderButton" type="button">Open REGION Builder</button>
       <small class="field-status subtle">Parser-independent REGION addon for the active positive prompt target.</small>
     </div>
     <div class="generation-interrupt-row">
-      <button class="ui-action-button ui-icon-control is-hidden" id="pauseGenerationButton" type="button" aria-label="Pause after current image" title="Pause after current image"><span class="ui-icon" data-icon="pause" aria-hidden="true"></span></button>
       <button class="ui-action-button ui-icon-control is-hidden" id="skipGenerationButton" type="button" aria-label="Skip current image" title="Skip current image"><span class="ui-icon" data-icon="skip-next" aria-hidden="true"></span></button>
     </div>
     <div class="cancel-generation-group is-hidden" id="cancelGenerationGroup">

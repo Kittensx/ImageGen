@@ -22,6 +22,12 @@ class ModelRuntimeUnavailable(RuntimeError):
     pass
 
 
+class ModelRuntimeCommandSuperseded(ModelRuntimeUnavailable):
+    """Raised when a newer user selection intentionally replaces an in-flight activation."""
+
+    pass
+
+
 def _process_exit_record(code: int) -> dict[str, Any]:
     value = int(code)
     unsigned = value & 0xFFFFFFFF
@@ -55,7 +61,11 @@ class ResidentModelRuntimeClient:
         self._command_lock = asyncio.Lock()
         self._start_lock = asyncio.Lock()
         self._current_command_id: str | None = None
+        self._current_command_name: str | None = None
+        self._current_command_model_path: str | None = None
         self._current_job_id: str | None = None
+        self._superseded_command_id: str | None = None
+        self._supersede_reason: str | None = None
         self._status: dict[str, Any] = {
             "schema_version": 1,
             "online": False,
@@ -107,6 +117,8 @@ class ResidentModelRuntimeClient:
             "started_at_unix": self._started_at_unix,
             "restart_count": self._restart_count,
             "current_command_id": self._current_command_id,
+            "current_command_name": self._current_command_name,
+            "current_command_model_path": self._current_command_model_path,
             "current_job_id": self._current_job_id or self._status.get("current_job_id"),
         }
 
@@ -227,6 +239,8 @@ class ResidentModelRuntimeClient:
             command_id = str(command.get("command_id") or uuid.uuid4().hex)
             payload = {**command, "command_id": command_id}
             self._current_command_id = command_id
+            self._current_command_name = str(payload.get("command") or "").strip().lower() or None
+            self._current_command_model_path = str(payload.get("model_path") or "").strip() or None
             self._current_job_id = str(payload.get("job_id") or "") or None
             try:
                 process.stdin.write(
@@ -242,6 +256,11 @@ class ResidentModelRuntimeClient:
                     raw = await self._read_stdout_line(process)
                     if not raw:
                         code = await process.wait()
+                        if command_id == self._superseded_command_id:
+                            reason = self._supersede_reason or "Model activation was superseded by a newer checkpoint selection."
+                            await self._mark_dead(None, stage="superseded")
+                            self._status["last_cancellation"] = reason
+                            raise ModelRuntimeCommandSuperseded(reason)
                         if self._cancel_requested or self._status.get("stage") == "recovering":
                             reason = self._cancel_reason or str(
                                 self._status.get("last_cancellation") or "Model-runtime operation was cancelled."
@@ -286,14 +305,58 @@ class ResidentModelRuntimeClient:
                 )
             finally:
                 self._current_command_id = None
+                self._current_command_name = None
+                self._current_command_model_path = None
                 self._current_job_id = None
                 # A completed/cancelled command cannot continue owning the resident
                 # checkpoint. Clear the cached worker field too so status() never
                 # revives a stale job id after the private field is released.
                 self._status["current_job_id"] = None
+                if self._superseded_command_id == command_id:
+                    self._superseded_command_id = None
+                    self._supersede_reason = None
                 if not self._cancel_requested:
                     self._cancel_reason = None
             return completion
+
+    async def supersede_activation(self, requested_model_path: str) -> bool:
+        """Cancel an obsolete in-flight model activation when the user selects a different checkpoint.
+
+        The resident runtime is intentionally single-command. Without this escape hatch,
+        rapid checkpoint changes queue behind a large checkpoint load and make the newer
+        selection appear hung. Running generation commands are never superseded here.
+        """
+        if self._current_command_name != "activate" or not self._current_command_id:
+            return False
+        current_target = str(self._current_command_model_path or "").strip()
+        requested_target = str(requested_model_path or "").strip()
+        if not requested_target:
+            return False
+
+        def _identity(value: str) -> str:
+            try:
+                return os.path.normcase(str(Path(value).expanduser().resolve(strict=False)))
+            except OSError:
+                return os.path.normcase(value)
+
+        if current_target and _identity(current_target) == _identity(requested_target):
+            return False
+
+        command_id = self._current_command_id
+        reason = "Model activation superseded by a newer checkpoint selection."
+        self._superseded_command_id = command_id
+        self._supersede_reason = reason
+        process = self.process
+        if process is not None and process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        await self._mark_dead(None, stage="superseded")
+        self._status["last_cancellation"] = reason
+        return True
 
     async def activate(
         self,
@@ -379,6 +442,8 @@ class ResidentModelRuntimeClient:
         self.process = None
         self._stdout_buffer.clear()
         self._current_command_id = None
+        self._current_command_name = None
+        self._current_command_model_path = None
         self._current_job_id = None
         self._status.update(
             {
@@ -394,4 +459,4 @@ class ResidentModelRuntimeClient:
         )
 
 
-__all__ = ["ResidentModelRuntimeClient", "ModelRuntimeUnavailable"]
+__all__ = ["ResidentModelRuntimeClient", "ModelRuntimeUnavailable", "ModelRuntimeCommandSuperseded"]

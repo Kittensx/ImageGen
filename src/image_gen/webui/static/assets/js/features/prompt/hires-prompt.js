@@ -2,6 +2,7 @@ import { api } from "../../api.js";
 import { state } from "../../state.js";
 import { $, normalizeClampedNumberInput } from "../../utils.js";
 import { clampHiresDimension, normalizeHiresSizeMode, planHiresDimensions } from "../../components/hires-dimensions.js?v=0.1.79";
+import { generationSpatialRequirements } from "../generation-capabilities.js";
 import { updateHiresUpscalerPlanUI } from "../hires-upscalers.js?v=0.1.79";
 import { saveSessionSoon } from "./runtime.js";
 import { compatibleProfiles, currentParserId, defaultProfileId, option, profileById, profileSnapshot, safeParseJson } from "./shared.js";
@@ -255,6 +256,7 @@ export function updateHiresSizeControls({ source = "" } = {}) {
   widthField?.classList.toggle("is-calculated", enabled && mode === "scale_from_base");
   heightField?.classList.toggle("is-calculated", enabled && mode === "scale_from_base");
 
+  const spatial = generationSpatialRequirements();
   const plan = planHiresDimensions({
     baseWidth: $("#width")?.value,
     baseHeight: $("#height")?.value,
@@ -262,6 +264,8 @@ export function updateHiresSizeControls({ source = "" } = {}) {
     scale: scaleInput?.value || 1.5,
     targetWidth: widthInput?.value,
     targetHeight: heightInput?.value,
+    dimensionMultiple: spatial.pixelAlignmentMultiple,
+    baseDimensionMultiple: spatial.latentScaleFactor,
     enabled,
   });
 

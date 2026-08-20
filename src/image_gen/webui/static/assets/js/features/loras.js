@@ -247,17 +247,25 @@ function setPreview(image, fallback, model) {
   fallback.classList.remove("is-hidden");
   fallback.textContent = String(model?.name || "LORA").slice(0, 4).toUpperCase();
   if (!url) return;
-  image.onload = () => {
+
+  // Card images stay hidden until ready. A native lazy <img> that is display:none
+  // may never start loading, so probe eagerly and only reveal the real element
+  // after the browser has the preview in cache.
+  const probe = new Image();
+  probe.decoding = "async";
+  probe.onload = () => {
     if (image.dataset.previewRequest !== requestToken) return;
+    image.src = url;
     image.classList.add("has-image");
     fallback.classList.add("is-hidden");
   };
-  image.onerror = () => {
+  probe.onerror = () => {
     if (image.dataset.previewRequest !== requestToken) return;
     image.classList.remove("has-image");
+    image.removeAttribute("src");
     fallback.classList.remove("is-hidden");
   };
-  image.src = url;
+  probe.src = url;
 }
 
 async function copyText(value, label = "Text") {
@@ -396,6 +404,7 @@ export function bindLoraWorkspace({ defaultAssetsController, showGenerationWorks
   let activeFilter = "all";
   let sortMode = "recent";
   let detailsRequestSerial = 0;
+  let emptyCatalogRecovery = null;
 
   const workspace = $("#loraWorkspace");
   const detailsPanel = $(".lora-details-panel");
@@ -1048,6 +1057,33 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
       const scanSuffix = scan ? ` ${scan.scanned || 0} scanned, ${Math.max(0, loraScanSummary(loras).unknown)} unidentified remaining.` : "";
       notify(`LoRA library refreshed: ${loras.length} installed LoRA(s).${scanSuffix}`);
     }
+    return payload;
+  };
+
+  const recoverEmptyCatalog = async () => {
+    if (loras.length) return;
+    if (emptyCatalogRecovery) return emptyCatalogRecovery;
+    emptyCatalogRecovery = (async () => {
+      // First re-read the backend snapshot in case the WebUI state was cleared by
+      // a stale/racing catalog event. If the backend is empty too, do one bounded
+      // filesystem refresh so an installed LoRA library repairs itself on open.
+      let payload = await api.loraAssets();
+      applyCatalogPayload(payload);
+      if (!loras.length) payload = await refreshCatalog({ announce: false });
+      else {
+        renderCards({ resetWindow: true });
+        renderDefaults();
+        renderActive();
+        broadcastCatalogRefresh();
+      }
+      return payload;
+    })().catch((error) => {
+      console.warn("Unable to recover empty LoRA catalog", error);
+      return null;
+    }).finally(() => {
+      emptyCatalogRecovery = null;
+    });
+    return emptyCatalogRecovery;
   };
 
   const runCompatibilityScan = async (mode = "missing") => {
@@ -1375,6 +1411,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     renderActive();
     renderCards();
     renderScanSummary(loras);
+    if (!loras.length) void recoverEmptyCatalog();
   };
 
   renderPromptIntegration();

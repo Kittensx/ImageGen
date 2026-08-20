@@ -38,7 +38,7 @@ Scheduler:  flow_match_euler
 
 These are recommendations, not locks.
 
-The WebUI keeps Steps and CFG editable. With **Use recommended steps** or **Use recommended CFG** checked, the corresponding profile value is used for generation. Clear either checkbox to make the value you entered authoritative.
+The WebUI keeps Steps and CFG editable. Manual Steps and CFG are authoritative by default. Enable **Auto-use recommended steps** or **Auto-use recommended CFG** only when you want the model profile recommendation substituted for generation.
 
 Sampler and scheduler recommendations are advisory only. IMAGE_GEN displays the recommended pair and may warn when your current selection differs, but the model profile does not replace or reject your choice.
 

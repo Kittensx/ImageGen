@@ -52,6 +52,10 @@ class ActiveModelSelection:
     architecture_summary: str = ""
     architecture_source: str = ""
     checkpoint_kind: str = ""
+    has_text_encoder_3: bool = False
+    has_t5: bool = False
+    text_encoder_packaging: str = ""
+    checkpoint_packaging: str = ""
     architecture_contract: dict[str, Any] | None = None
     runtime_profile: dict[str, Any] | None = None
 
@@ -76,6 +80,10 @@ class ActiveModelSelection:
             "architecture_summary": self.architecture_summary,
             "architecture_source": self.architecture_source,
             "checkpoint_kind": self.checkpoint_kind,
+            "has_text_encoder_3": bool(self.has_text_encoder_3),
+            "has_t5": bool(self.has_t5),
+            "text_encoder_packaging": self.text_encoder_packaging,
+            "checkpoint_packaging": self.checkpoint_packaging,
             "architecture_contract": dict(self.architecture_contract or {}),
             "runtime_profile": dict(self.runtime_profile or {}),
         }
@@ -192,6 +200,10 @@ class WebUIModelSelectionState:
                     "architecture_summary": report.architecture_summary,
                     "architecture_source": report.architecture_source or report.prediction_type_source,
                     "checkpoint_kind": report.checkpoint_kind,
+                    "has_text_encoder_3": bool(getattr(report, "has_text_encoder_3", False)),
+                    "has_t5": bool(getattr(report, "has_t5", False)),
+                    "text_encoder_packaging": str(getattr(report, "text_encoder_packaging", "") or ""),
+                    "checkpoint_packaging": str(getattr(report, "checkpoint_packaging", "") or ""),
                     "architecture_contract": contract,
                     "model_name": str(getattr(report, "model_name", path.stem) or path.stem),
                     "model_name_source": str(getattr(report, "model_name_source", "filename") or "filename"),
@@ -244,6 +256,10 @@ class WebUIModelSelectionState:
             architecture_summary=str(inspection.get("architecture_summary") or ""),
             architecture_source=str(inspection.get("architecture_source") or ""),
             checkpoint_kind=str(inspection.get("checkpoint_kind") or ""),
+            has_text_encoder_3=bool(inspection.get("has_text_encoder_3")),
+            has_t5=bool(inspection.get("has_t5")),
+            text_encoder_packaging=str(inspection.get("text_encoder_packaging") or ""),
+            checkpoint_packaging=str(inspection.get("checkpoint_packaging") or ""),
             architecture_contract=dict(inspection.get("architecture_contract") or {}),
             runtime_profile=runtime_profile,
         )
@@ -258,7 +274,15 @@ class WebUIModelSelectionState:
                     "Stable Diffusion XL normal generation is not enabled in this IMAGE_GEN build. "
                     f"{capability.reason}"
                 )
-            # Runtime profiles describe/recommend settings; they do not authorize generation.
+            runtime_profile = dict(selection.runtime_profile or {})
+            if runtime_profile and not bool(runtime_profile.get("generation_qualified", True)):
+                raise ModelSelectionUnavailableError(
+                    str(runtime_profile.get("qualification_note") or "").strip()
+                    or "The selected SDXL runtime profile is recognized but is not enabled for normal txt2img execution."
+                )
+            # Runtime profiles describe/recommend settings for generation-qualified
+            # profiles; profile qualification can still declare a distinct runtime
+            # stage (such as Refiner) unavailable to normal txt2img.
         if architecture == "sd3.x":
             capability = capability_for("sd3.x")
             if not capability.generation_supported:

@@ -245,6 +245,49 @@ class LoRACatalogMixin:
             "scan_migration_pending": migration_pending,
         }
 
+
+    @staticmethod
+    def _restricted_lora_technical(path: Path, *, extension: str, a1111_hash_error: str = "") -> dict[str, Any]:
+        message = "Technical tensor inspection is intentionally restricted for pickle-bearing legacy adapter formats (.pt/.ckpt/.bin/.pth)."
+        adapter_format = "inspection_restricted"
+        inspection_record = AdapterInspectionRecord(
+            source_path=str(path),
+            file_signature={
+                "path": str(path),
+                "size_bytes": int(path.stat().st_size) if path.exists() else 0,
+                "modified_ns": int(path.stat().st_mtime_ns) if path.exists() else 0,
+            },
+            adapter_format=adapter_format,
+            adapter_format_evidence=(f"restricted_extension:{extension}",),
+            inspection_errors=(message,),
+        )
+        return {
+            "sha256": "",
+            "a1111_hash": "",
+            "a1111_short_hash": "",
+            "a1111_hash_source": "",
+            "a1111_hash_error": a1111_hash_error,
+            "network_type": "Unknown",
+            "tensor_key_format": "Restricted",
+            "tensor_key_count": 0,
+            "safetensors_metadata": {},
+            "detected_model_family": "",
+            "activation_text": "",
+            "activation_text_source": "",
+            "network_dimension": None,
+            "network_alpha": None,
+            "adapter_format": adapter_format,
+            "adapter_extensions": [],
+            "target_scopes": [],
+            "target_counts": {},
+            "runtime_support_state": "restricted",
+            "runtime_loadable": False,
+            "support_reason": message,
+            "loader_id": "",
+            "adapter_inspection": inspection_record.to_dict(),
+            "inspection_error": message,
+        }
+
     def _inspect_lora_record(self, record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         path = Path(record["path"]).resolve()
         metadata = load_asset_metadata(path)
@@ -331,7 +374,8 @@ class LoRACatalogMixin:
                 }
                 scan_status = "error"
         else:
-            scan_status = "unsupported"
+            scan_status = "restricted"
+            a1111_hash_error = ""
             try:
                 compatibility_hash = compute_lora_compatibility_hash(path)
             except Exception as exc:
@@ -340,15 +384,10 @@ class LoRACatalogMixin:
                     "a1111_short_hash": "",
                     "a1111_hash_source": "",
                 }
-                technical["a1111_hash_error"] = f"{type(exc).__name__}: {exc}"
+                a1111_hash_error = f"{type(exc).__name__}: {exc}"
             technical = {
-                **technical,
+                **self._restricted_lora_technical(path, extension=path.suffix.lower(), a1111_hash_error=a1111_hash_error),
                 **compatibility_hash,
-                "adapter_format": "invalid",
-                "runtime_support_state": "unsupported",
-                "runtime_loadable": False,
-                "support_reason": "Technical adapter inspection currently supports .safetensors files only.",
-                "inspection_error": "Technical tensor inspection is currently available only for .safetensors LoRA files.",
             }
 
         persisted_cache = {
@@ -402,6 +441,7 @@ class LoRACatalogMixin:
         refreshed = 0
         errors = 0
         unsupported = 0
+        restricted = 0
         for record in list(self._loras):
             path = Path(str(record.get("path") or "")).expanduser().resolve()
             if not path.is_file():
@@ -423,8 +463,11 @@ class LoRACatalogMixin:
             refreshed += 1
             if str(merged.get("scan_status") or "") == "error":
                 errors += 1
-            if str(merged.get("scan_status") or "") == "unsupported":
+            status_token = str(merged.get("scan_status") or "")
+            if status_token == "unsupported":
                 unsupported += 1
+            if status_token == "restricted":
+                restricted += 1
         if refreshed:
             self._bump_catalog_revision("lora")
         return {
@@ -436,6 +479,7 @@ class LoRACatalogMixin:
                 "refreshed": refreshed,
                 "errors": errors,
                 "unsupported": unsupported,
+                "restricted": restricted,
             },
         }
 

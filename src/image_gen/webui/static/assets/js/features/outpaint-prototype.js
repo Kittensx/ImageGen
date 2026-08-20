@@ -1,5 +1,6 @@
 import { api } from "../api.js?v=0.1.82";
 import { $, debounce, notify } from "../utils.js";
+import { generationSpatialRequirements } from "./generation-capabilities.js";
 
 let sourceInfo = null;
 
@@ -151,31 +152,34 @@ function shapePlacement(baseWidth, baseHeight, targetWidth, targetHeight, anchor
   return { x, y, maxX, maxY };
 }
 
-function alignShapeDimension(value) {
-  return Math.max(64, Math.ceil(Number(value || 0) / 8) * 8);
+function alignShapeDimension(value, multiple = 8) {
+  const alignment = Math.max(1, Math.round(Number(multiple) || 8));
+  return Math.max(64, Math.ceil(Number(value || 0) / alignment) * alignment);
 }
 
 function syncShapeTargetForMode() {
   const mode = $("#outpaintShapeTargetMode")?.value || "square";
   if (mode === "custom") return;
-  const baseWidth = alignShapeDimension($("#width")?.value || 0);
-  const baseHeight = alignShapeDimension($("#height")?.value || 0);
+  const spatial = generationSpatialRequirements();
+  const multiple = spatial.pixelAlignmentMultiple;
+  const baseWidth = alignShapeDimension($("#width")?.value || 0, multiple);
+  const baseHeight = alignShapeDimension($("#height")?.value || 0, multiple);
   const widthInput = $("#outpaintShapeTargetWidth");
   const heightInput = $("#outpaintShapeTargetHeight");
   if (!widthInput || !heightInput) return;
 
-  let targetWidth = alignShapeDimension(widthInput.value || baseWidth);
-  let targetHeight = alignShapeDimension(heightInput.value || baseHeight);
+  let targetWidth = alignShapeDimension(widthInput.value || baseWidth, multiple);
+  let targetHeight = alignShapeDimension(heightInput.value || baseHeight, multiple);
   if (mode === "square") {
-    const side = alignShapeDimension(Math.max(baseWidth, baseHeight));
+    const side = alignShapeDimension(Math.max(baseWidth, baseHeight), multiple);
     targetWidth = side;
     targetHeight = side;
   } else if (mode === "landscape") {
-    targetHeight = alignShapeDimension(Math.max(baseHeight, targetHeight));
-    targetWidth = alignShapeDimension(Math.max(baseWidth, targetWidth, targetHeight + 8));
+    targetHeight = alignShapeDimension(Math.max(baseHeight, targetHeight), multiple);
+    targetWidth = alignShapeDimension(Math.max(baseWidth, targetWidth, targetHeight + multiple), multiple);
   } else if (mode === "portrait") {
-    targetWidth = alignShapeDimension(Math.max(baseWidth, targetWidth));
-    targetHeight = alignShapeDimension(Math.max(baseHeight, targetHeight, targetWidth + 8));
+    targetWidth = alignShapeDimension(Math.max(baseWidth, targetWidth), multiple);
+    targetHeight = alignShapeDimension(Math.max(baseHeight, targetHeight, targetWidth + multiple), multiple);
   }
   widthInput.value = String(targetWidth);
   heightInput.value = String(targetHeight);
@@ -190,6 +194,9 @@ function renderShapeExpansionStatus() {
     status.className = "field-status subtle";
     return;
   }
+  const spatial = generationSpatialRequirements();
+  const pixelMultiple = spatial.pixelAlignmentMultiple;
+  const latentScale = spatial.latentScaleFactor;
   const bw = Number($("#width")?.value || 0);
   const bh = Number($("#height")?.value || 0);
   const tw = Number($("#outpaintShapeTargetWidth")?.value || 0);
@@ -206,19 +213,19 @@ function renderShapeExpansionStatus() {
     status.className = "field-status error";
     return;
   }
-  if (tw % 8 !== 0 || th % 8 !== 0) {
-    status.textContent = `Target ${tw}x${th} must use dimensions divisible by 8.`;
+  if (tw % pixelMultiple !== 0 || th % pixelMultiple !== 0) {
+    status.textContent = `Target ${tw}x${th} must use dimensions divisible by ${pixelMultiple} for the active model.`;
     status.className = "field-status error";
     return;
   }
   const placement = shapePlacement(bw, bh, tw, th, anchor);
-  const aligned = bw % 8 === 0 && bh % 8 === 0 && placement.x % 8 === 0 && placement.y % 8 === 0;
+  const aligned = bw % latentScale === 0 && bh % latentScale === 0 && placement.x % latentScale === 0 && placement.y % latentScale === 0;
   const requested = $("#outpaintShapeSourceHandoff")?.value || "auto";
   let handoff;
   if (requested === "pixel_vae_reencode") {
     handoff = "Source reuse: re-encode image";
   } else if (requested === "live_latent") {
-    handoff = aligned ? "Source reuse: live generation data" : "Live generation data requested, but this placement is not 8px-grid aligned";
+    handoff = aligned ? "Source reuse: live generation data" : `Live generation data requested, but this placement is not ${latentScale}px VAE-grid aligned`;
   } else {
     handoff = aligned ? "Source reuse: live generation data" : "Source reuse: re-encode image (exact placement preserved)";
   }

@@ -28,8 +28,8 @@ For a 4-step Lightning checkpoint, the normal starting point is:
 Steps: 4
 CFG: 1.0
 
-[x] Use recommended steps (4)
-[x] Use recommended CFG (1) + recommended CFG Lab preset
+[ ] Auto-use recommended steps (4)
+[ ] Auto-use recommended CFG (1) + recommended CFG Lab preset
 ```
 
 The recommendation fields remain editable at all times.
@@ -38,8 +38,8 @@ The recommendation fields remain editable at all times.
 
 The checkboxes have a concrete meaning:
 
-- **Use recommended steps** checked: IMAGE_GEN uses the model's recommended step count for generation.
-- **Use recommended CFG** checked: IMAGE_GEN uses the model's recommended CFG for generation.
+- **Auto-use recommended steps** checked: IMAGE_GEN uses the model's recommended step count for generation.
+- **Auto-use recommended CFG** checked: IMAGE_GEN uses the model's recommended CFG for generation.
 - Clearing either checkbox makes the value currently typed into that field authoritative.
 
 The fields are never disabled merely because a recommendation is enabled.
@@ -50,7 +50,7 @@ Example:
 
 ```text
 Visible Steps: 20
-[x] Use recommended steps (4)
+[ ] Auto-use recommended steps (4)
 
 Effective generation Steps: 4
 ```
@@ -59,7 +59,7 @@ and:
 
 ```text
 Visible CFG: 5.5
-[x] Use recommended CFG (1)
+[ ] Auto-use recommended CFG (1)
 
 Effective generation CFG: 1.0
 ```
@@ -74,7 +74,7 @@ Lightning profiles now advertise a built-in CFG Lab preset:
 SDXL Lightning Recommended
 ```
 
-When a Lightning profile becomes active with **Use recommended CFG** enabled, or when that checkbox is enabled, IMAGE_GEN selects and applies this preset once.
+When a Lightning profile becomes active with **Auto-use recommended CFG** enabled, or when that checkbox is enabled, IMAGE_GEN selects and applies this preset once.
 
 The preset is deliberately conservative:
 
@@ -162,8 +162,8 @@ That normalization is surfaced as a warning instead of becoming an out-of-range 
 To intentionally use custom values:
 
 ```text
-[ ] Use recommended steps
-[ ] Use recommended CFG
+[ ] Auto-use recommended steps
+[ ] Auto-use recommended CFG
 ```
 
 Then the normal fields become the effective generation values.

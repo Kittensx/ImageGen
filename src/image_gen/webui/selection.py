@@ -41,6 +41,36 @@ class WebUISelectionResolver:
     def _safe_sampler(self) -> PluginDescriptor | None:
         return self._resolve("sampler", "kes") or self._first("sampler")
 
+    def _preferred_sampler(self, scheduler: PluginDescriptor | None) -> PluginDescriptor | None:
+        if scheduler is None:
+            return self._safe_sampler()
+
+        capabilities = dict(scheduler.capabilities or {})
+        declared = capabilities.get("compatible_samplers")
+        candidates: list[Any] = []
+        if isinstance(declared, str) and declared.strip():
+            candidates.append(declared)
+        elif isinstance(declared, (list, tuple)):
+            candidates.extend(declared)
+
+        for candidate in candidates:
+            descriptor = self._resolve("sampler", candidate)
+            if descriptor is None:
+                continue
+            try:
+                if self.registry.validate_pair(descriptor, scheduler).is_compatible:
+                    return descriptor
+            except Exception:
+                continue
+
+        for descriptor in self.registry.descriptors("sampler"):
+            try:
+                if self.registry.validate_pair(descriptor, scheduler).is_compatible:
+                    return descriptor
+            except Exception:
+                continue
+        return None
+
     def _preferred_scheduler(self, sampler: PluginDescriptor | None) -> PluginDescriptor | None:
         if sampler is None:
             return self._resolve("scheduler", "simple_kes") or self._first("scheduler")
@@ -94,6 +124,7 @@ class WebUISelectionResolver:
         fallback_payload: Mapping[str, Any] | None = None,
         migrate_legacy_auto_fallback: bool = True,
         reject_unknown: bool = False,
+        repair_incompatible_explicit: bool = False,
     ) -> SelectionNormalization:
         original = dict(payload or {})
         fallback = dict(fallback_payload or {})
@@ -160,17 +191,31 @@ class WebUISelectionResolver:
 
         compatibility = self.registry.validate_pair(sampler, scheduler)
         if not compatibility.is_compatible:
-            if explicit_scheduler or reject_unknown:
+            if reject_unknown:
                 compatibility.raise_if_incompatible()
-            replacement = self._preferred_scheduler(sampler)
-            if replacement is None:
-                compatibility.raise_if_incompatible()
-            scheduler = replacement
-            normalized["scheduler_kwargs"] = {}
-            notes.append(
-                f"Selected scheduler was incompatible with {sampler.label}; "
-                f"switched to {scheduler.label}."
-            )
+            if explicit_scheduler:
+                if not repair_incompatible_explicit:
+                    compatibility.raise_if_incompatible()
+                replacement_sampler = self._preferred_sampler(scheduler)
+                if replacement_sampler is None:
+                    compatibility.raise_if_incompatible()
+                sampler = replacement_sampler
+                normalized["sampler_name"] = sampler.name
+                normalized["sampler_kwargs"] = {}
+                notes.append(
+                    f"Persisted sampler was incompatible with explicitly selected {scheduler.label}; "
+                    f"switched sampler to {sampler.label}."
+                )
+            else:
+                replacement = self._preferred_scheduler(sampler)
+                if replacement is None:
+                    compatibility.raise_if_incompatible()
+                scheduler = replacement
+                normalized["scheduler_kwargs"] = {}
+                notes.append(
+                    f"Selected scheduler was incompatible with {sampler.label}; "
+                    f"switched to {scheduler.label}."
+                )
 
         normalized["scheduler_name"] = scheduler.name
         normalized[_WEBUI_SELECTION_VERSION_KEY] = WEBUI_SELECTION_VERSION

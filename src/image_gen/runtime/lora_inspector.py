@@ -10,7 +10,7 @@ from image_gen.runtime.adapters.contracts import AdapterInspectionRecord
 
 
 _KNOWN_MODEL_FAMILIES = {"sd1", "sd2", "sdxl", "sd3", "flux"}
-LORA_SCAN_CACHE_SCHEMA_VERSION = 5
+LORA_SCAN_CACHE_SCHEMA_VERSION = 6
 _HASH_CHUNK_SIZE = 1024 * 1024
 _HEX_HASH_RE = re.compile(r"^[0-9a-fA-F]{12,128}$")
 
@@ -593,15 +593,16 @@ def inspect_lora_file(
         "adapter_inspection": {},
     }
     if resolved.suffix.lower() != ".safetensors":
-        message = "LoRA metadata inspection currently supports .safetensors files only."
-        result["adapter_format"] = "invalid"
+        message = "Technical tensor inspection is intentionally restricted for pickle-bearing legacy adapter formats (.pt/.ckpt/.bin/.pth)."
+        result["adapter_format"] = "inspection_restricted"
+        result["tensor_key_format"] = "Restricted"
         result["inspection_error"] = message
         result["inspection_errors"] = [message]
         record = AdapterInspectionRecord(
             source_path=str(resolved),
             file_signature=signature,
-            adapter_format="invalid",
-            adapter_format_evidence=("unsupported_file_extension",),
+            adapter_format="inspection_restricted",
+            adapter_format_evidence=(f"restricted_extension:{resolved.suffix.lower()}",),
             inspection_errors=(message,),
         )
         result["adapter_inspection"] = record.to_dict()

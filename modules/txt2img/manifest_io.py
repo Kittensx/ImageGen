@@ -38,7 +38,11 @@ _NON_GENERATION_SCHEDULER_KEYS = {
 }
 
 
-_ADVANCED_MODEL_REPLAY_FIELDS = (
+_MODEL_REPLAY_FIELDS = (
+    "sd3_runtime_profile_override",
+    "sd3_text_encoder_source",
+    "sd3_t5_enabled",
+    "sd3_t5_source",
     "advanced_models_enabled",
     "advanced_model_family",
     "advanced_model_components",
@@ -388,7 +392,7 @@ def manifest_to_replay_dict(manifest: GenerationManifest) -> dict[str, Any]:
         if not _is_empty(value):
             compact_extra[key] = value
 
-    for key in _ADVANCED_MODEL_REPLAY_FIELDS:
+    for key in _MODEL_REPLAY_FIELDS:
         if key not in optional_extra:
             continue
         value = optional_extra.get(key)

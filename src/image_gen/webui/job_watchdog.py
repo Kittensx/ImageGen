@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from image_gen.webui.diagnostics import write_webui_failure_bundle
 from image_gen.webui.job_request_normalization import _coerce_boolean
 from image_gen.webui.job_store import _ACTIVE_JOB_STATUSES, _utc_now
 
@@ -39,12 +40,25 @@ class JobWatchdogMixin:
         except (TypeError, ValueError):
             transition_timeout = 120.0
         try:
-            advanced_model_transition_timeout = max(
+            model_transition_timeout = max(
                 transition_timeout,
+                float(
+                    settings.get(
+                        "queue_watchdog_model_transition_stall_timeout_seconds",
+                        settings.get("queue_watchdog_advanced_model_transition_stall_timeout_seconds", 600),
+                    )
+                    or 600.0
+                ),
+            )
+        except (TypeError, ValueError):
+            model_transition_timeout = max(transition_timeout, 600.0)
+        try:
+            advanced_model_transition_timeout = max(
+                model_transition_timeout,
                 float(settings.get("queue_watchdog_advanced_model_transition_stall_timeout_seconds", 600) or 600.0),
             )
         except (TypeError, ValueError):
-            advanced_model_transition_timeout = max(transition_timeout, 600.0)
+            advanced_model_transition_timeout = max(model_transition_timeout, 600.0)
         try:
             finalizing_timeout = max(60.0, float(settings.get("queue_watchdog_finalizing_stall_timeout_seconds", 600) or 600.0))
         except (TypeError, ValueError):
@@ -55,6 +69,7 @@ class JobWatchdogMixin:
                 "interval_seconds": interval,
                 "running_stall_timeout_seconds": running_timeout,
                 "transition_stall_timeout_seconds": transition_timeout,
+                "model_transition_stall_timeout_seconds": model_transition_timeout,
                 "advanced_model_transition_stall_timeout_seconds": advanced_model_transition_timeout,
                 "finalizing_stall_timeout_seconds": finalizing_timeout,
             }
@@ -64,6 +79,7 @@ class JobWatchdogMixin:
             "interval_seconds": interval,
             "running_stall_timeout_seconds": running_timeout,
             "transition_stall_timeout_seconds": transition_timeout,
+            "model_transition_stall_timeout_seconds": model_transition_timeout,
             "advanced_model_transition_stall_timeout_seconds": advanced_model_transition_timeout,
             "finalizing_stall_timeout_seconds": finalizing_timeout,
         }
@@ -105,10 +121,26 @@ class JobWatchdogMixin:
                 return f"Model runtime went offline while {job.job_id} remained {job.status}."
             if worker_job_id and worker_job_id == job.job_id:
                 owned_timeout = timeout
+                model_transition_stages = {
+                    "preparing_model",
+                    "loading_tokenizer",
+                    "loading_checkpoint",
+                    "moving_to_gpu",
+                    "reusing_checkpoint",
+                    "model_ready",
+                    "applying_retention_policy",
+                }
+                job_stage = str(getattr(job, "worker_stage", "") or "").strip().lower()
                 if (
-                    bool(job.request.get("advanced_models_enabled"))
-                    and job.status in {"preparing_model", "warming_model"}
+                    job.status in {"preparing_model", "warming_model"}
+                    or job_stage in model_transition_stages
+                    or worker_stage in model_transition_stages
                 ):
+                    owned_timeout = max(
+                        owned_timeout,
+                        float(settings.get("model_transition_stall_timeout_seconds") or owned_timeout),
+                    )
+                if bool(job.request.get("advanced_models_enabled")):
                     owned_timeout = max(
                         owned_timeout,
                         float(settings.get("advanced_model_transition_stall_timeout_seconds") or owned_timeout),
@@ -130,6 +162,49 @@ class JobWatchdogMixin:
         if stale_for >= timeout:
             return f"No runtime activity was observed for {stale_for:.1f} seconds while {job.job_id} remained {job.status}."
         return None
+
+    def _capture_watchdog_failure_bundle(
+        self,
+        job: GenerationJob,
+        *,
+        reason: str,
+        source: str,
+    ) -> str | None:
+        if str(job.failure_bundle_path or "").strip():
+            return str(job.failure_bundle_path)
+        diagnostics = self._diagnostics_request_settings(self._application_settings())
+        if not bool(diagnostics.get("failure_bundles")):
+            return None
+        try:
+            request_path = None
+            if job.job_root:
+                candidate = Path(job.job_root) / "request.json"
+                if candidate.is_file():
+                    request_path = str(candidate)
+            bundle = write_webui_failure_bundle(
+                project_root=self.context.project_root,
+                stage=f"generation_{str(source or 'watchdog').strip().lower()}_recovery",
+                error=RuntimeError(reason),
+                payload=dict(job.request or {}),
+                request_path=request_path,
+                extra={
+                    "job_id": job.job_id,
+                    "job_status": job.status,
+                    "worker_stage": job.worker_stage,
+                    "execution_mode": job.execution_mode,
+                    "model_runtime_status": self.model_runtime.status(),
+                    "model_runtime_diagnostics": dict(job.model_runtime_diagnostics or {}),
+                    "log_tail": list(job.log_lines[-80:]),
+                },
+            )
+        except Exception as exc:  # pragma: no cover - failure capture must not mask the original failure
+            job.log_lines.append(
+                f"{str(source or 'watchdog').upper()} FAILURE BUNDLE CAPTURE FAILED: {type(exc).__name__}: {exc}"
+            )
+            return None
+        job.failure_bundle_path = str(bundle)
+        job.log_lines.append(f"(failure bundle: {bundle})")
+        return str(bundle)
 
     async def _recover_terminal_job(
         self,
@@ -163,6 +238,8 @@ class JobWatchdogMixin:
         job.return_code = 130 if job.status == "cancelling" else 1
         terminal_status = "cancelled" if job.status == "cancelling" else "failed"
         self._transition_job(job, status=terminal_status, worker_stage=terminal_status)
+        if terminal_status == "failed":
+            self._capture_watchdog_failure_bundle(job, reason=reason, source=source)
         job.completed_at = timestamp
         job.process = None
         self._watchdog_report["recoveries"] = int(self._watchdog_report.get("recoveries", 0) or 0) + 1

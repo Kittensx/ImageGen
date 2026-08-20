@@ -103,21 +103,33 @@ function buildPreviewUrl(model = {}) {
 
 function setPreview(image, fallback, model) {
   if (!image || !fallback) return;
+  const url = buildPreviewUrl(model);
+  const requestToken = `${model?.asset_id || "detail"}|${url}`;
+  image.dataset.previewRequest = requestToken;
   image.classList.remove("has-image");
   image.removeAttribute("src");
   fallback.classList.remove("is-hidden");
   fallback.textContent = String(model?.name || "CKPT").slice(0, 4).toUpperCase();
-  const url = buildPreviewUrl(model);
   if (!url) return;
-  image.onload = () => {
+
+  // The visible <img> is intentionally hidden until the preview is ready. Native
+  // lazy loading can defer a display:none image forever, so use a detached eager
+  // probe to prove the file can load, then reveal the cached image atomically.
+  const probe = new Image();
+  probe.decoding = "async";
+  probe.onload = () => {
+    if (image.dataset.previewRequest !== requestToken) return;
+    image.src = url;
     image.classList.add("has-image");
     fallback.classList.add("is-hidden");
   };
-  image.onerror = () => {
+  probe.onerror = () => {
+    if (image.dataset.previewRequest !== requestToken) return;
     image.classList.remove("has-image");
+    image.removeAttribute("src");
     fallback.classList.remove("is-hidden");
   };
-  image.src = url;
+  probe.src = url;
 }
 
 function modelMatchesFilter(model, filter) {

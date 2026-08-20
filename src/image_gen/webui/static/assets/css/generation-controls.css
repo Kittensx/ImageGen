@@ -242,6 +242,67 @@
   margin-top: 4px;
 }
 
+.queue-master-control-row {
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* setActionIcon() promotes this control to the generic .ui-action-button class.
+   Keep the master queue control a real full-width action instead of inheriting
+   the generic 34px square icon-button geometry. The ID selector deliberately
+   outranks the later-loaded ui-icons.css rules. */
+#pauseGenerationButton.queue-master-control-button,
+#pauseGenerationButton.queue-master-control-button.ui-action-button {
+  --ui-action-size: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 64px;
+  padding: 10px 16px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  justify-content: stretch;
+  place-items: initial;
+  gap: 14px;
+  text-align: left;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+#pauseGenerationButton .ui-icon {
+  --ui-icon-size: 26px;
+  justify-self: center;
+  flex: 0 0 auto;
+}
+
+.queue-master-control-copy {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.queue-master-control-copy strong {
+  font-size: 1.05rem;
+  line-height: 1.15;
+}
+
+.queue-master-control-copy span {
+  font-size: 0.78rem;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  opacity: 0.86;
+}
+
 .generation-interrupt-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
