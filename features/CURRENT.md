@@ -152,14 +152,37 @@ Current source includes:
 - typed numeric interpretation by grammar context;
 - deterministic schedules and alternates resolved against the active generation pass;
 - recursive/nested owner-scope handling;
-- parser-neutral semantic replay/inspection records; and
+- parser-neutral semantic replay/inspection records;
+- experimental cohesive grouping using `⦃...⦄` alongside the existing `{...}` control behavior;
+- experimental target-only `^` and inheriting/subtree `*` attribute bindings; and
 - model-free parser validation through `run.bat parser-test`.
 
-Brace syntax such as `{...}` is recognized by the current parser and group-local numeric weights are represented structurally, but **brace-based semantic grouping remains experimental and is under revision**. The intended behavior is to bind the concepts inside a group more closely as a related semantic unit than ordinary comma-separated concepts. Current image-quality testing found that the existing group-conditioning behavior does not yet reproduce that intent reliably enough to describe grouping as finished.
+The parser's core relationship, sequence, terminator, numeric, temporal, replay, and inspection behaviors can be tested independently of the current grouping/binding experiment.
 
-The other recently updated relationship, sequence, terminator, numeric, temporal, replay, and inspection behaviors can be tested independently of the unfinished grouping correction.
+### Grouping experiment
 
-Some parser paths remain more experimental than the legacy path and may evolve during alpha development.
+Existing `{...}` grouping remains available as the comparison/control implementation. It uses the established branch-average group-conditioning behavior and should **not** be interpreted as the final answer to ImageGen's closer-concept-binding goal.
+
+A second syntax, `⦃...⦄`, is now available as an experimental cohesive-group candidate. Its current algorithm keeps the group's shared context present in each encoder branch while locally reinforcing one member at a time. Group-local explicit weights remain relative inside the group.
+
+The two forms intentionally coexist so fixed-seed image tests can compare semantic cohesion, concept leakage, composition stability, and diversity before a final grouping behavior is chosen.
+
+### Attribute-binding experiment
+
+Two experimental binding operators are implemented for image-level qualification:
+
+```text
+modifier^target   -> bind the modifier to this target only
+modifier*target   -> bind the modifier to this target and its structural descendants
+```
+
+`^` acts as a local inheritance barrier: it blocks an inherited `*` modifier at that target and does not start a new descendant scope. `*` also blocks an inherited ancestor modifier at the explicit target, then establishes its own modifier for structural descendants. An explicit child `^` or `*` therefore overrides an inherited parent binding at that child.
+
+The first lowering algorithm reinforces a modifier/target pair together rather than sending the modifier as a separate conditioning branch. For example, `red^hair` is lowered as a paired concept rather than as an independent `red` branch. This is an experiment in semantic attachment, not a promise of hard symbolic control.
+
+Prompt Inspector can expose cohesive groups, normalized local focus weights, binding source operators, target/subtree scope, inheritance barriers, and the current lowering algorithm. Escaped `\^`, `\*`, `\⦃`, and `\⦄` remain literal text.
+
+These new grouping and binding semantics are **experimental and under active A/B image testing**. They should not be treated as finalized prompt-language guarantees yet.
 
 ## 5. REGION / Regional Prompting Tools
 
@@ -766,7 +789,7 @@ Legacy single-colon sequence inference remains available for backward compatibil
 
 PromptIR and ConditioningPlan records serialize typed numeric semantics. Invalid values such as zero schedule steps, negative group-local weights, zero quantities, and `nan`/`inf` in known numeric grammar positions produce explicit validation records instead of silently changing numeric meaning.
 
-Brace-group numeric interpretation is implemented at the parser/IR level, but the **image-conditioning meaning of brace grouping remains experimental while group binding behavior is revised**.
+Group-local numeric interpretation is implemented at the parser/IR level. The existing `{...}` control and experimental `⦃...⦄` cohesive-group candidate both preserve relative local weights, but the final image-conditioning choice between grouping algorithms remains under active qualification.
 
 ## 27. Prompt Temporal Composition and Nesting
 
@@ -781,7 +804,7 @@ Examples:
 [cat|dog]        -> deterministic 1-based step cycle
 ```
 
-Temporal operations compose with structured relations, owner sequences, attention syntax, `AND` weights, and nested scopes without collapsing their local weighting boundaries. When temporal syntax appears inside a brace group, the parser preserves the structure, but the final semantic grouping behavior remains subject to the grouping qualification noted above.
+Temporal operations compose with structured relations, owner sequences, attention syntax, `AND` weights, and nested scopes without collapsing their local weighting boundaries. Group structure is preserved when temporal syntax appears inside either the existing grouping control or the experimental cohesive-group form, but the final grouping algorithm remains subject to image-level qualification.
 
 Base and Hires passes compile the same semantic prompt against their own active step counts. Standard Classic temporal syntax follows the same shared compiler under Legacy, Parser21, and SuperHybrid unless a parser-specific extension owns the expression.
 
@@ -802,7 +825,7 @@ Embedded grouped modifiers such as `{pink, blue, yellow} sky` are recognized ins
 
 Conditioning-plan diagnostics record parent scope and owner-composition information so the Prompt Inspector and parser test runner can show how grouped/ungrouped structures were interpreted.
 
-The parser's ability to preserve parent/group structure is distinct from the unfinished question of **how brace grouping should strengthen semantic binding during conditioning**. That final grouping behavior remains experimental.
+The parser's ability to preserve parent/group structure is distinct from the open image-level question of **which grouping algorithm best strengthens semantic cohesion without unwanted leakage or loss of diversity**. Both the existing control behavior and the new cohesive-group candidate remain available for that comparison.
 
 ## 29. Model-Family Semantic Conditioning Contracts
 
@@ -823,7 +846,7 @@ SDXL and SD3 use the same hierarchical branch weights for token and pooled condi
 
 If a declared runtime cannot preserve a required structured semantic operation, ImageGen performs a punctuation-safe model-family fallback and records the degradation rather than leaking parser control syntax or pretending full support. Structured runtime fields not declared in the capability contract are rejected instead of being silently ignored.
 
-The parser test reports local branch/sequence weights alongside effective-final contributions after nested normalizations. Brace-group contributions can be inspected mathematically, but brace grouping itself remains under image-level semantic revision until the intended closer-binding behavior is validated.
+The parser test reports local branch/sequence weights alongside effective-final contributions after nested normalizations. Existing and experimental group contributions can be inspected mathematically, while real-image qualification is used to judge whether those semantics actually improve concept cohesion and attribute attachment.
 
 ## 30. Semantic Prompt Replay and Inspection
 
@@ -837,4 +860,23 @@ Parser capability descriptors distinguish syntax recognition from implemented ru
 
 `run.bat parser-test` remains model-free and emits replay/cutover and parser-performance evidence. A separate opt-in real-checkpoint qualification runner under `testing/test_validations/qualification/generation/` can produce timestamped image/request/log evidence, semantic parity/difference comparisons, exact manifest replay, and a visual contact sheet.
 
-Prompt-parser development is still active. In particular, brace-based grouping remains intentionally marked experimental until its intended closer-binding image behavior is corrected and qualified. Additional binding operators are being evaluated and are not documented as current behavior until implemented and tested.
+Prompt-parser development is still active. The existing grouping behavior, cohesive-group candidate, and `^` / `*` binding operators are intentionally exposed as an A/B qualification set rather than presented as finalized language semantics.
+
+## 31. Experimental Prompt Grouping and Attribute Binding
+
+ImageGen now keeps the existing grouping behavior and a new cohesive-group candidate side by side so they can be compared with the same checkpoint, seed, prompt, and generation settings.
+
+```text
+{...}             existing branch-average grouping control
+⦃...⦄             experimental shared-context cohesive grouping
+modifier^target   experimental target-only binding
+modifier*target   experimental target + structural-descendant binding
+```
+
+The cohesive-group candidate keeps all group members in the shared encoder context and reinforces one member as the local focus for each weighted branch. The binding experiment keeps modifier and target attached during lowering instead of emitting a naked modifier branch.
+
+`*` inheritance follows structural parent/child scope rather than textual proximity alone. Explicit child `^` or `*` bindings form inheritance barriers; child `*` can begin a new inheriting subtree. Binding inheritance is preserved through both grouping forms when they occur in structural descendants.
+
+Prompt Inspector exposes the experimental group and binding structure. Prompts that do not use the new syntax retain the established semantic/replay contracts.
+
+A dedicated fixed-seed multi-image comparison workflow is intended to evaluate attribute binding, color/concept leakage, composition stability, and diversity before any experimental syntax or algorithm is promoted to a final default. Until that evidence is accepted, these operators should be treated as **experimental**.

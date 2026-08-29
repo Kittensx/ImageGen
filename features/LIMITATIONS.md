@@ -124,13 +124,22 @@ Installing an asset through Asset Hub also does not automatically make its asset
 
 Users should keep backups of important model libraries and verify newly installed assets while this workflow remains experimental.
 
-## 10. Prompt Parser Brace Grouping Is Still Under Revision
+## 10. Prompt Parser Grouping and Binding Are Still Experimental
 
-The updated prompt parser implements and records a broad set of structured semantics, but brace grouping is not yet considered complete.
+The updated prompt parser implements and records a broad set of structured semantics, but the current grouping/binding experiment is not yet considered final.
 
-Brace groups are intended to bind contained concepts more closely as a related semantic unit than ordinary comma-separated prompting. Current testing found that the existing group-conditioning behavior does not yet reproduce that intended semantic relationship reliably enough for a finished-support claim.
+Existing `{...}` grouping remains available as the established comparison/control behavior. A second `⦃...⦄` form tests a shared-context cohesive-group algorithm intended to strengthen relationships among grouped concepts without simply increasing attention weight.
 
-Group syntax and group-local numeric weights can still be parsed and inspected, but users should treat brace-based grouping as experimental until the revised conditioning behavior is validated against real image generation.
+Two binding operators are also available for qualification:
+
+```text
+modifier^target   -> target only
+modifier*target   -> target plus structural descendants
+```
+
+These operators are designed to improve modifier-to-concept attachment and to test inheritance barriers/scopes, but image generators do not provide hard symbolic guarantees. The parser can prove how syntax was interpreted and lowered; it cannot by itself guarantee that a checkpoint will visually honor that relationship.
+
+Users should therefore treat `{...}`, `⦃...⦄`, `^`, and `*` as part of an active image-level qualification program. Fixed-seed multi-image comparisons are required before deciding which grouping algorithm or binding behavior should become a final default.
 
 Other prompt-parser operators and behaviors can be qualified independently; this limitation should not be read as a statement that all structured prompt syntax is currently broken.
 

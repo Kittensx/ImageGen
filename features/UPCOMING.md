@@ -210,3 +210,7 @@ This file can carry the broader user-facing roadmap, while detailed implementati
 ## Prompt Parser Semantic Reconstruction - Release Gate
 
 PPSR-08 is implemented. Before removing transitional duplicate parser paths, run the opt-in fixed-seed real-checkpoint qualification matrix and retain its timestamped evidence. The gate checks singleton `{standing}` parity, multi-member group distinction, explicit group weighting, owner relationships, schedule interaction, semantic-manifest replay, and optional hires behavior.
+
+## PPSR-10 - Grouping Decision, Cleanup, Documentation, and Final Cutover
+
+PPSR-09 intentionally leaves the experimental and control implementations side-by-side. PPSR-10 will use the retained multi-seed image evidence to decide which grouping algorithm and binding operators graduate, preserve old branch-average semantics where exact replay requires them, remove rejected/temporary syntax, deduplicate experimental code, clean transitional parser paths, and consolidate final user/developer documentation.

@@ -22,17 +22,39 @@ The full checkpoint/LoRA download lifecycle is still receiving active bug testin
 
 Keep backups of important model libraries and verify newly installed assets before relying on unattended asset management.
 
-## Prompt Parser — Brace Grouping
+## Prompt Parser — Grouping and Attribute Binding
 
-**Status: Experimental — behavior under revision**
+**Status: Experimental — active A/B image testing**
 
-The current prompt parser recognizes brace-group syntax and records typed group-local weights, but the intended semantic behavior is still being revised.
+The current alpha intentionally exposes two grouping behaviors side by side:
 
-The design goal is for a brace group to bind its contained concepts more closely as a related semantic unit than ordinary comma-separated concepts. Current testing found that the implemented grouping behavior does not yet reproduce that intent reliably enough to call grouping finished.
+```text
+{...}   existing branch-average grouping control
+⦃...⦄   experimental shared-context cohesive grouping
+```
 
-Other recently updated prompt-parser behaviors — including relationship/owner scopes, structural terminators, typed numeric interpretation, schedules/alternates, nested scope handling, semantic inspection, and replay records — can be tested independently of the unfinished grouping correction.
+The cohesive-group candidate keeps all members present in the shared encoder context while locally reinforcing one member per weighted branch. This is being compared against the existing grouping behavior rather than being declared the replacement in advance.
 
-Additional binding syntax is also being evaluated, but it is not documented here as a current feature until its behavior has been implemented and tested.
+The same experiment introduces two modifier/target bindings:
+
+```text
+modifier^target   target-only binding
+modifier*target   target + structural-descendant binding
+```
+
+`^` does not propagate to descendants and acts as a barrier to an inherited `*` modifier. `*` establishes a structural-descendant scope; an explicit child `^` or `*` blocks the ancestor binding at that child, and child `*` begins a new inherited subtree scope.
+
+Prompt Inspector can expose the selected grouping algorithm, members/local weights, binding operator/scope, inheritance barriers, and encoder-visible lowering. Escaped experimental symbols remain literal text.
+
+These semantics are being judged by real image behavior, not parser structure alone. Qualification should compare multiple same-seed outputs for:
+
+- whether modifiers remain attached to the intended target;
+- unwanted color or concept leakage;
+- preservation of surrounding context;
+- composition stability; and
+- diversity versus over-constraining the prompt.
+
+Until those comparisons establish a preferred behavior, the existing grouping control, cohesive-group candidate, and both binding operators should all be treated as **experimental rather than final language guarantees**.
 
 ## SD3 / SD3.5 LoRA Architecture Groundwork
 

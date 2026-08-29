@@ -166,8 +166,22 @@ Live progress/CFG tracing now keeps base generation and Hires refinement as dist
 
 The reconstructed Classic prompt semantics are versioned and replayable. New generations can record PromptIR, the conditioning plan, semantic/structure digests, parser/compiler contracts, model-family semantic state, and safe-fallback diagnostics instead of relying only on visible punctuation.
 
-Prompt Inspector includes a Semantic Structure view with parsed group weights, owner/relation scope, schedules, fallbacks, encoder-visible text, and effective-final weights for static prompts. The parser test gate provides model-free replay/cutover evidence, while a separate opt-in real-checkpoint runner can create image/request/log evidence and a contact sheet for image-level qualification.
+Prompt Inspector includes a Semantic Structure view with parsed group weights, owner/relation scope, schedules, fallbacks, encoder-visible text, and effective-final weights for static prompts. The parser test gate provides model-free replay/cutover evidence, while separate opt-in real-checkpoint runners can create image/request/log evidence and contact sheets for image-level qualification.
 
 Relationship scopes, owner sequences, structural terminators, typed numeric values, schedules/alternates, nested parent scope, model-family conditioning contracts, semantic replay, and inspection have all received substantial updates.
 
-**Brace grouping remains experimental.** The parser recognizes group syntax and local weights, but testing found that the current conditioning behavior does not yet achieve the intended stronger semantic binding among grouped concepts. That behavior is still being revised. Additional binding syntax is also being evaluated and will not be documented as current until implemented and tested.
+### Experimental grouping and binding A/B tests
+
+The latest parser update adds an explicit alternative to the existing `{...}` grouping behavior rather than silently replacing it:
+
+```text
+{...}             existing grouping control
+⦃...⦄             experimental cohesive grouping
+modifier^target   target-only binding
+modifier*target   target + descendant binding
+```
+
+The cohesive-group candidate keeps the group's shared context present while locally reinforcing each member. The binding operators test whether attributes can be attached more reliably to the intended concept: `^` applies only at the explicit target, while `*` can propagate through structural descendants until an explicit child binding creates a new barrier/scope.
+
+These additions are **experimental**. They are intended for same-seed, multi-image A/B qualification focused on attribute attachment, unwanted color/concept leakage, composition stability, and diversity. They are not yet final prompt-language guarantees.
+
