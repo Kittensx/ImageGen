@@ -5,6 +5,8 @@ from typing import Any, Iterable, Sequence
 import warnings
 
 import torch
+
+from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
 import torch.nn.functional as F
 
 
@@ -409,6 +411,18 @@ class SD3ConditioningRuntime:
     def encode(self, texts: Iterable[str]) -> dict[str, torch.Tensor]:
         return self.encode_batch(texts)
 
+    def semantic_conditioning_capabilities(self) -> SemanticConditioningCapabilities:
+        t5_enabled = self.text_encoder_3 is not None and self.tokenizer_3 is not None
+        return SemanticConditioningCapabilities(
+            architecture="sd3.x",
+            runtime_name=type(self).__name__,
+            output_kind="structured",
+            composable_fields=("cross_attention", "pooled"),
+            required_fields=("cross_attention", "pooled"),
+            supports_pooled_conditioning=True,
+            t5_policy=("enabled_same_branch_text" if t5_enabled else "disabled_zero_sequence"),
+        )
+
     def contract_metadata(self) -> dict[str, Any]:
         t5_enabled = self.text_encoder_3 is not None and self.tokenizer_3 is not None
         return {
@@ -424,4 +438,5 @@ class SD3ConditioningRuntime:
             "t5_sequence_length": self.t5_sequence_length,
             "final_sequence_length": self.CONTEXT_LENGTH + self.t5_sequence_length,
             "pooled_projection_dim": self.POOLED_DIM,
+            "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
         }

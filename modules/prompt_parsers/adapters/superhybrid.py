@@ -34,6 +34,10 @@ from modules.prompt_parsers.contracts import (
     PromptParserDescriptor,
     PromptParserError,
 )
+from modules.prompt_parsers.shared_classic import (
+    execute_shared_classic,
+    validate_shared_classic,
+)
 
 _CFG_DIRECTIVE_RE = re.compile(
     r"(?<!\\)<param\s*\[\s*cfg\s*\]\s*:\s*([^<]+?)\s*(?<!-)>",
@@ -138,6 +142,14 @@ class SuperHybridPromptParserAdapter:
             "cfg_lab_bridge": True,
             "canonical_serialization": True,
             "exact_replay": True,
+            "group_syntax": True,
+            "group_semantics": True,
+            "sequence_syntax": True,
+            "sequence_semantics": True,
+            "temporal_semantics": True,
+            "semantic_replay": True,
+            "semantic_digest": True,
+            "semantic_inspection": True,
             "prompt_cfg_replay_lock": True,
             "prompt_cfg_curves": True,
             "prompt_cfg_segment_positions": True,
@@ -381,7 +393,6 @@ class SuperHybridPromptParserAdapter:
         parser_options: dict | None = None,
         seed: int | None = None,
     ) -> dict:
-        backend = self._backend()
         options = dict(parser_options or {})
         parser_seed = options.get("seed", seed if seed is not None else 42)
         use_visitor = bool(options.get("use_visitor", True))
@@ -393,6 +404,28 @@ class SuperHybridPromptParserAdapter:
             options=options,
         )
         conditioning_prompt = _remove_cfg_directive(raw_prompt)
+        shared = validate_shared_classic(
+            conditioning_prompt,
+            parser_namespace=self.descriptor.parser_id,
+            prompt_role=prompt_role,
+            steps=int(steps),
+            hires_steps=hires_steps,
+        )
+        if shared is not None:
+            shared["warnings"] = [*warnings, *shared.get("warnings", [])]
+            shared["directives"] = directives
+            shared["options_used"] = {
+                "seed": parser_seed,
+                "use_visitor": use_visitor,
+                "use_old_scheduling": use_old_scheduling,
+                "prompt_cfg_behavior": str(options.get("prompt_cfg_behavior", "replace_ui")),
+                "wildcard_directory": str(options.get("wildcard_directory", "wildcards")),
+                "prompt_expansion_scope": str(options.get("prompt_expansion_scope", "per_batch")),
+                "request_scoped_backend_updates": {},
+            }
+            return shared
+
+        backend = self._backend()
         try:
             with self._backend_option_context(backend, options) as backend_updates:
                 schedules = backend.get_learned_conditioning_prompt_schedules(
@@ -450,7 +483,6 @@ class SuperHybridPromptParserAdapter:
 
     def parse(self, request: PromptParseRequest) -> PromptParseResult:
         started = time.perf_counter()
-        backend = self._backend()
         options = dict(request.parser_options or {})
         warnings: list[str] = []
         supported_options = {
@@ -480,6 +512,59 @@ class SuperHybridPromptParserAdapter:
         use_visitor = bool(self._option(options, "use_visitor", True))
         use_old_scheduling = bool(self._option(options, "use_old_scheduling", False))
         conditioning_prompt = _remove_cfg_directive(request.raw_prompt)
+        shared = execute_shared_classic(
+            request,
+            parser_namespace=self.descriptor.parser_id,
+            parser_version=self.descriptor.version,
+            source=conditioning_prompt,
+        )
+        if shared is not None:
+            warnings.extend(shared.warnings)
+            elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
+            plan = shared.conditioning_plan
+            parsed = shared.parsed
+            return PromptParseResult(
+                parser_id=self.descriptor.parser_id,
+                parser_version=self.descriptor.version,
+                parser_contract_version=self.descriptor.contract_version,
+                raw_prompt=request.raw_prompt,
+                canonical_prompt=shared.canonical_prompt,
+                canonical_structure=shared.canonical_structure,
+                schedules=parsed.schedules,
+                conditioning_source=parsed,
+                semantic_ir=shared.semantic_ir,
+                conditioning_plan=plan,
+                warnings=warnings,
+                diagnostics={
+                    "parse_duration_ms": elapsed_ms,
+                    "raw_prompt_length": len(request.raw_prompt),
+                    "conditioning_prompt": conditioning_prompt,
+                    "canonical_prompt_length": len(shared.canonical_prompt),
+                    "schedule_count": len(parsed.schedules or []),
+                    "branch_count": sum(len(row) for row in getattr(parsed.multicond, "batch", []) or []),
+                    "warning_count": len(warnings),
+                    "fallback_behavior": "safe_flatten" if plan.fallbacks else "none",
+                    "shared_classic_semantics": True,
+                    "conditioning_plan_contract": plan.contract,
+                    "model_family_semantics": dict(shared.model_family_semantics),
+                    "relationship_diagnostics": [item.to_dict() for item in plan.relationship_diagnostics],
+                    "ppsr_semantic_record": dict(shared.ppsr_semantic_record),
+                    "ppsr_replay": dict(shared.replay_diagnostics),
+                    "semantic_digest": dict(shared.ppsr_semantic_record.get("semantic_digest") or {}),
+                    "options_used": {
+                        "seed": seed,
+                        "use_visitor": use_visitor,
+                        "use_old_scheduling": use_old_scheduling,
+                        "prompt_cfg_behavior": str(options.get("prompt_cfg_behavior", "replace_ui")),
+                        "wildcard_directory": str(options.get("wildcard_directory", "wildcards")),
+                        "prompt_expansion_scope": str(options.get("prompt_expansion_scope", "per_batch")),
+                        "request_scoped_backend_updates": {},
+                    },
+                },
+                directives=directives,
+            )
+
+        backend = self._backend()
         prompts = backend.SdConditioning(
             [conditioning_prompt],
             is_negative_prompt=request.prompt_role in {"negative", "hires_negative"},

@@ -141,6 +141,17 @@ class SamplerTraceMixin:
             return
 
         payload = dict(metadata or {})
+        progress_reporter = None
+        if state is not None:
+            state_extra = getattr(state, "extra", None)
+            if isinstance(state_extra, dict):
+                progress_reporter = state_extra.get("progress_reporter")
+        phase_index = getattr(progress_reporter, "phase_index", None)
+        if phase_index is not None:
+            try:
+                payload.setdefault("phase_index", max(0, int(phase_index)))
+            except (TypeError, ValueError):
+                pass
         payload.setdefault(
             "sampler_name",
             getattr(request, "sampler_name", None) or getattr(self, "SAMPLER_NAME", ""),

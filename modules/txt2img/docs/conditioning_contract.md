@@ -1,269 +1,180 @@
-# Prompt Conditioning + Negative Conditioning Contract
-
-## Overview
-
-This document defines the **prompt conditioning contract** for the
-txt2img pipeline.
-
-The goal is to ensure all components---parser, adapter, pipeline, and
-sampler---agree on:
-
--   what conditioning data looks like
--   how positive and negative prompts are handled
--   how stepwise prompt scheduling works
--   how conditioning is passed into the model
-
-This is a **Phase 1 (SD1-style)** contract and intentionally keeps
-things simple and stable.
-
-------------------------------------------------------------------------
-
-## Core Concept
-
-The pipeline operates on a unified object:
-
-``` python
-ConditioningOutput
-```
-
-This object is produced by the **PromptConditioningAdapter** and
-consumed by:
-
--   pipeline
--   sampler
--   stepwise conditioning resolver (optional)
-
-------------------------------------------------------------------------
-
-## ConditioningOutput Structure
-
-### Required Fields
-
-These fields must always be present:
-
-``` python
-cond: torch.Tensor
-uncond: torch.Tensor
-```
-
--   `cond` → positive prompt conditioning
--   `uncond` → negative prompt conditioning
-
-These are passed directly into the model (e.g. UNet).
-
-------------------------------------------------------------------------
-
-### Optional Fields
-
-``` python
-pooled_cond: torch.Tensor | None
-pooled_uncond: torch.Tensor | None
-prompt_schedules: dict[str, Any]
-extra: dict[str, Any]
-```
-
--   `pooled_*` → reserved for future models (e.g. SDXL)
--   `prompt_schedules` → parsed scheduling data from prompt parser
--   `extra` → extension space for additional features
-
-------------------------------------------------------------------------
-
-## Negative Prompt Contract
-
-Negative conditioning is always present.
-
-Rules:
-
--   If user provides no negative prompt → use empty string `""`
--   `uncond` must always exist
--   Samplers should never need to handle "missing negative conditioning"
-
-------------------------------------------------------------------------
-
-## Conditioning Type (Phase 1)
-
-For this phase, conditioning is strictly:
-
-``` python
-torch.Tensor
-```
-
-Not supported yet:
-
--   dict-based conditioning
--   multi-encoder conditioning
--   SDXL-style conditioning structures
-
-These may be added later without breaking the contract.
-
-------------------------------------------------------------------------
-
-## Prompt Encoding Contract
-
-The system expects a model that exposes:
-
-``` python
-get_learned_conditioning(texts: list[str]) -> torch.Tensor
-```
-
-This function is responsible for:
-
--   tokenizing text
--   encoding into conditioning tensors
-
-The adapter will call this function to produce `cond` and `uncond`.
-
-------------------------------------------------------------------------
-
-## Stepwise Prompt Scheduling
-
-Stepwise prompt changes are optional.
-
-### Resolver Contract
-
-If stepwise scheduling is used:
-
-``` python
-conditioning.extra["resolver"]
-```
-
-must exist and implement:
-
-``` python
-resolve(step_index: int) -> tuple[torch.Tensor, torch.Tensor]
-```
-
-### Behavior
-
--   If resolver exists → sampler can update conditioning per step
--   If not → static conditioning is used for entire generation
-
-------------------------------------------------------------------------
-
-## Canonical Step Conditioning Function
-
-All samplers should use:
-
-``` python
-resolve_step_conditioning(conditioning, step_index, latents, state)
-```
-
-This function:
-
--   returns correct `(cond, uncond)` for current step
--   handles resolver logic automatically
--   ensures dtype/device alignment
-
-------------------------------------------------------------------------
-
-## Sampler Expectations
-
-Samplers may assume:
-
--   `conditioning.cond` exists
--   `conditioning.uncond` exists
--   `conditioning.extra["resolver"]` may exist
-
-Samplers should:
-
--   use static conditioning OR
--   call step resolver per step
-
-------------------------------------------------------------------------
-
-## Model Invocation Contract
-
-The current pipeline uses:
-
-``` python
-unet(
-    sample=latents,
-    timestep=sigma,
-    encoder_hidden_states=cond
-)
-```
-
-This means:
-
--   conditioning is passed via `encoder_hidden_states`
--   conditioning must match expected UNet shape
-
-------------------------------------------------------------------------
-
-## Design Principles
-
-### 1. Separation of Responsibilities
-
--   Parser → builds prompt schedules
--   Adapter → converts prompts into conditioning tensors
--   Pipeline → passes conditioning forward
--   Sampler → consumes conditioning
-
-------------------------------------------------------------------------
-
-### 2. Always Produce cond + uncond
-
-Even if:
-
--   negative prompt is empty
--   scheduling is not used
-
-------------------------------------------------------------------------
-
-### 3. Keep Contract Narrow
-
-This phase intentionally avoids:
-
--   SDXL complexity
--   multi-conditioning dicts
--   image conditioning
--   controlnet-style conditioning
-
-------------------------------------------------------------------------
-
-### 4. Future Compatibility
-
-The contract is designed to expand later to support:
-
--   dict-based conditioning
--   pooled embeddings
--   multiple encoders
--   advanced prompt blending
-
-------------------------------------------------------------------------
-
-## Summary
-
-### Required
-
--   `cond: torch.Tensor`
--   `uncond: torch.Tensor`
-
-### Optional
-
--   `extra["resolver"]` for stepwise scheduling
--   pooled conditioning (future use)
-
-### Key Rule
-
-> Every generation must have valid positive (`cond`) and negative
-> (`uncond`) conditioning tensors.
-
-------------------------------------------------------------------------
-
-## Next Steps (Future Work)
-
-Planned extensions:
-
--   dict-based conditioning support
--   SDXL-style conditioning
--   multi-encoder pipelines
--   conditioning-aware schedulers
-
-------------------------------------------------------------------------
+# Prompt Conditioning Contract
 
 ## Status
 
-This contract reflects the current implementation and should be treated
-as the **authoritative reference** for conditioning behavior in the
-txt2img pipeline.
+This document reflects the PPSR-07 conditioning runtime. Prompt parsing is model-neutral; model-family runtimes explicitly declare which conditioning channels are safe to compose.
+
+## Core output
+
+`PromptConditioningAdapter` produces `ConditioningOutput` with:
+
+```python
+cond: torch.Tensor
+uncond: torch.Tensor
+pooled_cond: torch.Tensor | None
+pooled_uncond: torch.Tensor | None
+prompt_schedules: dict
+extra: dict
+```
+
+Positive and negative conditioning are always present. An empty negative prompt is encoded as `""` rather than represented by a missing tensor.
+
+## Semantic parser boundary
+
+PPSR compiles prompt syntax into a model-neutral conditioning plan before text encoding. Structural controls such as:
+
+```text
+{}
+::
+:::
+!
+!!
+[a:b:n]
+[a|b]
+```
+
+must not reach CLIP/T5 unless explicitly escaped as literal user text.
+
+The semantic hierarchy is resolved in this order:
+
+```text
+member encoder outputs
+  -> group-local composition
+  -> sequence / relationship-local composition
+  -> outer / AND composition
+```
+
+Every scope normalizes only its own local weights.
+
+## Runtime capability contract
+
+IMAGE_GEN-owned text-conditioning runtimes expose:
+
+```python
+semantic_conditioning_capabilities() -> SemanticConditioningCapabilities
+```
+
+Contract version:
+
+```text
+image-gen-semantic-conditioning-capabilities-v1
+```
+
+The declaration includes:
+
+```text
+architecture
+runtime_name
+output_kind
+composable_fields
+required_fields
+supports_group_conditioning
+supports_sequence_conditioning
+supports_temporal_conditioning
+supports_pooled_conditioning
+unsupported_structured_fields
+t5_policy
+safe_flatten_supported
+```
+
+The parser never infers these capabilities from filenames.
+
+## Qualified family channels
+
+### SD1.x / local CLIP
+
+```text
+cross_attention
+```
+
+Tensor conditioning is composed with the PPSR hierarchy.
+
+### SD2.x / OpenCLIP
+
+```text
+cross_attention
+```
+
+The qualified 77-token / 1024-wide OpenCLIP runtime uses the same PPSR hierarchy.
+
+### SDXL
+
+```text
+cross_attention
+pooled
+```
+
+Both channels are composed with the same semantic member weights. Token conditioning and pooled conditioning from different semantic members must never be mixed by index.
+
+### SD3 / SD3.5
+
+```text
+cross_attention   # combined CLIP-L/G + T5 sequence
+pooled            # combined CLIP-L/G pooled projection
+```
+
+When T5 is disabled, its zero replacement sequence remains zero after semantic composition. When T5 is enabled, each branch uses the same branch text and the same PPSR weight as the CLIP channels.
+
+## Structured payload validation
+
+If a runtime returns a dict, every `required_field` must be present. A structured field not declared in either `composable_fields` or `unsupported_structured_fields` is rejected rather than silently dropped. This forces new model-family conditioning fields to receive an explicit composition policy.
+
+## Safe fallback
+
+If a runtime explicitly declares that it cannot preserve a required group, sequence, or temporal operation, PPSR does not leak control punctuation and does not pretend full support.
+
+The runtime adaptation layer:
+
+1. renders a punctuation-safe flat representation;
+2. resolves temporal controls to a stable punctuation-free concept set when necessary;
+3. encodes one flat branch;
+4. records `model_family_safe_flatten` and the degradation reason.
+
+Unknown third-party/custom runtimes without a capability declaration retain legacy compatibility behavior; IMAGE_GEN does not guess their architecture from names or dimensions.
+
+## Step resolver
+
+`conditioning.extra["resolver"]` implements:
+
+```python
+resolve(step_index) -> (cond, uncond)
+```
+
+For SDXL/SD3, `conditioning.extra["pooled_resolver"]` resolves the same parsed schedules and semantic weights for pooled conditioning.
+
+Temporal schedule boundaries are resolved against the active pass step count, including hires passes.
+
+## Weight rule
+
+Typed weights are local to their grammar scope. Example:
+
+```text
+{cat:2,dog:1}:0.5 AND bird:1.5
+```
+
+resolves as:
+
+```text
+group outer share = 0.5 / (0.5 + 1.5) = 0.25
+cat inside group  = 2/3
+ dog inside group = 1/3
+bird outer share  = 1.5 / 2.0 = 0.75
+
+final cat  = 0.25 * 2/3 = 1/6
+final dog  = 0.25 * 1/3 = 1/12
+final bird = 3/4
+```
+
+PPSR-07 tests these effective final contributions through the actual hierarchical resolver, not only through parser metadata.
+
+## Key invariants
+
+```text
+{standing} ~= standing
+```
+
+on every qualified model family.
+
+For a multi-member group, all required composable conditioning channels use the same normalized semantic weights.
+
+No branch expansion may gain additional influence merely because it produced more encoder texts.

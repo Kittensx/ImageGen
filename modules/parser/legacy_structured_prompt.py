@@ -56,6 +56,10 @@ class SequenceItem:
     node: LegacyNode
     weight: float = 1.0
     active_until_step: int | None = None
+    source_text: str = ""
+    source_start: int | None = None
+    source_end: int | None = None
+    terminator: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,12 +67,15 @@ class SequenceNode(LegacyNode):
     items: tuple[SequenceItem, ...]
     weight: float = 1.0
     active_until_step: int | None = None
+    syntax_origin: str = "legacy_single_colon_sequence"
 
 
 @dataclass(frozen=True)
 class DeepSequenceNode(LegacyNode):
     owner: LegacyNode
     items: tuple[SequenceItem, ...]
+    syntax_origin: str = "classic_owner_sequence"
+    top_terminator: str = "!!"
 
 
 @dataclass(frozen=True)
@@ -203,8 +210,14 @@ def _split_group_items(source: str) -> list[str]:
     return [item.strip() for item in output if item.strip()]
 
 
+def unescape_classic_literals(text: str) -> str:
+    """Unescape Classic structural punctuation after structure is consumed."""
+    return re.sub(r"\\([:{}|,!\\])", r"\1", str(text or ""))
+
+
 def _unescape_literal(text: str) -> str:
-    return re.sub(r"\\([:{}|,\\])", r"\1", text)
+    # Keep escaped close markers protected until ParentChild/Sequence rendering.
+    return re.sub(r"\\([:{}|,\\])", r"\1", str(text or ""))
 
 
 def _strip_close_marker(text: str) -> str:
@@ -221,6 +234,35 @@ def _strip_close_marker(text: str) -> str:
 
 def _unescape_close_literal(text: str) -> str:
     return str(text or "").replace(r"\!", "!")
+
+
+def _count_trailing_unescaped_bangs(source: str) -> int:
+    text = str(source or "").rstrip()
+    count = 0
+    index = len(text) - 1
+    while index >= 0 and text[index] == "!" and not _is_escaped(text, index):
+        count += 1
+        index -= 1
+    return count
+
+
+def normalize_legacy_structured_source(source: str) -> tuple[str, tuple[str, ...]]:
+    """Normalize PPSR Classic compatibility aliases without losing diagnostics.
+
+    IMAGE_GEN's canonical top-level close is ``!!``.  The Prompt Parser 21 /
+    SuperHybrid-derived ``!!!`` close is retained as a compatibility alias so
+    old prompts can be inspected and replayed, but it is normalized to the
+    canonical semantic form before structural parsing.
+    """
+    text = str(source or "")
+    trimmed = text.rstrip()
+    suffix = text[len(trimmed):]
+    if ":::" in trimmed and _count_trailing_unescaped_bangs(trimmed) == 3:
+        normalized = trimmed[:-3] + "!!" + suffix
+        return normalized, (
+            "PPSR-01 compatibility: normalized legacy/vendor top-level close '!!!' to canonical '!!'.",
+        )
+    return text, ()
 
 
 def _numeric_kind(value: str) -> tuple[str, float | int] | None:
@@ -273,11 +315,13 @@ def _parse_sequence_wrapper(source: str) -> SequenceNode | None:
             items=inner_node.items,
             weight=inner_node.weight,
             active_until_step=int(value),
+            syntax_origin="legacy_single_colon_sequence_wrapper",
         )
     return SequenceNode(
         items=inner_node.items,
         weight=float(value),
         active_until_step=inner_node.active_until_step,
+        syntax_origin="legacy_single_colon_sequence_wrapper",
     )
 
 
@@ -345,16 +389,21 @@ def _parse_closed_sequence_items(source: str) -> tuple[SequenceItem, ...] | None
         closer = _find_sequence_closer(text, value_start)
         if closer is None:
             return None
-        close_index, _close_symbol = closer
+        close_index, close_symbol = closer
         value = text[value_start:close_index].strip()
         if not value:
             return None
+        item_end = close_index + 1
         items.append(
             SequenceItem(
                 node=ParentChildNode(
                     _parse_nonsequence_atom(label),
                     _parse_nonsequence_atom(value),
-                )
+                ),
+                source_text=text[index:item_end].strip(),
+                source_start=index,
+                source_end=item_end,
+                terminator=close_symbol,
             )
         )
         index = close_index + 1
@@ -369,7 +418,7 @@ def _parse_closed_sequence(source: str) -> SequenceNode | None:
     items = _parse_closed_sequence_items(source)
     if not items:
         return None
-    return SequenceNode(items=items)
+    return SequenceNode(items=items, syntax_origin="classic_closed_sequence")
 
 
 def _parse_deep_sequence(source: str) -> DeepSequenceNode | None:
@@ -388,11 +437,21 @@ def _parse_deep_sequence(source: str) -> DeepSequenceNode | None:
     items = _parse_closed_sequence_items(body)
     if not items:
         return None
-    return DeepSequenceNode(owner=_parse_nonsequence_atom(owner_text), items=items)
+    # PPSR-06A: the owner may itself be a legacy ``:`` sequence.  Preserve
+    # that sequence structurally so the compiler can distinguish terminal
+    # attachment (ungrouped sequence owner) from whole-composition parent
+    # scope (the same sequence wrapped in ``{...}``).
+    return DeepSequenceNode(
+        owner=parse_legacy_node(owner_text),
+        items=items,
+        syntax_origin="classic_owner_sequence",
+        top_terminator="!!",
+    )
 
 
 def parse_legacy_node(source: str) -> LegacyNode:
-    text = str(source or "").strip()
+    normalized_source, _compatibility_warnings = normalize_legacy_structured_source(source)
+    text = str(normalized_source or "").strip()
     if not text:
         return TextNode("")
 
@@ -434,9 +493,10 @@ def parse_legacy_node(source: str) -> LegacyNode:
                         node=_parse_nonsequence_node(part),
                         weight=weight,
                         active_until_step=active_until,
+                        source_text=part,
                     )
                 )
-            return SequenceNode(tuple(items))
+            return SequenceNode(tuple(items), syntax_origin="legacy_single_colon_sequence")
 
     closed_sequence = _parse_closed_sequence(text)
     if closed_sequence is not None:
@@ -456,11 +516,28 @@ def _parse_nonsequence_node(text: str) -> LegacyNode:
     return _parse_nonsequence_atom(text)
 
 
+def _parse_group_item(text: str) -> LegacyNode:
+    """Parse one group member with group-local numeric ownership.
+
+    Inside ``{...}``, a trailing top-level numeric suffix is a relative group
+    weight regardless of integer/decimal spelling.  This removes the old
+    integer-vs-decimal guess for group members while leaving schedule syntax
+    inside ``[]`` untouched because top-level splitting is depth-aware.
+    """
+    value = str(text or "").strip()
+    parts = [part.strip() for part in _split_top_level(value, ":")]
+    if len(parts) >= 2 and _NUMBER_RE.fullmatch(parts[-1]):
+        base_source = ":".join(parts[:-1]).strip()
+        if base_source:
+            return WeightedNode(parse_legacy_node(base_source), float(parts[-1]))
+    return parse_legacy_node(value)
+
+
 def _parse_nonsequence_atom(text: str) -> LegacyNode:
     text = text.strip()
     if _balanced_outer(text, "{", "}"):
         inner = text[1:-1]
-        items = tuple(parse_legacy_node(item) for item in _split_group_items(inner))
+        items = tuple(_parse_group_item(item) for item in _split_group_items(inner))
         return GroupNode(items)
     return TextNode(_unescape_literal(text))
 
@@ -587,11 +664,17 @@ def node_to_dict(node: LegacyNode) -> dict:
             "type": "deep_sequence",
             "equal_weight_default": True,
             "owner": node_to_dict(node.owner),
+            "syntax_origin": node.syntax_origin,
+            "top_terminator": node.top_terminator,
             "items": [
                 {
                     "node": node_to_dict(item.node),
                     "weight": float(item.weight),
                     "active_until_step": item.active_until_step,
+                    "source_text": item.source_text,
+                    "source_start": item.source_start,
+                    "source_end": item.source_end,
+                    "terminator": item.terminator,
                 }
                 for item in node.items
             ],
@@ -603,11 +686,16 @@ def node_to_dict(node: LegacyNode) -> dict:
             "equal_weight_default": True,
             "weight": float(node.weight),
             "active_until_step": node.active_until_step,
+            "syntax_origin": node.syntax_origin,
             "items": [
                 {
                     "node": node_to_dict(item.node),
                     "weight": float(item.weight),
                     "active_until_step": item.active_until_step,
+                    "source_text": item.source_text,
+                    "source_start": item.source_start,
+                    "source_end": item.source_end,
+                    "terminator": item.terminator,
                 }
                 for item in node.items
             ],

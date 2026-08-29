@@ -111,6 +111,14 @@ class PersistentTxt2ImgWarmWorker:
         del ticket
         snapshot_payload = dict(snapshot.to_dict())
         snapshot_payload["saved_paths"] = [str(record.image_path) for record in records]
+        metadata_warnings = [
+            str(warning)
+            for record in records
+            for warning in (getattr(record, "metadata_warnings", None) or [])
+            if str(warning or "").strip()
+        ]
+        if metadata_warnings:
+            snapshot_payload["warnings"] = metadata_warnings
         self._emit_async_output_save_status(snapshot_payload)
         for record in records:
             seed_label = "unknown" if getattr(record, "seed", None) is None else str(record.seed)

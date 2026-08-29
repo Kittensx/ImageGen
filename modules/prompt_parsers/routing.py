@@ -54,6 +54,7 @@ _CAPABILITY_ALIASES = {
     "plain_text": ("plain_text", "positive_prompt"),
     "sequence": ("sequence", "scheduling"),
     "deep_sequence": ("deep_sequence", "scheduling"),
+    "group": ("group",),
 }
 
 _PARSER21_ONLY = {
@@ -116,6 +117,13 @@ _NODE_FEATURES = {
     "attention_group": "attention_weights",
     "sequence": "sequence",
     "deep_sequence": "deep_sequence",
+    "group": "group",
+    "relation": "sequence",
+    "owner_sequence": "deep_sequence",
+    "literal": "plain_text",
+    "scheduled": "scheduled_prompts",
+    "alternate": "alternates",
+    "weighted": "attention_weights",
 }
 
 
@@ -170,6 +178,31 @@ class PromptMergeRegistry:
         return operation
 
 
+def _semantic_ir_nodes(structure: Mapping[str, Any]) -> list[dict[str, Any]]:
+    semantic = structure.get("semantic_ir") if isinstance(structure, Mapping) else None
+    if not isinstance(semantic, Mapping):
+        return []
+    output: list[dict[str, Any]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, Mapping):
+            node_type = str(value.get("type") or "").strip().lower()
+            if node_type:
+                output.append(dict(value))
+            for key, child in value.items():
+                if key in {"type", "source_text", "value"}:
+                    continue
+                visit(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child)
+
+    visit(semantic.get("root"))
+    for annotation in semantic.get("annotations") or []:
+        visit(annotation)
+    return output
+
+
 class PromptCapabilityAnalyzer:
     def analyze(self, canonical_structure_or_source: Mapping[str, Any] | str) -> CapabilityAnalysis:
         if isinstance(canonical_structure_or_source, Mapping):
@@ -185,8 +218,26 @@ class PromptCapabilityAnalyzer:
         features: list[str] = []
         nodes: list[dict[str, Any]] = []
         canonical_nodes = []
+        semantic_nodes = []
         if isinstance(canonical_structure_or_source, Mapping):
             canonical_nodes = list(canonical_structure_or_source.get("nodes") or [])
+            semantic_nodes = _semantic_ir_nodes(canonical_structure_or_source)
+
+        for index, node in enumerate(semantic_nodes):
+            node_type = str(node.get("type") or "").strip().lower()
+            feature = _NODE_FEATURES.get(node_type)
+            if not feature:
+                continue
+            if feature not in features:
+                features.append(feature)
+            nodes.append({
+                "type": "capability_node",
+                "feature": feature,
+                "semantic_ir_node_index": index,
+                "source": node.get("source_text") or node.get("value") or "",
+                "derived_from": "semantic_ir",
+            })
+
         for index, raw_node in enumerate(canonical_nodes):
             node = dict(raw_node or {})
             node_type = str(node.get("type") or "").strip().lower()
@@ -197,14 +248,15 @@ class PromptCapabilityAnalyzer:
                 continue
             if feature not in features:
                 features.append(feature)
-            nodes.append({
-                "type": "capability_node",
-                "feature": feature,
-                "canonical_node_index": index,
-                "source": node.get("source") or node.get("value") or "",
-                "start": node.get("start"),
-                "end": node.get("end"),
-            })
+            if not any(item.get("feature") == feature for item in nodes):
+                nodes.append({
+                    "type": "capability_node",
+                    "feature": feature,
+                    "canonical_node_index": index,
+                    "source": node.get("source") or node.get("value") or "",
+                    "start": node.get("start"),
+                    "end": node.get("end"),
+                })
         # Canonical node inspection is authoritative. The bounded pattern pass
         # fills gaps for lossless text constructs not yet represented as nodes.
         for feature, pattern in _FEATURE_PATTERNS:

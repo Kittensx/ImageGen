@@ -480,6 +480,7 @@ class LivePreviewFrameWriter:
     ) -> dict[str, Any]:
         metadata = dict(frame.metadata or {})
         record = {
+            "phase_index": metadata.get("phase_index"),
             "step": int(step_number),
             "step_index": max(0, int(step_number) - 1),
             "total_steps": max(1, int(frame.total_steps)),
@@ -653,6 +654,7 @@ class LivePreviewFrameWriter:
             self.sampler_step_durations_ms.append(sampler_step_duration_ms)
             self.preview_overhead_ratios.append(overhead_ratio)
         record = {
+            "phase_index": metadata.get("phase_index"),
             "step": int(step_number),
             "step_index": max(0, int(step_number) - 1),
             "total_steps": max(1, int(total_steps)),

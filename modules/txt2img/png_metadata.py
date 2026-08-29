@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Mapping
 
+from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
 from image_gen.program_metadata import (
@@ -19,6 +22,32 @@ from modules.txt2img.manifest_io import manifest_to_replay_dict
 
 
 _LORA_INFOTEXT_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+EMBEDDED_METADATA_FULL_REPLAY = "full_replay"
+EMBEDDED_METADATA_COMPATIBILITY = "compatibility"
+SUPPORTED_EMBEDDED_METADATA_MODES = {
+    EMBEDDED_METADATA_FULL_REPLAY,
+    EMBEDDED_METADATA_COMPATIBILITY,
+}
+_IMAGEGEN_XMP_NAMESPACE = "https://imagegen.local/ns/1.0/"
+_XMP_META_NAMESPACE = "adobe:ns:meta/"
+_RDF_NAMESPACE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+
+
+def normalize_embedded_metadata_mode(value: Any) -> str:
+    token = str(value or EMBEDDED_METADATA_FULL_REPLAY).strip().casefold().replace("-", "_")
+    aliases = {
+        "full": EMBEDDED_METADATA_FULL_REPLAY,
+        "replay": EMBEDDED_METADATA_FULL_REPLAY,
+        "full_replay_metadata": EMBEDDED_METADATA_FULL_REPLAY,
+        "compat": EMBEDDED_METADATA_COMPATIBILITY,
+        "compatibility_only": EMBEDDED_METADATA_COMPATIBILITY,
+        "civitai": EMBEDDED_METADATA_COMPATIBILITY,
+    }
+    token = aliases.get(token, token)
+    if token not in SUPPORTED_EMBEDDED_METADATA_MODES:
+        return EMBEDDED_METADATA_FULL_REPLAY
+    return token
 
 
 def _trim_number(value: Any) -> str:
@@ -233,7 +262,11 @@ def manifest_to_civitai_parameters(manifest: GenerationManifest) -> str:
     ])
 
 
-def build_png_text_chunks(manifest: GenerationManifest) -> dict[str, str]:
+def build_png_text_chunks(
+    manifest: GenerationManifest,
+    *,
+    metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
+) -> dict[str, str]:
     # Embed the same compact replay payload used by the default JSON sidecar.
     # Full runtime diagnostics remain available in the optional
     # ``*.diagnostics.json`` sidecar instead of inflating every PNG.
@@ -247,7 +280,7 @@ def build_png_text_chunks(manifest: GenerationManifest) -> dict[str, str]:
 
     parameters = manifest_to_civitai_parameters(manifest)
     manifest_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return {
+    chunks = {
         "parameters": parameters,
         "Comment": parameters,
         "Software": PRODUCT_NAME,
@@ -264,14 +297,114 @@ def build_png_text_chunks(manifest: GenerationManifest) -> dict[str, str]:
         "imagegen_metadata_version": str(
             application.get("metadata_schema_version") or METADATA_SCHEMA_VERSION
         ),
-        "image_gen_manifest": manifest_json,
-        "image_gen_manifest_version": str(getattr(manifest, "manifest_version", "1.0")),
-        "image_gen_manifest_type": str(getattr(manifest, "manifest_type", "txt2img")),
     }
+    if normalize_embedded_metadata_mode(metadata_mode) == EMBEDDED_METADATA_FULL_REPLAY:
+        chunks.update({
+            "image_gen_manifest": manifest_json,
+            "image_gen_manifest_version": str(getattr(manifest, "manifest_version", "1.0")),
+            "image_gen_manifest_type": str(getattr(manifest, "manifest_type", "txt2img")),
+        })
+    return chunks
 
 
-def build_pnginfo(manifest: GenerationManifest, *, existing: PngInfo | None = None) -> PngInfo:
+def build_pnginfo(
+    manifest: GenerationManifest,
+    *,
+    existing: PngInfo | None = None,
+    metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
+) -> PngInfo:
     info = existing if existing is not None else PngInfo()
-    for key, value in build_png_text_chunks(manifest).items():
+    for key, value in build_png_text_chunks(manifest, metadata_mode=metadata_mode).items():
         info.add_text(str(key), str(value))
     return info
+
+
+def _b64_utf8(value: str) -> str:
+    return base64.b64encode(str(value or "").encode("utf-8")).decode("ascii")
+
+
+def _decode_b64_utf8(value: str) -> str:
+    return base64.b64decode(str(value or "").encode("ascii"), validate=True).decode("utf-8")
+
+
+def build_webp_xmp(
+    manifest: GenerationManifest,
+    *,
+    metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
+) -> bytes:
+    mode = normalize_embedded_metadata_mode(metadata_mode)
+    chunks = build_png_text_chunks(manifest, metadata_mode=mode)
+    ET.register_namespace("x", _XMP_META_NAMESPACE)
+    ET.register_namespace("rdf", _RDF_NAMESPACE)
+    ET.register_namespace("imagegen", _IMAGEGEN_XMP_NAMESPACE)
+    xmpmeta = ET.Element(f"{{{_XMP_META_NAMESPACE}}}xmpmeta")
+    rdf = ET.SubElement(xmpmeta, f"{{{_RDF_NAMESPACE}}}RDF")
+    description = ET.SubElement(rdf, f"{{{_RDF_NAMESPACE}}}Description")
+    description.set(f"{{{_RDF_NAMESPACE}}}about", "")
+    description.set(f"{{{_IMAGEGEN_XMP_NAMESPACE}}}metadataMode", mode)
+    description.set(f"{{{_IMAGEGEN_XMP_NAMESPACE}}}schemaVersion", str(chunks.get("imagegen_metadata_version") or METADATA_SCHEMA_VERSION))
+    parameters = ET.SubElement(description, f"{{{_IMAGEGEN_XMP_NAMESPACE}}}parameters")
+    parameters.set("encoding", "base64-utf8")
+    parameters.text = _b64_utf8(chunks.get("parameters", ""))
+    if mode == EMBEDDED_METADATA_FULL_REPLAY and chunks.get("image_gen_manifest"):
+        replay = ET.SubElement(description, f"{{{_IMAGEGEN_XMP_NAMESPACE}}}replay")
+        replay.set("encoding", "base64-utf8-json")
+        replay.text = _b64_utf8(chunks["image_gen_manifest"])
+    software = ET.SubElement(description, f"{{{_IMAGEGEN_XMP_NAMESPACE}}}software")
+    software.text = str(chunks.get("Software") or PRODUCT_NAME)
+    return ET.tostring(xmpmeta, encoding="utf-8", xml_declaration=False)
+
+
+def build_webp_exif(
+    manifest: GenerationManifest,
+    *,
+    metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
+) -> Image.Exif:
+    # WebP EXIF is used as a compatibility mirror. XMP carries the full replay
+    # payload when requested, while these conventional fields make the compact
+    # parameter text available to readers that do not understand ImageGen XMP.
+    parameters = manifest_to_civitai_parameters(manifest)
+    exif = Image.Exif()
+    exif[0x010E] = parameters  # ImageDescription
+    exif[0x0131] = PRODUCT_NAME  # Software
+    exif[0x9286] = b"ASCII\x00\x00\x00" + parameters.encode("utf-8", errors="replace")  # UserComment
+    return exif
+
+
+def parse_webp_xmp(value: bytes | str | None) -> dict[str, str]:
+    if not value:
+        return {}
+    try:
+        raw = value.decode("utf-8", errors="replace") if isinstance(value, (bytes, bytearray)) else str(value)
+        root = ET.fromstring(raw)
+    except (ET.ParseError, ValueError, TypeError):
+        return {}
+    output: dict[str, str] = {}
+    description = root.find(f".//{{{_RDF_NAMESPACE}}}Description")
+    if description is not None:
+        output["metadata_mode"] = str(description.attrib.get(f"{{{_IMAGEGEN_XMP_NAMESPACE}}}metadataMode") or "")
+    for key in ("parameters", "replay", "software"):
+        node = root.find(f".//{{{_IMAGEGEN_XMP_NAMESPACE}}}{key}")
+        if node is None or node.text is None:
+            continue
+        text = str(node.text)
+        if str(node.attrib.get("encoding") or "").startswith("base64"):
+            try:
+                text = _decode_b64_utf8(text)
+            except Exception:
+                continue
+        output[key] = text
+    return output
+
+
+def webp_exif_parameters(exif: Image.Exif | None) -> str:
+    if exif is None:
+        return ""
+    description = exif.get(0x010E)
+    if description:
+        return str(description)
+    comment = exif.get(0x9286)
+    if isinstance(comment, bytes):
+        payload = comment[8:] if comment.startswith(b"ASCII\x00\x00\x00") else comment
+        return payload.decode("utf-8", errors="replace")
+    return str(comment or "")

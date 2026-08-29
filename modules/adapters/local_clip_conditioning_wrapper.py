@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import torch
 
+from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
+
 
 class LocalCLIPConditioningWrapper:
     def __init__(self, text_encoder, tokenizer, device, max_length: int = 77):
@@ -34,3 +36,18 @@ class LocalCLIPConditioningWrapper:
         return outputs.last_hidden_state
     def get_learned_conditioning(self, texts):
         return self.encode(texts)
+
+    def semantic_conditioning_capabilities(self) -> SemanticConditioningCapabilities:
+        return SemanticConditioningCapabilities(
+            architecture="sd1.x",
+            runtime_name=type(self).__name__,
+            output_kind="tensor",
+            composable_fields=("cross_attention",),
+            required_fields=("cross_attention",),
+        )
+
+    def contract_metadata(self) -> dict:
+        return {
+            "architecture": "sd1.x",
+            "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
+        }

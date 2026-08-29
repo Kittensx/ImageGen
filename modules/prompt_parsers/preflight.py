@@ -15,6 +15,7 @@ from image_gen.systems.regional_prompting import (
 )
 from modules.txt2img.seed_utils import parse_seed_range_expression, resolve_seed_sequence
 from modules.prompt_parsers.canonical import canonicalize_prompt
+from modules.prompt_parsers.inspection import build_semantic_inspection
 from modules.prompt_parsers.contracts import PromptParserError
 from modules.prompt_parsers.adapters.legacy import LegacyPromptParserAdapter
 from modules.prompt_parsers.adapters.parser21 import Parser21PromptParserAdapter
@@ -554,6 +555,20 @@ class PromptProcessingPreflight:
                 parser_id=parser_id,
             )
             canonicalization_duration_ms = round((time.perf_counter() - canonical_started) * 1000.0, 3)
+            semantic_inspection = build_semantic_inspection(
+                canonical_structure,
+                parser_warnings=list(canonical_warnings),
+            )
+            for semantic_warning in semantic_inspection.get("warnings") or []:
+                category = str(semantic_warning.get("category") or "parser_warning")
+                if category in {"semantic_fallback", "combination_limit_fallback", "unsupported_runtime_feature", "legacy_numeric_inference", "compatibility_alias"}:
+                    messages.append(_message(
+                        "behavior_warning",
+                        category,
+                        str(semantic_warning.get("message") or category),
+                        pass_name=pass_name,
+                        prompt_role=role,
+                    ))
             for warning in canonical_warnings:
                 messages.append(_message(
                     "behavior_warning",
@@ -569,6 +584,7 @@ class PromptProcessingPreflight:
                 "slot_index": 0,
                 "parser_canonical_prompt": canonical_prompt,
                 "parser_canonical_structure": canonical_structure,
+                "semantic_inspection": semantic_inspection,
                 "parser_validation": validation,
             }]
             for slot_index, slot_prompt in enumerate(slot_prompts[1:], start=1):
@@ -590,14 +606,16 @@ class PromptProcessingPreflight:
                         ),
                         seed=(parser_slot_seeds[slot_index] if parser_id == "superhybrid" else slot_seeds[slot_index]),
                     ) if callable(validator) and expansion_error is None else {"valid": True}
-                    slot_canonical, slot_structure, _ = canonicalize_prompt(
+                    slot_canonical, slot_structure, slot_warnings = canonicalize_prompt(
                         slot_translation.parser_input, parser_id=parser_id
                     )
+                    slot_inspection = build_semantic_inspection(slot_structure, parser_warnings=slot_warnings)
                     slot_previews.append({
                         **slot_translation.metadata(),
                         "slot_index": slot_index,
                         "parser_canonical_prompt": slot_canonical,
                         "parser_canonical_structure": slot_structure,
+                        "semantic_inspection": slot_inspection,
                         "parser_validation": slot_validation,
                     })
                 except Exception as exc:
@@ -614,6 +632,7 @@ class PromptProcessingPreflight:
                 **translated.metadata(),
                 "parser_canonical_prompt": canonical_prompt,
                 "parser_canonical_structure": canonical_structure,
+                "semantic_inspection": semantic_inspection,
                 "parser_validation": validation,
                 "route_plan": route_plan,
                 "shadow_comparison": shadow,
@@ -749,8 +768,14 @@ class PromptProcessingPreflight:
                 raise ValueError("hires_shortcut_profile_name is required when hires_shortcut_profile_mode is explicit.")
             hires_snapshot = source.get("hires_shortcut_profile_snapshot") if isinstance(source.get("hires_shortcut_profile_snapshot"), Mapping) else None
 
-        hires_positive = str(source.get("hires_positive_prompt") or source.get("positive_prompt") or "")
-        hires_negative = str(source.get("hires_negative_prompt") or source.get("negative_prompt") or "")
+        # Keep the user's hires prompt intent separate from the effective text
+        # used for validation/runtime. A blank hires prompt is a semantic
+        # inheritance marker, not a request to copy the current base prompt into
+        # persistent/replay state.
+        raw_hires_positive = str(source.get("hires_positive_prompt") or "")
+        raw_hires_negative = str(source.get("hires_negative_prompt") or "")
+        hires_positive = raw_hires_positive or str(source.get("positive_prompt") or "")
+        hires_negative = raw_hires_negative or str(source.get("negative_prompt") or "")
         recorded_hires_expansion = (
             dict(prompt_expansion_recorded.get("hires") or {})
             if isinstance(prompt_expansion_recorded, Mapping)
@@ -839,8 +864,11 @@ class PromptProcessingPreflight:
             "hires_shortcut_profile_mode": profile_mode,
             "hires_shortcut_profile_name": hires["shortcut_profile"]["profile_id"],
             "hires_shortcut_profile_snapshot": hires["shortcut_profile_snapshot"],
-            "hires_positive_prompt": hires_positive,
-            "hires_negative_prompt": hires_negative,
+            # Preserve blank-as-inherit semantics in the normalized request.
+            # The effective hires prompts remain available in report["hires"]
+            # and are recomputed by the runtime from the current base prompts.
+            "hires_positive_prompt": raw_hires_positive,
+            "hires_negative_prompt": raw_hires_negative,
             "prompt_shadow_compare": shadow_compare,
             "prompt_route_plan": {
                 "positive": dict(base["positive"].get("route_plan") or {}),
@@ -861,6 +889,10 @@ class PromptProcessingPreflight:
                 **hires,
                 "parser_mode": parser_mode,
                 "shortcut_profile_mode": profile_mode,
+                "prompt_inheritance": {
+                    "positive": raw_hires_positive == "",
+                    "negative": raw_hires_negative == "",
+                },
                 "interpretation_diff": interpretation_diff,
             },
             "normalized_fields": normalized_fields,

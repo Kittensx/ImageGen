@@ -57,6 +57,7 @@ _HIRES_REPLAY_FIELDS = (
     "hires_prompt_parser_mode",
     "hires_prompt_parser_name",
     "hires_prompt_parser_kwargs",
+    "hires_prompt_inheritance",
     "hires_shortcut_profile_mode",
     "hires_shortcut_profile_name",
     "hires_positive_prompt",

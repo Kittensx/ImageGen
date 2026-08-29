@@ -37,8 +37,12 @@ from modules.prompt_parsers import (
     default_prompt_parser_registry,
 )
 from modules.prompt_parsers.semantic_replay import (
+    PPSR_SEMANTIC_PASS_CONTRACT_VERSION,
+    SUPERHYBRID_SEMANTIC_BATCH_CONTRACT_VERSION,
     PromptSemanticReplayError,
+    build_ppsr_semantic_pass_record,
     build_superhybrid_semantic_record,
+    validate_ppsr_semantic_pass_record,
     validate_recorded_superhybrid_semantic_record,
 )
 from modules.prompt_shortcuts import (
@@ -53,6 +57,10 @@ from modules.adapters.local_clip_conditioning_wrapper import LocalCLIPConditioni
 from modules.adapters.sd2_openclip_conditioning import SD2OpenCLIPConditioningRuntime
 from modules.adapters.sdxl_conditioning import SDXLConditioningRuntime
 from modules.adapters.sd3_conditioning import SD3ConditioningRuntime
+from image_gen.contracts.model_conditioning import (
+    SemanticConditioningCapabilities,
+    semantic_conditioning_capabilities_for_runtime,
+)
 from image_gen.systems.guidance import (
     PromptCFGScheduleError,
     finalize_prompt_cfg_payload,
@@ -80,6 +88,7 @@ class StepConditioningResolver:
     positive_multicond: MulticondLearnedConditioning
     negative_multicond: MulticondLearnedConditioning
     total_steps: int
+    semantic_capabilities: SemanticConditioningCapabilities | None = None
 
     def _select_schedule_cond(
         self,
@@ -108,24 +117,58 @@ class StepConditioningResolver:
         *,
         value_key: str | None = None,
     ) -> torch.Tensor:
-        """
-        Resolves the active conditioning tensor for a given step.
+        """Resolve conditioning with hierarchical group and sequence scopes.
 
-        Output shape:
-          [batch, tokens, dim]  or whatever the underlying text encoder returns
+        PPSR-03 group variants are averaged first. PPSR-04 then averages active
+        members of each ``::`` / ``:::`` sequence using sequence-local weights.
+        The resolved sequence participates as one top-level component, so adding
+        more relations never changes its outer/AND weight. Activity changes only
+        renormalize the intended sequence scope.
         """
+        if self.semantic_capabilities is not None:
+            selected_key = value_key or "cross_attention"
+            if not self.semantic_capabilities.can_compose_field(selected_key):
+                raise ValueError(
+                    f"Conditioning field {selected_key!r} is not declared composable by "
+                    f"{self.semantic_capabilities.runtime_name}."
+                )
+
+        def weighted_average(tensors, weights):
+            if not tensors:
+                raise ValueError("No conditioning tensors available for weighted average.")
+            if len(tensors) == 1:
+                return tensors[0]
+            weight_tensor = torch.tensor(
+                weights,
+                device=tensors[0].device,
+                dtype=tensors[0].dtype,
+            )
+            weight_sum = weight_tensor.sum()
+            if abs(float(weight_sum.detach().cpu())) <= 1e-8:
+                raise ValueError("Conditioning weights sum to zero within one semantic scope.")
+            weight_tensor = weight_tensor / weight_sum
+            stacked = torch.stack(tensors, dim=0)
+            view_shape = [len(tensors)] + [1] * (stacked.ndim - 1)
+            return (stacked * weight_tensor.view(*view_shape)).sum(dim=0)
+
+        def ensure_consistent(entries, field, operation_kind, operation_id):
+            values = [entry[field] for entry in entries]
+            first = values[0]
+            if any(value != first for value in values[1:]):
+                raise ValueError(
+                    f"{operation_kind} operation {operation_id!r} has inconsistent {field}: {values}"
+                )
+            return first
+
         batch_outputs = []
 
         for batch_items in multicond.batch:
-            item_tensors = []
-            item_weights = []
+            resolved_items = []
 
             for item in batch_items:
                 schedules = item.schedules
 
-                # Defensive unwrap for legacy nesting:
-                # some existing code stores one ScheduledPromptConditioning whose
-                # .cond is itself a list[ScheduledPromptConditioning].
+                # Defensive unwrap for legacy nesting.
                 if (
                     len(schedules) == 1
                     and isinstance(getattr(schedules[0], "cond", None), list)
@@ -138,6 +181,25 @@ class StepConditioningResolver:
                 resolved_value = self._select_schedule_cond(schedules, step_index)
                 if isinstance(resolved_value, dict):
                     selected_key = value_key or "cross_attention"
+                    if self.semantic_capabilities is not None:
+                        payload_fields = set(str(key) for key in resolved_value)
+                        required_fields = set(self.semantic_capabilities.required_fields)
+                        missing = sorted(required_fields - payload_fields)
+                        if missing:
+                            raise KeyError(
+                                f"Structured conditioning from {self.semantic_capabilities.runtime_name} "
+                                f"is missing required field(s): {missing}."
+                            )
+                        declared = set(self.semantic_capabilities.composable_fields) | set(
+                            self.semantic_capabilities.unsupported_structured_fields
+                        )
+                        undeclared = sorted(payload_fields - declared)
+                        if undeclared:
+                            raise KeyError(
+                                f"Structured conditioning from {self.semantic_capabilities.runtime_name} "
+                                f"returned undeclared field(s): {undeclared}. Update the semantic "
+                                "conditioning capability contract before composing them."
+                            )
                     if selected_key not in resolved_value:
                         raise KeyError(
                             f"Structured conditioning is missing required field {selected_key!r}."
@@ -155,31 +217,97 @@ class StepConditioningResolver:
                         f"Resolved conditioning must be a tensor, got {type(cond_tensor)}"
                     )
 
-                item_tensors.append(cond_tensor)
-                weight_at_step = getattr(item, "weight_at_step", None)
-                if callable(weight_at_step):
-                    item_weights.append(float(weight_at_step(step_index + 1)))
-                else:
-                    item_weights.append(float(getattr(item, "weight", 1.0)))
+                active_check = getattr(item, "is_active_at_step", None)
+                active = (
+                    bool(active_check(step_index + 1))
+                    if callable(active_check)
+                    else True
+                )
+                base_outer_weight = float(getattr(item, "weight", 1.0))
+                resolved_items.append(
+                    {
+                        "tensor": cond_tensor,
+                        "active": active,
+                        "outer_weight": base_outer_weight,
+                        "group_operation_id": getattr(item, "group_operation_id", None),
+                        "group_local_weight": float(getattr(item, "group_local_weight", 1.0)),
+                        "sequence_operation_id": getattr(item, "sequence_operation_id", None),
+                        "sequence_local_weight": float(getattr(item, "sequence_local_weight", 1.0)),
+                        "sequence_item_index": getattr(item, "sequence_item_index", None),
+                    }
+                )
 
-            if not item_tensors:
+            if not resolved_items:
                 raise ValueError("No composable conditioning tensors found for batch item.")
 
-            if len(item_tensors) == 1:
-                combined = item_tensors[0]
-            else:
-                weight_tensor = torch.tensor(
-                    item_weights,
-                    device=item_tensors[0].device,
-                    dtype=item_tensors[0].dtype,
+            # First collapse PPSR-03 group variants. The aggregate retains its
+            # PPSR-04 sequence metadata when the group is a relation child.
+            group_collapsed = []
+            consumed_groups = set()
+            for entry in resolved_items:
+                group_id = entry["group_operation_id"]
+                if not group_id:
+                    group_collapsed.append(entry)
+                    continue
+                if group_id in consumed_groups:
+                    continue
+                consumed_groups.add(group_id)
+                members = [item for item in resolved_items if item["group_operation_id"] == group_id]
+                reference_outer = ensure_consistent(members, "outer_weight", "Group", group_id)
+                reference_sequence = ensure_consistent(members, "sequence_operation_id", "Group", group_id)
+                reference_sequence_weight = ensure_consistent(members, "sequence_local_weight", "Group", group_id)
+                reference_sequence_index = ensure_consistent(members, "sequence_item_index", "Group", group_id)
+                active_members = [item for item in members if item["active"]]
+                if not active_members:
+                    continue
+                group_tensor = weighted_average(
+                    [item["tensor"] for item in active_members],
+                    [float(item["group_local_weight"]) for item in active_members],
                 )
-                weight_sum = weight_tensor.sum().clamp(min=1e-8)
-                weight_tensor = weight_tensor / weight_sum
+                group_collapsed.append(
+                    {
+                        "tensor": group_tensor,
+                        "active": True,
+                        "outer_weight": reference_outer,
+                        "group_operation_id": None,
+                        "group_local_weight": 1.0,
+                        "sequence_operation_id": reference_sequence,
+                        "sequence_local_weight": reference_sequence_weight,
+                        "sequence_item_index": reference_sequence_index,
+                    }
+                )
 
-                stacked = torch.stack(item_tensors, dim=0)
-                view_shape = [len(item_tensors)] + [1] * (stacked.ndim - 1)
-                combined = (stacked * weight_tensor.view(*view_shape)).sum(dim=0)
+            # Then collapse relation/owner sequences. Only active members are
+            # averaged; their local weights are renormalized at this step.
+            components = []
+            consumed_sequences = set()
+            for entry in group_collapsed:
+                sequence_id = entry["sequence_operation_id"]
+                if not sequence_id:
+                    if entry["active"]:
+                        components.append((entry["tensor"], entry["outer_weight"]))
+                    continue
+                if sequence_id in consumed_sequences:
+                    continue
+                consumed_sequences.add(sequence_id)
+                members = [item for item in group_collapsed if item["sequence_operation_id"] == sequence_id]
+                reference_outer = ensure_consistent(members, "outer_weight", "Sequence", sequence_id)
+                active_members = [item for item in members if item["active"]]
+                if not active_members:
+                    continue
+                sequence_tensor = weighted_average(
+                    [item["tensor"] for item in active_members],
+                    [float(item["sequence_local_weight"]) for item in active_members],
+                )
+                components.append((sequence_tensor, reference_outer))
 
+            if not components:
+                raise ValueError("No active conditioning components found for this sampling step.")
+
+            combined = weighted_average(
+                [item[0] for item in components],
+                [float(item[1]) for item in components],
+            )
             batch_outputs.append(combined)
 
         return torch.stack(batch_outputs, dim=0)
@@ -392,6 +520,8 @@ class PromptConditioningAdapter(PromptAdapter):
         height: int,
         seed: int | None,
         recorded_route_plan: dict[str, Any] | None = None,
+        recorded_semantic_replay: dict[str, Any] | None = None,
+        semantic_replay_mode: str = "reconstruct",
     ):
         return parser.parse(
             PromptParseRequest(
@@ -406,6 +536,8 @@ class PromptConditioningAdapter(PromptAdapter):
                 height=height,
                 seed=seed,
                 recorded_route_plan=recorded_route_plan,
+                recorded_semantic_replay=recorded_semantic_replay,
+                semantic_replay_mode=semantic_replay_mode,
             )
         )
 
@@ -481,6 +613,18 @@ class PromptConditioningAdapter(PromptAdapter):
             canonical_structure=structures_by_slot[0],
             schedules=schedules,
             conditioning_source=combined_source,
+            semantic_ir={
+                "batch_slots": [
+                    item.semantic_ir.to_dict() if hasattr(item.semantic_ir, "to_dict") else item.semantic_ir
+                    for item in results
+                ]
+            },
+            conditioning_plan={
+                "batch_slots": [
+                    item.conditioning_plan.to_dict() if hasattr(item.conditioning_plan, "to_dict") else item.conditioning_plan
+                    for item in results
+                ]
+            },
             warnings=warnings,
             diagnostics={
                 **dict(first.diagnostics or {}),
@@ -511,12 +655,17 @@ class PromptConditioningAdapter(PromptAdapter):
         seeds: list[int],
         parser_seeds: list[int] | None = None,
         recorded_route_plan: dict[str, Any] | None = None,
+        recorded_semantic_records: list[dict[str, Any]] | None = None,
+        semantic_replay_mode: str = "reconstruct",
     ) -> PromptParseResult:
         if len(prompts) != len(seeds):
             raise ValueError("Prompt slot count must match the resolved image seed count.")
         effective_parser_seeds = list(parser_seeds or seeds)
         if len(effective_parser_seeds) != len(seeds):
             raise ValueError("Parser seed count must match the resolved image seed count.")
+        replay_records = list(recorded_semantic_records or [{} for _ in prompts])
+        if len(replay_records) != len(prompts):
+            raise ValueError("Recorded semantic replay count must match the prompt slot count.")
         results = [
             self._parse_prompt(
                 parser=parser,
@@ -534,6 +683,8 @@ class PromptConditioningAdapter(PromptAdapter):
                 height=height,
                 seed=effective_parser_seeds[index],
                 recorded_route_plan=recorded_route_plan,
+                recorded_semantic_replay=dict(replay_records[index] or {}),
+                semantic_replay_mode=semantic_replay_mode if replay_records[index] else "reconstruct",
             )
             for index, prompt in enumerate(prompts)
         ]
@@ -771,6 +922,37 @@ class PromptConditioningAdapter(PromptAdapter):
         generation_width = int(getattr(request, "generation_width", request.width))
         generation_height = int(getattr(request, "generation_height", request.height))
         recorded_route_plans = dict(getattr(request, "prompt_route_plan", {}) or {})
+        semantic_replay_mode = str(
+            getattr(request, "prompt_semantic_replay_mode", "reconstruct") or "reconstruct"
+        ).strip().lower()
+        if semantic_replay_mode not in {"reconstruct", "recorded_exact"}:
+            raise PromptParserError(
+                "prompt_semantic_replay_mode must be reconstruct or recorded_exact.",
+                parser_id=descriptor.parser_id,
+                prompt_role="positive",
+                error_kind="invalid_prompt_semantic_replay_mode",
+            )
+        recorded_semantics = dict(getattr(request, "prompt_semantic_recorded", {}) or {})
+        recorded_pass_semantics = dict(recorded_semantics.get(pass_name) or {})
+        recorded_positive_ppsr = [{} for _ in resolved_seeds]
+        recorded_negative_ppsr = [{} for _ in resolved_seeds]
+        if semantic_replay_mode == "recorded_exact" and recorded_pass_semantics.get("contract_version") == PPSR_SEMANTIC_PASS_CONTRACT_VERSION:
+            try:
+                validated_pass = validate_ppsr_semantic_pass_record(
+                    recorded_pass_semantics,
+                    parser_id=descriptor.parser_id,
+                    pass_name=pass_name,
+                    slot_count=len(resolved_seeds),
+                )
+            except PromptSemanticReplayError as exc:
+                raise PromptParserError(
+                    f"PPSR semantic pass replay validation failed: {exc}",
+                    parser_id=descriptor.parser_id,
+                    prompt_role="positive",
+                    error_kind="ppsr_semantic_replay_failed",
+                ) from exc
+            recorded_positive_ppsr = [dict(item or {}) for item in list(validated_pass.get("positive") or [])]
+            recorded_negative_ppsr = [dict(item or {}) for item in list(validated_pass.get("negative") or [])]
         try:
             pos_result = self._parse_prompt_slots(
                 parser=parser,
@@ -786,6 +968,8 @@ class PromptConditioningAdapter(PromptAdapter):
                 seeds=resolved_seeds,
                 parser_seeds=parser_slot_seeds,
                 recorded_route_plan=dict(recorded_route_plans.get("positive") or {}),
+                recorded_semantic_records=recorded_positive_ppsr,
+                semantic_replay_mode=semantic_replay_mode,
             )
 
             neg_result = self._parse_prompt_slots(
@@ -802,6 +986,8 @@ class PromptConditioningAdapter(PromptAdapter):
                 seeds=resolved_seeds,
                 parser_seeds=parser_slot_seeds,
                 recorded_route_plan=dict(recorded_route_plans.get("negative") or {}),
+                recorded_semantic_records=recorded_negative_ppsr,
+                semantic_replay_mode=semantic_replay_mode,
             )
         except PromptParserError as exc:
             exc.diagnostics.setdefault("shortcut_profile", shortcut_profile.snapshot())
@@ -936,17 +1122,6 @@ class PromptConditioningAdapter(PromptAdapter):
             neg_result.diagnostics.get("semantic_fingerprints_by_slot")
             or [neg_result.diagnostics.get("semantic_fingerprint")]
         )
-        semantic_replay_mode = str(
-            getattr(request, "prompt_semantic_replay_mode", "reconstruct")
-            or "reconstruct"
-        ).strip().lower()
-        if semantic_replay_mode not in {"reconstruct", "recorded_exact"}:
-            raise PromptParserError(
-                "prompt_semantic_replay_mode must be reconstruct or recorded_exact.",
-                parser_id=descriptor.parser_id,
-                prompt_role="positive",
-                error_kind="invalid_prompt_semantic_replay_mode",
-            )
         semantic_record: dict[str, Any] = {}
         if descriptor.parser_id == "superhybrid":
             try:
@@ -959,12 +1134,11 @@ class PromptConditioningAdapter(PromptAdapter):
                     positive_fingerprints=positive_semantic_fingerprints,
                     negative_fingerprints=negative_semantic_fingerprints,
                 )
-                recorded_semantics = dict(
-                    getattr(request, "prompt_semantic_recorded", {}) or {}
-                )
                 if semantic_replay_mode == "recorded_exact":
-                    recorded_semantic_record = dict(
-                        recorded_semantics.get(pass_name) or {}
+                    recorded_semantic_record = (
+                        dict(recorded_pass_semantics.get("superhybrid_record") or {})
+                        if recorded_pass_semantics.get("contract_version") == PPSR_SEMANTIC_PASS_CONTRACT_VERSION
+                        else dict(recorded_pass_semantics)
                     )
                     if not recorded_semantic_record:
                         raise PromptSemanticReplayError(
@@ -987,20 +1161,39 @@ class PromptConditioningAdapter(PromptAdapter):
                         "replay_mode": semantic_replay_mode,
                     },
                 ) from exc
-            semantic_pass_records = dict(
-                getattr(request, "prompt_semantic_pass_records", {}) or {}
-            )
-            semantic_pass_records[pass_name] = dict(semantic_record)
-            request.prompt_semantic_pass_records = semantic_pass_records
-        elif semantic_replay_mode == "recorded_exact" and getattr(
-            request, "prompt_semantic_recorded", None
+        elif (
+            semantic_replay_mode == "recorded_exact"
+            and recorded_pass_semantics
+            and recorded_pass_semantics.get("contract_version") == SUPERHYBRID_SEMANTIC_BATCH_CONTRACT_VERSION
         ):
             raise PromptParserError(
-                "Recorded SuperHybrid semantic data cannot be applied to a different prompt parser.",
+                "Recorded legacy SuperHybrid semantic data cannot be applied to a different prompt parser.",
                 parser_id=descriptor.parser_id,
                 prompt_role="positive",
                 error_kind="prompt_semantic_parser_mismatch",
             )
+
+        positive_ppsr_records = [
+            dict(item.get("ppsr_semantic_record") or {})
+            for item in list(pos_result.diagnostics.get("slot_diagnostics") or [pos_result.diagnostics])
+        ]
+        negative_ppsr_records = [
+            dict(item.get("ppsr_semantic_record") or {})
+            for item in list(neg_result.diagnostics.get("slot_diagnostics") or [neg_result.diagnostics])
+        ]
+        current_semantic_pass = build_ppsr_semantic_pass_record(
+            parser_id=descriptor.parser_id,
+            parser_version=descriptor.version,
+            pass_name=pass_name,
+            positive_records=positive_ppsr_records,
+            negative_records=negative_ppsr_records,
+            legacy_superhybrid_record=semantic_record,
+            replay_source="recorded_exact" if semantic_replay_mode == "recorded_exact" else "reconstruct",
+        )
+        semantic_pass_records = dict(getattr(request, "prompt_semantic_pass_records", {}) or {})
+        semantic_pass_records[pass_name] = dict(current_semantic_pass)
+        request.prompt_semantic_pass_records = semantic_pass_records
+        semantic_record = current_semantic_pass
 
         parsed_prompt_cfg = dict((pos_result.directives or {}).get("cfg") or {})
         replay_mode = str(
@@ -1062,10 +1255,12 @@ class PromptConditioningAdapter(PromptAdapter):
         if state is not None and hasattr(state, "p"):
             state.p.prompt_cfg_schedule = dict(prompt_cfg_schedule)
 
+        semantic_capabilities = semantic_conditioning_capabilities_for_runtime(cond_model)
         base_resolver = StepConditioningResolver(
             positive_multicond=pos_result.conditioning_source.multicond,
             negative_multicond=neg_result.conditioning_source.multicond,
             total_steps=request.steps,
+            semantic_capabilities=semantic_capabilities,
         )
         regional_resolver = None
         if region_entries:
@@ -1088,7 +1283,9 @@ class PromptConditioningAdapter(PromptAdapter):
         cond0, uncond0 = resolver.resolve(step_index=0)
         pooled_cond0 = None
         pooled_uncond0 = None
-        has_pooled_conditioning = isinstance(cond_model, (SDXLConditioningRuntime, SD3ConditioningRuntime))
+        has_pooled_conditioning = bool(
+            semantic_capabilities and semantic_capabilities.supports_pooled_conditioning
+        )
         if has_pooled_conditioning:
             # Pooled SDXL and SD3 conditioning follows the same parsed prompt
             # schedules and composable weights as token conditioning. Regional
@@ -1274,14 +1471,15 @@ class PromptConditioningAdapter(PromptAdapter):
                 "resolver": resolver,
                 "pooled_resolver": base_resolver if has_pooled_conditioning else None,
                 "conditioning_architecture": (
-                    "sd3.x"
-                    if isinstance(cond_model, SD3ConditioningRuntime)
-                    else ("sdxl" if isinstance(cond_model, SDXLConditioningRuntime) else "legacy")
+                    semantic_capabilities.architecture if semantic_capabilities else "legacy"
                 ),
                 "conditioning_metadata": (
                     cond_model.contract_metadata()
-                    if isinstance(cond_model, SD3ConditioningRuntime)
+                    if callable(getattr(cond_model, "contract_metadata", None))
                     else {}
+                ),
+                "semantic_conditioning_capabilities": (
+                    semantic_capabilities.to_dict() if semantic_capabilities else None
                 ),
                 "prompt_parser": parser_metadata,
                 "prompt_shortcut_profile": shortcut_profile_metadata,

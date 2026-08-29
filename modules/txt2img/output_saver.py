@@ -22,7 +22,9 @@ from image_gen.systems.regional_prompting import (
     select_region_record_slot,
 )
 from modules.prompt_parsers.semantic_replay import (
+    PPSR_SEMANTIC_PASS_CONTRACT_VERSION,
     SUPERHYBRID_SEMANTIC_BATCH_CONTRACT_VERSION,
+    select_ppsr_semantic_pass_slot,
     select_superhybrid_semantic_slot,
 )
 from modules.txt2img.generation_manifest import GenerationManifest
@@ -31,7 +33,14 @@ from modules.txt2img.manifest_io import (
     save_manifest_json,
     save_manifest_txt,
 )
-from modules.txt2img.png_metadata import build_pnginfo
+from modules.txt2img.png_metadata import (
+    EMBEDDED_METADATA_COMPATIBILITY,
+    EMBEDDED_METADATA_FULL_REPLAY,
+    build_pnginfo,
+    build_webp_exif,
+    build_webp_xmp,
+    normalize_embedded_metadata_mode,
+)
 from modules.txt2img.seed_utils import offset_seed
 
 
@@ -64,6 +73,7 @@ class SavedImageRecord:
     diagnostics_json_path: str | None = None
     index: int | None = None
     seed: int | None = None
+    metadata_warnings: list[str] | None = None
 
 
 class GenerationOutputSaver:
@@ -101,6 +111,13 @@ class GenerationOutputSaver:
         value = str(image_ext or ".png").strip().lower()
         if not value.startswith("."):
             value = f".{value}"
+        aliases = {".jpeg": ".jpg"}
+        value = aliases.get(value, value)
+        if value not in {".png", ".webp"}:
+            # P3C deliberately exposes only PNG and WebP. Keep the error close
+            # to the persistence boundary so unsupported formats cannot silently
+            # lose replay/compatibility metadata.
+            raise ValueError(f"Unsupported generated-image format: {value}. Use PNG or WebP.")
         return value
 
     @staticmethod
@@ -230,6 +247,15 @@ class GenerationOutputSaver:
             projected_any_semantics = False
             for pass_name, value in semantic_records.items():
                 if (
+                    isinstance(value, dict)
+                    and value.get("contract_version") == PPSR_SEMANTIC_PASS_CONTRACT_VERSION
+                    and int(value.get("slot_count", 0) or 0) > 1
+                ):
+                    projected_semantics[str(pass_name)] = select_ppsr_semantic_pass_slot(
+                        value, image_offset
+                    )
+                    projected_any_semantics = True
+                elif (
                     isinstance(value, dict)
                     and value.get("contract_version")
                     == SUPERHYBRID_SEMANTIC_BATCH_CONTRACT_VERSION
@@ -468,14 +494,61 @@ class GenerationOutputSaver:
         image_path: Path,
         manifest: GenerationManifest | None,
         image_kwargs: dict[str, Any] | None,
+        embedded_metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
     ) -> dict[str, Any]:
         save_kwargs = dict(image_kwargs or {})
-        if image_path.suffix.lower() == ".png" and manifest is not None:
+        mode = normalize_embedded_metadata_mode(embedded_metadata_mode)
+        suffix = image_path.suffix.lower()
+        if suffix == ".png" and manifest is not None:
             existing = save_kwargs.get("pnginfo")
             if existing is not None and not isinstance(existing, PngInfo):
                 raise TypeError(f"pnginfo must be a PIL.PngImagePlugin.PngInfo instance, got {type(existing)}")
-            save_kwargs["pnginfo"] = build_pnginfo(manifest, existing=existing)
+            save_kwargs["pnginfo"] = build_pnginfo(
+                manifest,
+                existing=existing,
+                metadata_mode=mode,
+            )
+        elif suffix == ".webp":
+            save_kwargs.setdefault("lossless", True)
+            save_kwargs.setdefault("quality", 100)
+            save_kwargs.setdefault("method", 6)
+            if manifest is not None:
+                save_kwargs["xmp"] = build_webp_xmp(manifest, metadata_mode=mode)
+                save_kwargs["exif"] = build_webp_exif(manifest, metadata_mode=mode)
         return save_kwargs
+
+    @staticmethod
+    def _save_image_with_metadata_fallback(
+        image: Image.Image,
+        temp_image: Path,
+        *,
+        save_kwargs: dict[str, Any],
+        manifest: GenerationManifest | None,
+        embedded_metadata_mode: str,
+    ) -> list[str]:
+        warnings: list[str] = []
+        try:
+            image.save(temp_image, **save_kwargs)
+            return warnings
+        except Exception as exc:
+            if (
+                temp_image.suffix.lower() == ".webp"
+                and manifest is not None
+                and normalize_embedded_metadata_mode(embedded_metadata_mode) == EMBEDDED_METADATA_FULL_REPLAY
+                and "xmp" in save_kwargs
+            ):
+                # Full WebP replay uses XMP. If the local Pillow/libwebp build
+                # cannot persist XMP, preserve the Civitai/A1111-compatible
+                # EXIF parameter text and continue with an explicit warning.
+                fallback_kwargs = dict(save_kwargs)
+                fallback_kwargs.pop("xmp", None)
+                image.save(temp_image, **fallback_kwargs)
+                warnings.append(
+                    "Full replay metadata could not be embedded in this WebP on the current runtime; "
+                    f"compatibility metadata was preserved instead ({type(exc).__name__}: {exc})."
+                )
+                return warnings
+            raise
 
     def save_batch(
         self,
@@ -485,6 +558,7 @@ class GenerationOutputSaver:
         save_json: bool = True,
         save_diagnostics_json: bool = True,
         image_kwargs: dict[str, Any] | None = None,
+        embedded_metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
     ) -> list[SavedImageRecord]:
         pil_images = self._coerce_pil_images(images)
         image_kwargs = dict(image_kwargs or {})
@@ -526,6 +600,7 @@ class GenerationOutputSaver:
                     image_path=image_path,
                     manifest=image_manifest,
                     image_kwargs=image_kwargs,
+                    embedded_metadata_mode=embedded_metadata_mode,
                 )
                 temp_image = _atomic_temp_path(image_path)
                 temp_txt = _atomic_temp_path(txt_path) if txt_path is not None else None
@@ -541,7 +616,13 @@ class GenerationOutputSaver:
                     if path is not None
                 ]
                 try:
-                    image.save(temp_image, **save_kwargs)
+                    metadata_warnings = self._save_image_with_metadata_fallback(
+                        image,
+                        temp_image,
+                        save_kwargs=save_kwargs,
+                        manifest=image_manifest,
+                        embedded_metadata_mode=embedded_metadata_mode,
+                    )
                     if image_manifest is not None:
                         image_manifest.update_runtime_paths(
                             image_path=str(image_path),
@@ -602,6 +683,7 @@ class GenerationOutputSaver:
                         ),
                         index=next_idx,
                         seed=image_seed,
+                        metadata_warnings=list(metadata_warnings or []),
                     )
                 )
                 next_idx += 1
@@ -636,6 +718,7 @@ def save_generation_batch(
     save_diagnostics_json: bool = True,
     image_ext: str = ".png",
     image_kwargs: dict[str, Any] | None = None,
+    embedded_metadata_mode: str = EMBEDDED_METADATA_FULL_REPLAY,
 ) -> list[SavedImageRecord]:
     saver = GenerationOutputSaver(
         output_dir=output_dir,
@@ -649,4 +732,5 @@ def save_generation_batch(
         save_json=save_json,
         save_diagnostics_json=save_diagnostics_json,
         image_kwargs=image_kwargs,
+        embedded_metadata_mode=embedded_metadata_mode,
     )

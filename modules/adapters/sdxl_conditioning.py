@@ -5,6 +5,8 @@ from typing import Any, Iterable
 
 import torch
 
+from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
+
 
 @dataclass(frozen=True)
 class SDXLConditioningBatch:
@@ -234,3 +236,20 @@ class SDXLConditioningRuntime:
 
     def encode(self, texts: Iterable[str]) -> dict[str, torch.Tensor]:
         return self.encode_batch(texts)
+
+    def semantic_conditioning_capabilities(self) -> SemanticConditioningCapabilities:
+        return SemanticConditioningCapabilities(
+            architecture="sdxl",
+            runtime_name=type(self).__name__,
+            output_kind="structured",
+            composable_fields=("cross_attention", "pooled"),
+            required_fields=("cross_attention", "pooled"),
+            supports_pooled_conditioning=True,
+        )
+
+    def contract_metadata(self) -> dict[str, Any]:
+        return {
+            "architecture": "sdxl",
+            "encoder_mode": "clip_l_openclip_g",
+            "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
+        }

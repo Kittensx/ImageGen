@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
+
+from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
 from safetensors import safe_open
 
 from modules.sd2_openclip_reference_converter import SD2OpenCLIPReferenceConverter
@@ -228,3 +230,19 @@ class SD2OpenCLIPConditioningRuntime:
             attention_mask=attention_mask,
             embeddings=embeddings,
         )
+    def semantic_conditioning_capabilities(self) -> SemanticConditioningCapabilities:
+        return SemanticConditioningCapabilities(
+            architecture="sd2.x",
+            runtime_name=type(self).__name__,
+            output_kind="tensor",
+            composable_fields=("cross_attention",),
+            required_fields=("cross_attention",),
+        )
+
+    def contract_metadata(self) -> dict[str, Any]:
+        return {
+            "architecture": "sd2.x",
+            "encoder_mode": "openclip_h_14",
+            "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
+        }
+

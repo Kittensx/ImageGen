@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 PROMPT_PARSER_CONTRACT_VERSION = "image-gen-prompt-parser-v1"
-CANONICAL_PROMPT_CONTRACT_VERSION = "image-gen-canonical-prompt-v1"
+CANONICAL_PROMPT_CONTRACT_VERSION = "image-gen-canonical-prompt-v2"
+LEGACY_CANONICAL_PROMPT_CONTRACT_VERSION = "image-gen-canonical-prompt-v1"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,8 @@ class PromptParseRequest:
     height: int | None = None
     seed: int | None = None
     recorded_route_plan: dict[str, Any] | None = None
+    recorded_semantic_replay: dict[str, Any] | None = None
+    semantic_replay_mode: str = "reconstruct"
 
 
 @dataclass
@@ -62,6 +65,8 @@ class PromptParseResult:
     canonical_structure: dict[str, Any]
     schedules: Any
     conditioning_source: Any
+    semantic_ir: Any = None
+    conditioning_plan: Any = None
     warnings: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     directives: dict[str, Any] = field(default_factory=dict)
@@ -74,6 +79,8 @@ class PromptParseResult:
             "raw_prompt": self.raw_prompt,
             "canonical_prompt": self.canonical_prompt,
             "canonical_structure": self.canonical_structure,
+            "semantic_ir": self.semantic_ir.to_dict() if hasattr(self.semantic_ir, "to_dict") else self.semantic_ir,
+            "conditioning_plan": self.conditioning_plan.to_dict() if hasattr(self.conditioning_plan, "to_dict") else self.conditioning_plan,
             "warnings": list(self.warnings),
             "diagnostics": dict(self.diagnostics),
             "directives": dict(self.directives),

@@ -1,5 +1,6 @@
 from modules.prompt_parsers.contracts import (
     CANONICAL_PROMPT_CONTRACT_VERSION,
+    LEGACY_CANONICAL_PROMPT_CONTRACT_VERSION,
     PROMPT_PARSER_CONTRACT_VERSION,
     PromptParseRequest,
     PromptParseResult,
@@ -7,6 +8,18 @@ from modules.prompt_parsers.contracts import (
     PromptParserError,
     PromptParserProtocol,
 )
+from modules.prompt_parsers.ir import PROMPT_IR_CONTRACT_VERSION, PromptIR
+from modules.prompt_parsers.numeric_semantics import (
+    NUMERIC_SEMANTIC_CONTRACT_VERSION,
+    NumericSemantic,
+    WeightValue,
+    AbsoluteStep,
+    FractionBoundary,
+    PercentBoundary,
+    QuantityValue,
+    InvalidNumeric,
+)
+from modules.prompt_parsers.compiler import CONDITIONING_PLAN_CONTRACT_VERSION, ConditioningPlan
 from modules.prompt_parsers.registry import PromptParserRegistry, default_prompt_parser_registry
 from modules.prompt_parsers.routing import (
     PROMPT_MERGE_CONTRACT_VERSION,
@@ -35,6 +48,19 @@ from modules.prompt_parsers.legacy_lock import (
 
 __all__ = [
     "CANONICAL_PROMPT_CONTRACT_VERSION",
+    "LEGACY_CANONICAL_PROMPT_CONTRACT_VERSION",
+    "PROMPT_IR_CONTRACT_VERSION",
+    "PromptIR",
+    "NUMERIC_SEMANTIC_CONTRACT_VERSION",
+    "NumericSemantic",
+    "WeightValue",
+    "AbsoluteStep",
+    "FractionBoundary",
+    "PercentBoundary",
+    "QuantityValue",
+    "InvalidNumeric",
+    "CONDITIONING_PLAN_CONTRACT_VERSION",
+    "ConditioningPlan",
     "PROMPT_PARSER_CONTRACT_VERSION",
     "PromptParseRequest",
     "PromptParseResult",

@@ -162,6 +162,7 @@ class LivePreviewSink:
 
         payload = {
             "schema_version": 2,
+            "phase_index": self._scalar(metadata.get("phase_index")),
             "step": int(step_index) + 1,
             "step_index": int(step_index),
             "total_steps": max(1, int(total_steps)),

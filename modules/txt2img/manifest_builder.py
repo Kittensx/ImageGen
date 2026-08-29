@@ -125,8 +125,10 @@ def build_generation_manifest(
             ("hires_prompt_parser_name", getattr(request, "prompt_parser_name", "legacy")),
             ("hires_shortcut_profile_mode", "same_as_base"),
             ("hires_shortcut_profile_name", getattr(request, "prompt_shortcut_profile_name", "legacy_default")),
-            ("hires_positive_prompt", getattr(request, "positive_prompt", "")),
-            ("hires_negative_prompt", getattr(request, "negative_prompt", "")),
+            # Empty hires prompt fields are intentional inheritance markers.
+            # Do not materialize the current base prompt into replay metadata.
+            ("hires_positive_prompt", ""),
+            ("hires_negative_prompt", ""),
             ("hires_size_mode", "same_as_base"),
             ("hires_scale", 2.0),
             ("hires_width", 0),
@@ -161,6 +163,9 @@ def build_generation_manifest(
             ("hires_final_size_correction_filter", "auto"),
             ("hires_aspect_policy", "stretch"),
             ("hires_padding_mode", "reflect"),
+            ("hires_blurred_edge_method", "box"),
+            ("hires_blurred_edge_compare_diagnostics", False),
+            ("hires_lifecycle_state", {}),
             ("hires_recorded_target_correction", {}),
             ("hires_correction_fingerprint_enabled", False),
             ("hires_recorded_correction_fingerprint", {}),
@@ -214,6 +219,10 @@ def build_generation_manifest(
             manifest.optional_for_rerun.extra[field_name] = json_safe(
                 getattr(request, field_name, default)
             )
+        manifest.optional_for_rerun.extra["hires_prompt_inheritance"] = {
+            "positive": not bool(str(getattr(request, "hires_positive_prompt", "") or "")),
+            "negative": not bool(str(getattr(request, "hires_negative_prompt", "") or "")),
+        }
         manifest.optional_for_rerun.extra["hires_prompt_parser_kwargs"] = dict(
             json_safe(getattr(request, "hires_prompt_parser_kwargs", {}) or {})
         )
