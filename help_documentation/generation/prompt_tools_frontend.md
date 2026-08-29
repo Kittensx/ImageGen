@@ -62,3 +62,93 @@ console for a failed request under:
 
 A missing file in that directory indicates an incomplete source update rather
 than a parser or checkpoint problem.
+
+
+## Structured Classic prompt semantics
+
+The shared Classic syntax used by Legacy, Parser21, SuperHybrid, and Combined routing now preserves semantic structure before text encoding.
+
+```text
+{red hair, green eyes}
+```
+
+creates a cohesive local group. Members have equal local influence by default. Explicit member weights are relative inside the group:
+
+```text
+{red hair:2, green eyes:1}
+```
+
+normalizes to two-thirds red-hair influence and one-third green-eyes influence inside that group. Grouping is not the same as increasing attention weight and is not equivalent to ordinary comma text.
+
+Relationship syntax is structural:
+
+```text
+owner:::property::value!!
+```
+
+`:::` establishes owner/parent scope, `::` establishes the relation, and `!` / `!!` terminate the respective structure. These control characters are consumed before CLIP/OpenCLIP/T5 unless explicitly escaped by the user.
+
+Legacy single-colon chains remain supported for compatibility. Grouping a chain changes its parent scope:
+
+```text
+{lake:sky:clouds}:::X
+```
+
+makes the whole `lake -> sky -> clouds` composition the parent. Without the braces:
+
+```text
+lake:sky:clouds:::X
+```
+
+`clouds` is the terminal attachment owner while the sequence still contributes through its local sequence scope.
+
+Standard schedule/alternate forms are also compiled before text encoding:
+
+```text
+[cat:dog:7]
+[cat:dog:0.5]
+[cat:dog:50%]
+[cat|dog]
+```
+
+Integer, fractional, percentage, weight, and quantity values are typed by their grammar location rather than by an integer-versus-decimal guess.
+
+## Semantic Structure inspector
+
+Prompt Inspector now includes a **Semantic Structure** card for base and hires positive/negative prompts. It shows:
+
+- semantic and structure digests;
+- group members, raw weights, and normalized local percentages;
+- owner/relation scope and parent-scope mode;
+- schedules and activity windows;
+- categorized warnings and safe fallbacks;
+- encoder-visible text; and
+- effective-final branch contribution for static prompts.
+
+For temporal prompts, effective contribution is labeled **dynamic by step** instead of displaying a misleading fixed percentage.
+
+## Semantic replay
+
+New generations record a parser-neutral PPSR semantic replay contract containing PromptIR, the compiled conditioning plan, semantic/structure digests, parser/compiler contract versions, model-family degradation information, and any fallbacks.
+
+Exact replay prefers this recorded semantic structure and validates the current compiler result against the recorded digest. It does not re-guess whether an old number meant a weight or a schedule step. Canonical-v1 records remain loadable through compatibility migration.
+
+If the semantic record has been altered or the current compiler produces a different semantic digest, exact replay fails closed rather than silently generating with changed prompt meaning.
+
+## Parser qualification
+
+The normal parser development gate remains model-free:
+
+```bat
+run.bat parser-test
+```
+
+It now prints/saves numeric, temporal, parent-scope, effective-weight, and replay/cutover reports.
+
+Real-checkpoint PPSR-08 qualification is separate because it intentionally generates images:
+
+```bat
+testing\test_validations\qualification\generation\ppsr08_prompt_parser_image_qualification.bat --model sdxl="C:\path\model.safetensors"
+```
+
+The qualification runner creates a unique `images/`, `requests/`, and `logs/` evidence run, compares `standing` with `{standing}`, verifies grouped/weighted prompts are image-distinct where expected, performs exact semantic-manifest replay, and creates a contact sheet for visual review.

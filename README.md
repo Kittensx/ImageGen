@@ -2,12 +2,14 @@
 
 **Local Stable Diffusion image generation for Windows with SD 1.x, SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium support.**
 
-ImageGen is a local alpha image-generation application built around its own modular Stable Diffusion runtime. The current release supports SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium text-to-image generation, a browser-based local WebUI, component-based Advanced Models composition, LoRA support on qualified families, neural Hires generation, replayable generation records, persistent generation queues, memory-aware execution, and an alpha Canvas Expansion workflow for adapting an image to a larger shape without stretching the protected source.
+ImageGen is a local alpha image-generation application built around its own modular Stable Diffusion runtime. The current release supports SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium text-to-image generation, a browser-based local WebUI, component-based Advanced Models composition, LoRA support on qualified families, neural Hires generation, replayable generation records, persistent generation queues, memory-aware execution, an experimental Asset Browser for Civitai discovery and managed downloads, structured prompt-parser tooling, PNG and lossless WebP output with embedded metadata, and an alpha Canvas Expansion workflow for adapting an image to a larger shape without stretching the protected source.
 
 > [!IMPORTANT]
 > ImageGen is still in alpha development. Interfaces, metadata, configuration fields, and experimental workflows may change between releases.
 >
 > **Current text-to-image architecture support includes SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, and SD3.5 Medium.** Support remains architecture-aware, and individual checkpoints or specialized variants can still have model-specific requirements.
+>
+> Some implemented capabilities are explicitly marked **Experimental** while active bug testing and qualification continue. The Asset Browser and its checkpoint/LoRA download workflow are the most important current example. See [Experimental Features](features/EXPERIMENTAL.md).
 
 ## Start Here
 
@@ -17,6 +19,7 @@ ImageGen is a local alpha image-generation application built around its own modu
 - [Current Features](features/CURRENT.md)
 - [What's New](features/NEW.md)
 - [Known Limitations](features/LIMITATIONS.md)
+- [Experimental Features](features/EXPERIMENTAL.md)
 - [Upcoming Features](features/UPCOMING.md)
 - [Changelog](changelog/README.md)
 
@@ -139,7 +142,7 @@ configs\generation_config.yml
 ---
 ### Optional: Add or Update Your CivitAI API Key
 
-ImageGen can use a CivitAI API key to retrieve additional metadata and preview information for installed LoRAs.
+ImageGen can use a CivitAI API key for provider-backed metadata, previews, Asset Browser discovery, and managed downloads where Civitai authentication is required.
 
 The default private key file is:
 
@@ -198,21 +201,25 @@ The output location and model directories can be changed through ImageGen config
 | Advanced Models component composition | **Available — alpha / evidence-based** |
 | Local WebUI | **Available** |
 | Interactive CLI / config-driven generation | **Available** |
-| LoRA loading and weighted multi-LoRA generation | **Available** |
+| LoRA loading and weighted multi-LoRA generation on qualified paths | **Available** |
+| SD3 / SD3.5 LoRA application | **Unverified — not currently claimed as supported** |
 | Neural `.pth` Hires / second pass | **Available — alpha** |
 | Exact requested output dimensions | **Available** |
 | Queue, replay, batch import/export, and variation tools | **Available** |
 | Queue persistence across application sessions | **Available** |
-| Output metadata and compact replay records | **Available** |
+| Structured prompt-parser semantics and inspection | **Available — alpha** |
+| Brace-based semantic grouping | **Experimental — behavior under revision** |
+| PNG output | **Available** |
+| Lossless WebP output | **Available** |
+| Embedded full-replay / compatibility metadata | **Available** |
+| Asset Browser / Civitai discovery and managed downloads | **Experimental — active bug testing** |
 | Canvas Expansion / shape adaptation | **Available — alpha / intermediate workflow** |
 | General Image-to-Image | **Planned — not yet available** |
 | Inpainting | **Planned — not yet available** |
 | Textual Inversion / Hypernetworks | **Not active in the current runtime** |
 | ControlNet | **Not active in the current runtime** |
 
-For the detailed feature inventory, see [Current Features](features/CURRENT.md).
-
----
+For the detailed feature inventory, see [Current Features](features/CURRENT.md). For implemented features that remain under active qualification or bug testing, see [Experimental Features](features/EXPERIMENTAL.md).
 
 ## Canvas Expansion Is an Intermediate Workflow
 
@@ -256,7 +263,11 @@ General Img2Img and inpainting are separate planned modules and are not yet part
 
 ### LoRA
 
-Current ImageGen builds can discover and apply LoRAs during generation, including weighted multi-LoRA stacks. The WebUI includes a dedicated LoRA workspace with compatibility information and metadata-oriented browsing.
+Current ImageGen builds can discover and apply LoRAs during generation, including weighted multi-LoRA stacks on qualified runtime paths. The WebUI includes a dedicated LoRA workspace with compatibility information and metadata-oriented browsing.
+
+A user-visible LoRA weight of `1.0` represents the adapter's normal/native effect after the underlying loader performs its own rank/alpha normalization. User weight is applied as a multiplier on that native behavior rather than exposing loader-internal scaling conventions to the user.
+
+The source now contains architecture-aware standard-adapter mapping groundwork for SD3-family transformer and text-encoder targets. **SD3 / SD3.5 LoRA application is not currently claimed as supported**, because a suitable real adapter has not yet been available for end-to-end qualification.
 
 Default LoRA location:
 
@@ -268,7 +279,20 @@ models\StableDiffusion\Lora
 
 Hires uses a pixel-neural second-pass pipeline rather than the retired latent-only interpolation path. Supported `.pth` neural upscalers are discovered from configured ESRGAN/RealESRGAN roots, enlarged in image space, encoded back through the VAE, and refined through a second denoising pass.
 
+Leaving the Hires prompt empty means **inherit the current base prompt**. The active source also protects that inheritance behavior across cancellation/edit/replay flows so a copied prompt from an earlier generation does not silently become a stale Hires override.
+
 Hires remains an **alpha feature**. Very large targets, unsupported upscaler architectures, and aggressive memory settings can still exceed available VRAM or fall outside the currently qualified path.
+
+## Asset Browser and Managed Downloads — Experimental
+
+ImageGen now includes an Asset Browser / Asset Hub workspace for provider-backed model discovery. Civitai is the first supported provider.
+
+The current workflow can search and browse provider results, retain independent search sessions, inspect model/version/file details, stage downloads, verify transfers, classify assets, automatically finalize safe installs into configured library roots, quarantine ambiguous files, and retain provider/provenance information.
+
+Download controls include bounded concurrency, queue limits, bandwidth limits, provider request spacing, retries, pause/resume/cancel behavior, restart recovery, partial-download cleanup, and transfer history.
+
+> [!WARNING]
+> **Experimental — active bug testing.** The Asset Browser and its checkpoint/LoRA download workflow are implemented and available for testing, but search lifecycle, preview retrieval, version/file selection, transfer recovery, classification, automatic installation, and library reconciliation are still receiving corrective testing during alpha development. Keep backups of important model libraries and verify newly installed assets before relying on unattended asset management.
 
 ---
 
@@ -276,9 +300,15 @@ Hires remains an **alpha feature**. Very large targets, unsupported upscaler arc
 
 ImageGen's save system is designed around reproducibility without forcing every output sidecar to carry the full diagnostic state of a generation.
 
-The current output path separates:
+Generated images can be saved as:
 
-- the generated image;
+- **PNG**; or
+- **lossless WebP**.
+
+ImageGen can embed either **full replay metadata** or a smaller **compatibility-oriented metadata** record in the image itself. PNG uses embedded text metadata. WebP uses XMP for full replay plus EXIF-compatible parameter text; if the local Pillow/libwebp runtime cannot preserve WebP XMP, ImageGen falls back to compatibility metadata and reports a warning rather than silently pretending full replay metadata was embedded.
+
+The output path can also include:
+
 - a human-readable TXT sidecar when enabled;
 - a **compact replay JSON** containing the generation inputs and reproducibility identity needed for replay; and
 - a separately pruned diagnostics JSON when diagnostic detail is saved.
@@ -288,8 +318,6 @@ Recent output work removes duplicated prompt, schedule, asset, and runtime struc
 Output writes are staged through temporary files and committed atomically so a failed save is less likely to leave a partially written generation set.
 
 See [What's New](features/NEW.md) for the recent output and runtime changes.
-
----
 
 ## Public Release vs. Development Source
 

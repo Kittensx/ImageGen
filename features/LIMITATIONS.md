@@ -25,7 +25,7 @@ SD3 support is currently intentionally narrower than the generic label “all SD
 Normal txt2img generation is the currently qualified SD3/SD3.5 WebUI workflow. The following should still be treated as separate/unqualified integration areas unless subsequently documented otherwise:
 
 - SD3 Hires;
-- SD3 LoRA application;
+- SD3 / SD3.5 LoRA application (architecture-aware adapter groundwork exists, but no suitable real adapter has yet been available for end-to-end qualification);
 - general Img2Img;
 - REGION / Canvas Expansion / outpaint combinations; and
 - broader SD3-family variants beyond the qualified Medium profiles.
@@ -48,16 +48,19 @@ Asset discovery code may recognize other filename extensions for cataloging or f
 
 The active standard loader covers qualified conventional LoRA representations such as supported Kohya-style, Diffusers/PEFT, and `lora_up` / `lora_down` layouts.
 
-ImageGen can inspect and classify additional formats without executing them.
+ImageGen can inspect and classify additional formats without executing them. Potentially unsafe legacy serialized adapter formats can be treated as inspection-restricted rather than being loaded merely to identify them.
 
 Current important boundaries include:
 
 - **LoHa:** detectable, not yet runtime-qualified;
 - **LoKr:** detectable, not yet runtime-qualified;
-- **DoRA-specific magnitude extensions:** detectable/partial, not yet runtime-qualified; and
-- unknown/unmapped adapter tensor groups: blocked rather than silently discarded.
+- **DoRA-specific magnitude extensions:** detectable/partial, not yet runtime-qualified;
+- unknown/unmapped adapter tensor groups: blocked rather than silently discarded; and
+- **SD3 / SD3.5 LoRA:** architecture-aware transformer/text-encoder mapping groundwork exists, but end-to-end support remains unverified because a suitable real test adapter has not yet been available.
 
-A compatible model-family label is not enough. Adapter format and target coverage must also be supported.
+A compatible model-family label is not enough. Adapter format, target coverage, loader behavior, and empirical generation evidence must also agree.
+
+For qualified standard paths, the public user weight is intentionally normalized around the adapter's native behavior: **`1.0` means normal/native adapter strength after loader-internal rank/alpha normalization**. Lower or higher user values scale that native effect; users should not have to know the loader's internal normalization constant.
 
 ## 4. General Img2Img Is Not Yet Implemented
 
@@ -107,23 +110,43 @@ Large targets and aggressive tile settings can still exceed GPU or system memory
 
 The exact low-resolution base image is now off by default, but users can still explicitly enable that artifact when it is useful to their workflow.
 
-## 9. Asset Hub Is Current but Still Has Deliberate Boundaries
+## 9. Asset Browser / Asset Hub Is Experimental
 
 Asset Hub currently uses **Civitai as its first provider**. The provider-neutral architecture is intended to support additional providers later, but they should not be advertised as available until implemented.
 
-Asset Hub deliberately stages and verifies downloads before installation. A completed transfer is not the same as an installed asset.
+The current Asset Browser is implemented and usable, but its checkpoint/LoRA discovery and managed-download workflow remains under **active bug testing**. Search lifecycle, preview loading, version/file selection, transfer recovery, classification, automatic installation, and library reconciliation can still receive corrective alpha updates.
 
-Automatic classification is intentionally conservative. Unknown or ambiguous files can be quarantined/reviewed instead of being guessed into a model directory.
+Downloads are staged and verified before live-library finalization. Transfer completion and installation remain distinct internal states, but the normal managed workflow can automatically continue from a verified transfer into classification and installation when a safe destination is established. Unknown, unsafe, or ambiguous files can be quarantined/reviewed instead of being guessed into a model directory.
 
-Installing an asset through Asset Hub also does not automatically make its asset type an active generation capability. For example, installing a textual-inversion or VAE file is separate from proving that the current generation runtime consumes that asset end to end.
+Interrupted transfers may retain verified partial bytes for safe HTTP range recovery when identity/range checks permit it. If safe continuation cannot be proven, ImageGen restarts or discards the partial instead of blindly appending incompatible bytes.
 
-## 10. External VAE Replacement Should Not Be Advertised as Fully Qualified Yet
+Installing an asset through Asset Hub also does not automatically make its asset type an active generation capability. For example, downloading an asset type or placing a path in the managed library does not prove that the current generation runtime consumes that asset end to end.
+
+Users should keep backups of important model libraries and verify newly installed assets while this workflow remains experimental.
+
+## 10. Prompt Parser Brace Grouping Is Still Under Revision
+
+The updated prompt parser implements and records a broad set of structured semantics, but brace grouping is not yet considered complete.
+
+Brace groups are intended to bind contained concepts more closely as a related semantic unit than ordinary comma-separated prompting. Current testing found that the existing group-conditioning behavior does not yet reproduce that intended semantic relationship reliably enough for a finished-support claim.
+
+Group syntax and group-local numeric weights can still be parsed and inspected, but users should treat brace-based grouping as experimental until the revised conditioning behavior is validated against real image generation.
+
+Other prompt-parser operators and behaviors can be qualified independently; this limitation should not be read as a statement that all structured prompt syntax is currently broken.
+
+## 11. External VAE Replacement Should Not Be Advertised as Fully Qualified Yet
 
 The source contains VAE catalog/provenance fields, Asset Hub VAE classification/install support, replay fields, and UI selection plumbing.
 
 That should not be confused with a fully qualified end-to-end external-VAE replacement path in every generation flow. Until the active model-loading/runner path is explicitly validated for that workflow, the safest public documentation is to describe checkpoint-embedded VAE behavior and treat external replacement as not yet fully qualified.
 
-## 11. Public Installer Support Is Currently Narrow
+## 12. WebP Replay Metadata Depends on Runtime XMP Support
+
+Lossless WebP output is supported. Full ImageGen replay metadata is embedded through WebP XMP, while compatibility-oriented parameter text is stored through EXIF-compatible metadata.
+
+Some Pillow/libwebp combinations may be unable to persist the full XMP payload. In that case ImageGen preserves compatibility metadata and reports a warning. A WebP that contains compatibility metadata after this fallback should not be assumed to contain the complete ImageGen replay record.
+
+## 13. Public Installer Support Is Currently Narrow
 
 ### NVIDIA Hardware Compatibility and Validation
 
@@ -155,7 +178,7 @@ Hardware that has not yet been validated should be considered **community-tested
 
 Linux, macOS, AMD GPUs, Intel GPUs, and CPU-only generation are not currently qualified public-release targets.
 
-## 12. Python Patch Version Is Pinned
+## 14. Python Patch Version Is Pinned
 
 This build does not accept “any Python 3.10.”
 
@@ -169,13 +192,13 @@ exactly.
 
 That requirement should remain explicit in release notes and installation instructions until the installer contract changes.
 
-## 13. No Models Are Bundled
+## 15. No Models Are Bundled
 
 Users must provide their own compatible SD 1.x, qualified SD 2.x, SDXL, SD3 Medium, or SD3.5 Medium checkpoints, plus any LoRAs and optional neural upscalers they choose to use.
 
 ImageGen does not grant rights to third-party model files or override their licenses.
 
-## 14. The WebUI Is Local-Only
+## 16. The WebUI Is Local-Only
 
 The launcher binds the current WebUI to `127.0.0.1`.
 
@@ -185,19 +208,19 @@ Do not expose the local WebUI directly to the public internet.
 
 Asset Hub provider credentials are handled by the backend and are not returned to the normal browser settings surface, but that does not turn the WebUI into a remotely hardened hosted service.
 
-## 15. Textual Inversion and Hypernetworks Are Not Active Generation Features
+## 17. Textual Inversion and Hypernetworks Are Not Active Generation Features
 
 The project contains asset concepts/paths for these types, and Asset Hub can safely classify/install some textual-inversion Safetensors payloads.
 
 That does not mean the current generation runtime loads/applies Textual Inversion or Hypernetworks end to end. They should remain listed as unsupported generation features until the application code actually applies them during conditioning/generation.
 
-## 16. ControlNet Is Not Active
+## 18. ControlNet Is Not Active
 
 ControlNet-related model paths/configuration exist in parts of the project structure, but the current runtime does not contain a qualified ControlNet generation path.
 
 It should not be advertised as supported yet.
 
-## 17. Theme Packages Are Visual Packages, Not General Extensions
+## 19. Theme Packages Are Visual Packages, Not General Extensions
 
 Theme Manager packages are intentionally constrained to appearance data.
 
@@ -205,13 +228,13 @@ Executable/script content is rejected. Importing a theme package does not grant 
 
 Optional scoped CSS is also capability-gated rather than treated as unrestricted extension code.
 
-## 18. Alpha Replay and Workspace Formats Can Still Evolve
+## 20. Alpha Replay and Workspace Formats Can Still Evolve
 
 ImageGen has significantly improved replay serialization and now has persistent workspace/theme/configuration systems, but the application remains alpha software.
 
 Replay fields, parser records, advanced randomization metadata, workspace schemas, theme package contracts, and compatibility rules can still change between builds. Important presets, theme packages, workspace exports, and generation records should be backed up when moving between development releases.
 
-## 19. Exact Reproduction Has Environment Boundaries
+## 21. Exact Reproduction Has Environment Boundaries
 
 A replay request is designed to reproduce generation state as closely as possible when the same assets and compatible runtime are available.
 
@@ -219,7 +242,7 @@ Bit-for-bit identity is not guaranteed across changes in GPU architecture, PyTor
 
 Replay also intentionally does not restore every historical user preference. Output-sidecar choices and similar operational settings remain user-owned preferences rather than generation identity.
 
-## 20. Planned Work Is Not Current Support
+## 22. Planned Work Is Not Current Support
 
 The repository contains detailed phase documents for future systems. Those phase plans are useful development guidance, but their presence does not mean the feature is in the public runtime.
 

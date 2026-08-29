@@ -6,6 +6,7 @@ The changelog records what changed in a published development snapshot. The dura
 
 ## Updates
 
+- [2026-08-28](2026-08-28.md) — experimental Asset Browser/download management, prompt-parser semantic reconstruction with grouping still under revision, LoRA architecture/weight contracts, PNG/lossless WebP replay metadata, queue/Hires reliability, live CFG telemetry, and reusable workspace overlays.
 - [2026-08-18](2026-08-18.md) — SDXL/SD3/SD3.5 architecture documentation alignment, verified SD3 Medium and SD3.5 Medium txt2img support, Advanced Models component composition, persistent generation queues, and runtime architecture hardening.
 - [2026-08-12](2026-08-12.md) — qualified SD2.x generation, Asset Hub, Help Center, Theme Manager, Workspace Manager, queue controls, randomization, and replay improvements.
 - [2026-08-08](2026-08-08.md) — earlier alpha update snapshot.
@@ -18,5 +19,6 @@ Use:
 
 - [`features/CURRENT.md`](../features/CURRENT.md) for current implemented capabilities;
 - [`features/NEW.md`](../features/NEW.md) for recent highlights;
-- [`features/LIMITATIONS.md`](../features/LIMITATIONS.md) for current qualification boundaries and unsupported areas; and
+- [`features/LIMITATIONS.md`](../features/LIMITATIONS.md) for current qualification boundaries and unsupported areas;
+- [`features/EXPERIMENTAL.md`](../features/EXPERIMENTAL.md) for implemented features still under active testing/qualification; and
 - [`features/UPCOMING.md`](../features/UPCOMING.md) for planned work.

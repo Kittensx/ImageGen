@@ -35,6 +35,8 @@ Asset Hub is IMAGE_GEN's provider-neutral system for discovering, downloading, v
 7. Install only into a configured IMAGE_GEN asset root, or quarantine it when automatic classification is unsafe.
 8. Store provider provenance in a portable `.imagegen.json` sidecar and a searchable local index.
 
+Interrupted transfers preserve partial bytes and can reconnect with HTTP Range requests. Recent download rows also retain the provider model/version/file identity so you can click back to the originating asset or save it for later.
+
 A downloaded file is **not** considered `In Library` until the install phase completes successfully.
 
 ## Help categories

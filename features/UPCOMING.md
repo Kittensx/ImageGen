@@ -113,6 +113,14 @@ Planned capabilities include:
 - Civitai synchronization; and
 - replay-readiness analysis using ImageGen's existing replay pipeline.
 
+## Prompt Parser Semantic Reconstruction Closeout
+
+PPSR-01 through PPSR-08 are implemented in the current source, including structured grouping/relationships, typed numeric semantics, schedules/alternates, deep parent scope, model-family semantic conditioning contracts, exact semantic replay, semantic digests, and Prompt Inspector visibility.
+
+The remaining release gate is **real-checkpoint PPSR-08 image qualification** on representative local SD1.x, SD2.x, SDXL, and SD3/SD3.5 assets where available. Transitional duplicate parser code is intentionally retained until that image-level gate passes; cleanup must not precede the evidence required by the PPSR-08 cutover policy.
+
+Parser-specific Parser21/SuperHybrid extensions remain owned by their native parser paths unless an interaction is explicitly qualified for the shared compiler.
+
 ## Prompt Favorites and Reusable Prompt Cards
 
 Workspace Manager and responsive navigation/layout foundations are now current features. A separate planned prompt-productivity program can build on those foundations.
@@ -198,3 +206,7 @@ Isolated research into more flexible latent/exact-resolution approaches. This re
 The root README should only name a small number of high-value upcoming items.
 
 This file can carry the broader user-facing roadmap, while detailed implementation sequences remain in internal phase documents. A planned item should move from this page to [Current Features](CURRENT.md) only after the release runtime actually implements it.
+
+## Prompt Parser Semantic Reconstruction - Release Gate
+
+PPSR-08 is implemented. Before removing transitional duplicate parser paths, run the opt-in fixed-seed real-checkpoint qualification matrix and retain its timestamped evidence. The gate checks singleton `{standing}` parity, multi-member group distinction, explicit group weighting, owner relationships, schedule interaction, semantic-manifest replay, and optional hires behavior.

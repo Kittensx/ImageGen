@@ -1,7 +1,12 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-if exist "%~dp0user_config\runtime_environment.bat" call "%~dp0user_config\runtime_environment.bat"
+if errorlevel 1 (
+    echo ERROR: Could not change to the IMAGE_GEN project root beside run.bat.
+    exit /b 2
+)
+set "PROJECT_ROOT=%CD%"
+if exist "%PROJECT_ROOT%\user_config\runtime_environment.bat" call "%PROJECT_ROOT%\user_config\runtime_environment.bat"
 title IMAGE_GEN - txt2img
 
 rem -----------------------------------------------------------------------------
@@ -25,6 +30,8 @@ rem Interactive launch modes:
 rem   run.bat                 - choose Standard or Hires interactively
 rem   run.bat standard        - standard interactive txt2img
 rem   run.bat hires           - interactive neural-.pth hires txt2img
+rem   run.bat parser-test     - parser-only backend contract tests; no image generation
+rem   run.bat --parser-test   - same as parser-test
 rem   set IMAGE_GEN_RUN_MODE=hires before launch to select hires without a menu
 rem -----------------------------------------------------------------------------
 if not defined COMMANDLINE_ARGS set "COMMANDLINE_ARGS=--attention-backend auto"
@@ -36,12 +43,17 @@ if /I "%~1"=="--standard" set "IMAGE_GEN_SELECTED_RUN_MODE=standard"
 if /I "%~1"=="hires" set "IMAGE_GEN_SELECTED_RUN_MODE=hires"
 if /I "%~1"=="--hires" set "IMAGE_GEN_SELECTED_RUN_MODE=hires"
 
-call "%~dp0scripts\resolve_python.bat" "%~dp0"
+call "%PROJECT_ROOT%\scripts\resolve_python.bat" "%PROJECT_ROOT%"
 if errorlevel 1 (
     pause
     exit /b 1
 )
 set "PYTHON_EXE=%IMAGE_GEN_PYTHON%"
+
+rem PPSR parser-only validation deliberately exits before LoRA scanning, model
+rem discovery/loading, CUDA generation setup, or txt2img execution.
+if /I "%~1"=="parser-test" goto :run_parser_tests
+if /I "%~1"=="--parser-test" goto :run_parser_tests
 
 rem Preserve values supplied by the caller; otherwise use the requested defaults.
 if not defined MSLK_FMHA_POLICY (
@@ -69,16 +81,25 @@ if /I "%LORA_SCAN_MODE%"=="all" goto :scan_loras
 if /I "%LORA_SCAN_MODE%"=="missing" goto :scan_loras
 goto :select_or_run
 
+:run_parser_tests
+echo.
+echo Launching parser-only backend tests...
+call "%PROJECT_ROOT%\testing\test_validations\system_health\generation\ppsr_prompt_parser_contract.bat"
+set "EXIT_CODE=%ERRORLEVEL%"
+echo.
+if not "%EXIT_CODE%"=="0" echo IMAGE_GEN parser tests exited with code %EXIT_CODE%.
+exit /b %EXIT_CODE%
+
 :scan_loras
 echo.
 echo Scanning LoRAs before launch (mode=%LORA_SCAN_MODE%)...
-"%PYTHON_EXE%" "%~dp0scripts\assets\scan_loras.py" --project-root "%~dp0" --mode "%LORA_SCAN_MODE%"
-if errorlevel 1 (
-    set "EXIT_CODE=%ERRORLEVEL%"
+"%PYTHON_EXE%" "%PROJECT_ROOT%\scripts\assets\scan_loras.py" --project-root "%PROJECT_ROOT%" --mode "%LORA_SCAN_MODE%"
+set "LORA_SCAN_EXIT=%ERRORLEVEL%"
+if not "%LORA_SCAN_EXIT%"=="0" (
     echo.
-    echo LoRA scan failed with code %EXIT_CODE%.
+    echo LoRA scan failed with code %LORA_SCAN_EXIT%.
     if not defined IMAGE_GEN_NO_PAUSE pause
-    exit /b %EXIT_CODE%
+    exit /b %LORA_SCAN_EXIT%
 )
 
 goto :select_or_run

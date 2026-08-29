@@ -21,10 +21,14 @@ external_links: []
 
 # Asset Hub Resume and Verification
 
-Asset Hub verifies downloaded bytes before installation.
+Asset Hub verifies downloaded bytes before automatic library finalization.
 
-When the provider supplies an expected file size or SHA-256, IMAGE_GEN compares the completed staged file to that information. A mismatch stops the lifecycle before installation.
+When the provider supplies an expected file size or SHA-256, IMAGE_GEN compares the completed staged file to that information. A mismatch stops the lifecycle before automatic library finalization.
 
-Partial downloads are resumed only when the remote server supports Range requests and the saved remote identity remains compatible with the previous transfer. If the ETag or Last-Modified identity changes, IMAGE_GEN discards the unsafe continuation and restarts the transfer instead of joining bytes from two different remote files.
+If a provider connection closes or times out during the file body, IMAGE_GEN preserves the partial file and treats the interruption as recoverable. The downloader retries automatically according to the configured retry count, and the Resume action uses an HTTP Range request starting at the exact staged byte count.
+
+ETag or Last-Modified values are used as `If-Range` validators when the provider supplies them. They are not required for resume: provider/model/version/file identity, an exact `Content-Range` start, and the provider SHA-256 (when available) allow IMAGE_GEN to safely continue delivery paths that omit HTTP validators. The completed payload still must pass final size/hash verification before automatic library finalization.
+
+If the provider returns a changed ETag/Last-Modified value, an invalid Content-Range, changed provider file identity, or a full `200` response instead of honoring Range, IMAGE_GEN does not append the response to the old partial. The download history records when a provider forced a restart from byte zero.
 
 Verification reports intentionally omit credentials and signed delivery URLs.

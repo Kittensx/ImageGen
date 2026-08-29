@@ -142,8 +142,22 @@ Current source includes:
 - prompt shortcut profiles;
 - parser presets;
 - prompt validation and preview tools;
-- configurable parser settings; and
-- prompt symbol/authoring helpers in the WebUI.
+- configurable parser settings;
+- prompt symbol/authoring helpers in the WebUI;
+- a parser-neutral PromptIR boundary for the active Legacy structured syntax;
+- canonical prompt contracts with serialized semantic IR and backward-compatible loading;
+- tensor-free structured conditioning plans that consume `::`, `:::`, `!`, and `!!` before encoder calls;
+- real `::` relation and `:::` owner-sequence compilation with typed sequence-local weights/activity windows and structural `!`/`!!` terminators;
+- shared Classic relationship semantics across Legacy, Parser21, and SuperHybrid while preserving parser-specific extension grammars;
+- typed numeric interpretation by grammar context;
+- deterministic schedules and alternates resolved against the active generation pass;
+- recursive/nested owner-scope handling;
+- parser-neutral semantic replay/inspection records; and
+- model-free parser validation through `run.bat parser-test`.
+
+Brace syntax such as `{...}` is recognized by the current parser and group-local numeric weights are represented structurally, but **brace-based semantic grouping remains experimental and is under revision**. The intended behavior is to bind the concepts inside a group more closely as a related semantic unit than ordinary comma-separated concepts. Current image-quality testing found that the existing group-conditioning behavior does not yet reproduce that intent reliably enough to describe grouping as finished.
+
+The other recently updated relationship, sequence, terminator, numeric, temporal, replay, and inspection behaviors can be tested independently of the unfinished grouping correction.
 
 Some parser paths remain more experimental than the legacy path and may evolve during alpha development.
 
@@ -168,7 +182,7 @@ REGION remains an advanced feature and should be treated separately from ordinar
 
 ## 6. LoRA and Adapter Compatibility
 
-LoRA is active in the current generation runtime.
+LoRA is active in the current generation runtime on qualified paths.
 
 Current general capabilities include:
 
@@ -183,11 +197,11 @@ Current general capabilities include:
 - LoRA information in generation/replay records; and
 - a dedicated WebUI LoRA workspace.
 
-The compatibility layer now separates four questions that were previously easy to conflate:
+The compatibility layer separates four questions that are easy to conflate:
 
-1. **Family** — SD 1.x, SD 2.x, SDXL, or unknown for the currently qualified standard LoRA path. SD3/SD3.5 LoRA application remains a separate unqualified workflow.
+1. **Family** — which Stable Diffusion architecture the adapter targets.
 2. **Format** — the adapter representation detected from metadata/tensor keys.
-3. **Targets** — components such as UNet, text encoder 1, text encoder 2, linear layers, or convolutional layers.
+3. **Targets** — which denoiser/text-encoder components the adapter expects.
 4. **Runtime support** — whether the current build has a qualified loader for that exact combination.
 
 ### Standard loader
@@ -202,19 +216,24 @@ standard_lora_up_down
 
 Conventional linear and supported convolutional LoRA targets can use the standard path when converted keys map cleanly to qualified model components.
 
-Current family target awareness includes:
+Architecture-aware target contracts now include:
 
-- **SD 1.x:** UNet and text encoder 1;
-- **SD 2.x:** UNet and text encoder 1, without applying SD 1-specific text-encoder shape assumptions; and
-- **SDXL:** UNet, TE1, and TE2 target identification/mapping for adapter compatibility work.
+- **SD 1.x:** UNet + text encoder 1;
+- **SD 2.x:** UNet + text encoder 1, without applying SD 1-specific text-encoder shape assumptions;
+- **SDXL:** UNet + TE1 + TE2; and
+- **SD3-family groundwork:** transformer + TE1 + TE2 + TE3 target mapping.
 
-SDXL base generation is now enabled, but adapter compatibility remains a separate question: an SDXL checkpoint being runnable does not automatically make every SDXL-targeted adapter format/runtime combination qualified.
+The SD3-family mapping is **unverified groundwork, not a support claim**. A suitable real SD3/SD3.5 LoRA has not yet been available for controlled end-to-end qualification, so SD3-family LoRA application should not currently be advertised as supported.
+
+For qualified standard paths, the UI weight contract is normalized around native adapter behavior: **`1.0` means the adapter's normal/native effect after loader-internal rank/alpha normalization**. User weight then multiplies that native effect, so users do not need to know a format-specific internal scaling constant.
 
 ### Unsupported or partial adapter formats
 
 ImageGen can identify LyCORIS-style formats such as **LoHa** and **LoKr**, but the current standard loader does not execute those algorithms. They are reported as unsupported rather than silently passed through a generic fallback.
 
 DoRA magnitude data is also inventoried separately and is currently treated as requiring a dedicated qualified runtime path.
+
+Potentially unsafe legacy serialized adapter files can be classified as inspection-restricted instead of being loaded merely to identify them.
 
 Checkpoint-like Safetensors files found in the LoRA library are marked as misclassified rather than attempted as adapters.
 
@@ -341,10 +360,11 @@ Current telemetry includes items such as:
 - elapsed and per-step timing;
 - active seed/model/sampler/scheduler information;
 - requested/effective CFG behavior;
-- decoded preview frames when enabled; and
-- runtime stage information.
+- decoded preview frames when enabled;
+- runtime stage information; and
+- pass-aware tracing that keeps base-generation and Hires-refinement step/CFG progress distinct.
 
-Preview decoding can be throttled or suspended by memory policy without disabling the underlying generation progress/CFG telemetry.
+Preview decoding can be throttled or suspended by memory policy without disabling the underlying generation progress/CFG telemetry. Hires transitions can therefore report the active refinement pass without incorrectly presenting base-pass step counts or guidance trajectories as if they were one continuous denoising sequence.
 
 ## 11. CFG Lab, Presets, Randomization, and Guidance Controls
 
@@ -375,14 +395,17 @@ Current functionality includes:
 
 - queued/running/paused/completed/failed/cancelled states;
 - active-job cancellation;
+- cancellation of paused queued jobs, including restart-recovered held work that has no live worker attached;
 - per-item pause and resume;
 - pause-after-current-image boundaries for active multi-image work;
 - multiple held/paused jobs;
 - skipping paused queue items while other work remains schedulable;
 - moving queued items higher or lower without displacing the active generation;
 - persistence of recoverable queued work across application sessions;
-- restoration of explicit queue order, individually paused queued jobs, and whole-queue hold state; and
+- restoration of explicit queue order, individually paused queued jobs, and whole-queue hold state;
 - safe recovery of an interrupted active job at the front of a held queue so reopening ImageGen does not unexpectedly restart GPU work;
+- guards that prevent buffered/late runtime events from reviving work after cancellation;
+- watchdog timing that avoids treating computer sleep/event-loop suspension as ordinary generation stall time;
 - finite progress such as `2 of 20`;
 - continuous-generation progress such as `2 of ∞`;
 - queue filtering;
@@ -423,6 +446,9 @@ Current source includes:
 - lightbox viewing;
 - keyboard navigation;
 - metadata/details inspection;
+- replay-essential summaries that distinguish requested/base dimensions from final Hires dimensions;
+- clearer base-vs-Hires prompt inheritance presentation;
+- embedded replay/compatibility metadata detection for PNG/WebP;
 - filters;
 - multi-image selection;
 - loading prior generation settings;
@@ -431,11 +457,18 @@ Current source includes:
 
 A larger durable Gallery/asset-library system is separately planned and should not be confused with the current Recent Outputs browser.
 
-## 15. Compact Replay and Output Storage
+## 15. Replay and Output Storage
 
-The output pipeline separates replay-essential data from deeper diagnostics.
+The output pipeline separates replay-essential data from deeper diagnostics and can save generated images as **PNG** or **lossless WebP**.
 
 The normal structured sidecar uses a compact replay serialization profile. It is designed to keep the generation inputs and reproducibility identity required for replay while pruning duplicated or execution-only structures.
+
+Image files can also carry embedded metadata in two modes:
+
+- **full replay** — stores the ImageGen replay record in the image when the format/runtime supports it; or
+- **compatibility** — stores conventional parameter text intended to remain useful to compatible external metadata readers.
+
+PNG stores the embedded record in PNG text metadata. WebP uses XMP for the full ImageGen replay payload and EXIF-compatible parameter metadata for compatibility. If the local WebP runtime cannot persist XMP, ImageGen preserves compatibility metadata and emits a warning instead of silently claiming full embedded replay.
 
 Current storage cleanup includes behavior such as:
 
@@ -525,9 +558,23 @@ for generation driven by the saved configuration/request format.
 
 The WebUI, CLI, replay, and saved-request flows share the same underlying generation contracts rather than maintaining unrelated generation engines.
 
-## 20. Asset Hub
+## 20. Asset Browser / Asset Hub — Experimental
 
-Asset Hub is the current provider-neutral system for discovering, downloading, verifying, classifying, installing, and tracking model-related assets. Civitai is the first supported provider.
+Asset Hub is the provider-neutral system for discovering, downloading, verifying, classifying, installing, and tracking model-related assets. The current WebUI exposes this through the **Asset Browser**, with Civitai as the first supported provider.
+
+> **Status:** Experimental — active bug testing. The workflow is implemented and available for testing, but search, previews, download recovery, classification, automatic installation, and library reconciliation are still receiving corrective qualification during alpha development.
+
+### Search sessions and local discovery
+
+The Asset Browser supports independent search tabs/sessions rather than one destructive global search. Starting another search can pause the previously active provider fetch while preserving that tab's results and continuation cursor, and paused searches can be resumed later. Continuous provider paging and manual paging are both available.
+
+Provider results are retained in a local discovery index so previously discovered candidates can be filtered locally without re-querying the provider for every UI change. Current filtering/presentation work includes architecture/base-model information, support/library state, creator/provider metadata, preview availability/source, maturity/rating information, and installed/not-in-library style filtering.
+
+Preview retrieval is staged separately from provider-page fetching. Resolved cards are published in small batches as previews become available instead of flooding the visible grid with large runs of blank cards.
+
+### Asset details, previews, and saved items
+
+Asset Details can inspect provider models, versions, available files, previews, compatibility/support information, and local-library state. Provider galleries can be cached according to configurable retention/size policies. Users can also keep assets in a local **Saved for Later** list.
 
 ### Provider discovery and authentication
 
@@ -535,25 +582,29 @@ Provider credentials are backend-owned. The browser can learn whether a credenti
 
 Civitai authentication can use supported session/environment/OS credential sources. Credentials are attached only to the expected provider host and are not forwarded to unexpected redirect destinations.
 
-### Secure download staging
+### Download Manager and staging
 
-Asset Hub downloads first enter a temporary staging area rather than writing directly into live checkpoint/LoRA/VAE/upscaler folders.
+Downloads first enter a managed staging area rather than writing incomplete transfers directly into live checkpoint/LoRA/VAE/upscaler folders.
 
-Current download behavior includes:
+Current controls include:
 
-- queueing;
-- bounded concurrent transfers;
-- cancellation;
-- safe resume when the remote transfer supports it;
+- bounded simultaneous downloads;
+- maximum queued downloads;
+- bandwidth limiting;
+- provider request spacing;
+- retry limits;
+- per-transfer and global pause/resume/cancel controls;
 - restart recovery;
+- download history and cleanup tools;
+- stale partial cleanup;
 - file-size verification; and
 - SHA-256 verification.
 
-A verified staged file is not considered installed or `In Library` until the install phase succeeds.
+Interrupted provider/CDN transfers can retain partial bytes and continue with a correct HTTP Range response when source identity and range/integrity checks prove continuation safe. Otherwise the partial is restarted/discarded instead of being blindly appended.
 
 ### Classification and installation
 
-Asset Hub creates an install plan before changing a live asset directory.
+After verification, the normal managed flow can automatically continue into classification and library finalization when a safe destination is established.
 
 ImageGen reuses its own technical inspectors for classification. Current paths include:
 
@@ -569,18 +620,7 @@ Final destinations come from configured ProjectContext asset roots. Installation
 
 ### Provenance
 
-Installed assets can retain:
-
-- provider/model/version/file IDs;
-- source page;
-- author/description/tags/trained words;
-- base model;
-- original filename and size;
-- verified SHA-256;
-- classification result;
-- install timestamp;
-- local install path; and
-- scan metadata.
+Installed assets can retain provider/model/version/file identity, source page, author/description/tags/trained words, base model, original filename/size, verified SHA-256, classification result, install timestamp/path, and scan metadata.
 
 Durable metadata uses the existing `.imagegen.json` sidecar convention. A derived local Asset Hub index provides a faster searchable view.
 
@@ -642,10 +682,15 @@ A component can declare:
 - stable identity;
 - compatible pages;
 - presentation variants;
-- size constraints; and
-- shared capabilities.
+- size constraints;
+- shared capabilities; and
+- optional drawer/focused-overlay behavior.
 
 The saved workspace is a portable base layout. Responsive Wide, Standard, Compact, and Narrow modes derive their effective spans/presentations from that base according to actual workspace-container width.
+
+Registered components can expose drag/keyboard resize handles with persistent component spans. Overlay-capable components can opt into reusable **drawer** or **focused** presentation, including click-outside/Escape collapse, resizable drawer width, and an edge restore tab so a collapsed overlay is not stranded.
+
+Asset Details is the first major consumer of the shared overlay behavior, but the capability lives in the reusable workspace/component registry rather than being hard-coded only for Asset Browser.
 
 Responsive preview does not overwrite the user's base layout values merely because a narrower/wider preview is selected.
 
@@ -702,3 +747,94 @@ The editor:
 - keeps a `.bak` copy of the prior file.
 
 This provides a supported recovery/configuration path for settings such as custom asset roots without requiring the user to leave the application for every configuration change.
+
+## 26. Typed Prompt Numeric Semantics
+
+ImageGen's structured prompt pipeline records numeric meaning by grammar context instead of relying on a general integer-versus-decimal guess.
+
+Examples:
+
+```text
+(cat:2)         -> attention weight 2.0
+[cat:dog:2]     -> absolute schedule step 2
+[cat:dog:0.5]   -> fractional schedule boundary 0.5
+{cat:2,dog:1}   -> parsed relative group weights 2:1
+2{cat|dog}      -> quantity 2
+```
+
+Legacy single-colon sequence inference remains available for backward compatibility, but it is explicitly marked as a legacy inference in canonical metadata and Prompt Inspector output.
+
+PromptIR and ConditioningPlan records serialize typed numeric semantics. Invalid values such as zero schedule steps, negative group-local weights, zero quantities, and `nan`/`inf` in known numeric grammar positions produce explicit validation records instead of silently changing numeric meaning.
+
+Brace-group numeric interpretation is implemented at the parser/IR level, but the **image-conditioning meaning of brace grouping remains experimental while group binding behavior is revised**.
+
+## 27. Prompt Temporal Composition and Nesting
+
+ImageGen compiles standard prompt schedules and alternates before text encoding instead of leaving their bracket syntax to the legacy scheduler.
+
+Examples:
+
+```text
+[cat:dog:2]      -> cat through step 2, dog afterward
+[cat:dog:0.5]    -> boundary resolved against the active pass step count
+[cat:dog:50%]    -> percentage boundary resolved against the active pass
+[cat|dog]        -> deterministic 1-based step cycle
+```
+
+Temporal operations compose with structured relations, owner sequences, attention syntax, `AND` weights, and nested scopes without collapsing their local weighting boundaries. When temporal syntax appears inside a brace group, the parser preserves the structure, but the final semantic grouping behavior remains subject to the grouping qualification noted above.
+
+Base and Hires passes compile the same semantic prompt against their own active step counts. Standard Classic temporal syntax follows the same shared compiler under Legacy, Parser21, and SuperHybrid unless a parser-specific extension owns the expression.
+
+Conditioning records store temporal segments, resolved boundaries, deterministic alternate policy, expansion metrics, and safe-fallback diagnostics. Encoder-visible texts are deduplicated, and structural temporal punctuation is not sent to the text encoder unless the user explicitly escaped it as literal text.
+
+## 28. Deep Prompt Parent Scope and Recursive Composition
+
+Deep Classic prompt composition preserves grouped sequence owners and embedded structural scopes recursively instead of flattening them at relation boundaries.
+
+The parser distinguishes structures such as:
+
+```text
+{lake:sky:clouds}:::X   -> grouped parent syntax owns the attachment
+lake:sky:clouds:::X     -> `clouds` is the terminal attachment owner after the sequence
+```
+
+Embedded grouped modifiers such as `{pink, blue, yellow} sky` are recognized inside relation children and other nested structural positions, not only at prompt root. Quantity braces such as `2{cat|dog}` and escaped braces remain literal to their owning grammar.
+
+Conditioning-plan diagnostics record parent scope and owner-composition information so the Prompt Inspector and parser test runner can show how grouped/ungrouped structures were interpreted.
+
+The parser's ability to preserve parent/group structure is distinct from the unfinished question of **how brace grouping should strengthen semantic binding during conditioning**. That final grouping behavior remains experimental.
+
+## 29. Model-Family Semantic Conditioning Contracts
+
+ImageGen's structured prompt compiler qualifies semantic composition against explicit conditioning-runtime capabilities instead of assuming that every text encoder returns the same kind of tensor.
+
+ImageGen-owned conditioning runtimes declare semantic-conditioning capabilities including their architecture, composable/required conditioning fields, sequence/temporal support, pooled support, safe-fallback policy, and SD3 T5 policy.
+
+Qualified semantic channels are:
+
+```text
+SD1.x / local CLIP      cross_attention
+SD2.x / OpenCLIP        cross_attention
+SDXL                     cross_attention + pooled
+SD3 / SD3.5              cross_attention + pooled
+```
+
+SDXL and SD3 use the same hierarchical branch weights for token and pooled conditioning where the active semantic operation is qualified. SD3 with T5 enabled applies each semantic branch to the same T5 text path; with T5 disabled, the zero replacement sequence remains zero after composition.
+
+If a declared runtime cannot preserve a required structured semantic operation, ImageGen performs a punctuation-safe model-family fallback and records the degradation rather than leaking parser control syntax or pretending full support. Structured runtime fields not declared in the capability contract are rejected instead of being silently ignored.
+
+The parser test reports local branch/sequence weights alongside effective-final contributions after nested normalizations. Brace-group contributions can be inspected mathematically, but brace grouping itself remains under image-level semantic revision until the intended closer-binding behavior is validated.
+
+## 30. Semantic Prompt Replay and Inspection
+
+ImageGen records parser-neutral semantic replay state for shared Classic prompt behavior instead of relying on visible punctuation alone. New semantic records include parser/compiler/canonical contract versions, recorded PromptIR, the conditioning plan, semantic and structure digests, fallback/degradation state, parser seed where relevant, and model-family semantic capability information.
+
+Exact replay prefers recorded semantic state and validates the recompiled semantic digest. Harmless whitespace changes do not invalidate semantic replay, while meaningful changes to structure, weights, owner scope, schedule boundaries, or fallback behavior do. Existing older canonical metadata remains loadable through compatibility migration where supported.
+
+Prompt Inspector exposes a **Semantic Structure** view for base and Hires positive/negative prompts. It can show parsed groups and normalized weights, owner/relation scope, schedules, categorized warnings/fallbacks, semantic digest, encoder-visible text, and effective-final contribution for static nested branches. Temporal branches are explicitly labeled dynamic by step.
+
+Parser capability descriptors distinguish syntax recognition from implemented runtime semantics and advertise replay/digest/inspection only where the active path implements them.
+
+`run.bat parser-test` remains model-free and emits replay/cutover and parser-performance evidence. A separate opt-in real-checkpoint qualification runner under `testing/test_validations/qualification/generation/` can produce timestamped image/request/log evidence, semantic parity/difference comparisons, exact manifest replay, and a visual contact sheet.
+
+Prompt-parser development is still active. In particular, brace-based grouping remains intentionally marked experimental until its intended closer-binding image behavior is corrected and qualified. Additional binding operators are being evaluated and are not documented as current behavior until implemented and tested.

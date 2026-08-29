@@ -15,6 +15,8 @@ paths:
   controlnet_dir: "models/StableDiffusion/ControlNet"
   embeddings_dir: "models/StableDiffusion/Embeddings"
   hypernetworks_dir: "models/StableDiffusion/Hypernetworks"
+  text_encoders_dir: "models/StableDiffusion/TextEncoders"
+  control_lora_dir: "models/StableDiffusion/control-lora"
   upscalers_comfyui_dir: "models/StableDiffusion/Upscalers_ComfyUI"
   
 
@@ -70,6 +72,9 @@ model_library:
     ControlNet: "models/StableDiffusion/ControlNet"
     Embeddings: "models/StableDiffusion/Embeddings"
     Hypernetworks: "models/StableDiffusion/Hypernetworks"
+    TextEncoders: "models/StableDiffusion/TextEncoders"
+    ControlLora: "models/StableDiffusion/control-lora"
+    Upscalers_ComfyUI: "models/StableDiffusion/Upscalers_ComfyUI"
 
   additional_scan_roots: []
 
