@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
+
+from image_gen.runtime.adapters.architecture_mapping import architecture_contract
 
 STANDARD_MAPPING_CONTRACT_VERSION = "image-gen-standard-lora-mapping-v1"
 
-_COMPONENT_TARGETS = ("unet", "text_encoder", "text_encoder_2")
+_COMPONENT_TARGETS = ("unet", "transformer", "text_encoder", "text_encoder_2", "text_encoder_3")
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,8 @@ class StandardAdapterKeyMapping:
     parameter_role: str
     recognized: bool
     reason: str = ""
+    architecture_adapter_id: str = ""
+    source_tensor_shape: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +36,8 @@ class StandardAdapterKeyMapping:
             "parameter_role": self.parameter_role,
             "recognized": bool(self.recognized),
             "reason": self.reason,
+            "architecture_adapter_id": self.architecture_adapter_id,
+            "source_tensor_shape": list(self.source_tensor_shape),
         }
 
 
@@ -41,6 +47,8 @@ def _canonical_family(value: Any) -> str:
         return "sdxl"
     if token.startswith(("sd2", "stablediffusion2")):
         return "sd2"
+    if token.startswith(("sd3", "stablediffusion3")):
+        return "sd3"
     if token.startswith(("sd1", "stablediffusion1")):
         return "sd1"
     return ""
@@ -75,32 +83,25 @@ def _is_adapter_parameter_key(key: str) -> bool:
             "lora_magnitude_vector",
             "magnitude_vector",
         )
-    ) or lowered.startswith(("lora_unet_", "lora_te_", "lora_te1_", "lora_te2_"))
+    ) or lowered.startswith(("lora_unet_", "lora_transformer_", "lora_te_", "lora_te1_", "lora_te2_", "lora_te3_"))
 
 
-def _direct_component_from_module(module_path: str, expected_targets: set[str]) -> tuple[str, str]:
+def _direct_component_from_module(module_path: str, expected_targets: set[str], family: str) -> tuple[str, str]:
     lowered = module_path.lower()
-    if lowered.startswith(("text_model.", "encoder.layers.", "embeddings.", "final_layer_norm.")):
-        if expected_targets == {"text_encoder_2"}:
-            return "text_encoder_2", "component_native_text_encoder_2"
-        return "text_encoder", "component_native_text_encoder"
-    if lowered.startswith(
-        (
-            "down_blocks.",
-            "up_blocks.",
-            "mid_block.",
-            "conv_in.",
-            "conv_out.",
-            "time_embedding.",
-            "time_embed.",
-            "add_embedding.",
-            "transformer_in.",
-            "proj_in.",
-            "proj_out.",
-        )
-    ):
-        return "unet", "component_native_unet"
-    component_expectations = expected_targets.intersection(_COMPONENT_TARGETS)
+    contract = architecture_contract(family)
+    matches = [
+        component
+        for component, prefixes in contract.native_prefixes.items()
+        if any(lowered.startswith(prefix) for prefix in prefixes)
+    ]
+    if len(matches) == 1:
+        component = matches[0]
+        if component.startswith("text_encoder") and expected_targets:
+            text_expected = expected_targets.intersection({"text_encoder", "text_encoder_2", "text_encoder_3"})
+            if len(text_expected) == 1:
+                component = next(iter(text_expected))
+        return component, f"architecture_native:{contract.architecture_adapter_id}:{component}"
+    component_expectations = expected_targets.intersection(contract.component_targets)
     if len(component_expectations) == 1:
         target = next(iter(component_expectations))
         return target, f"single_expected_component:{target}"
@@ -120,11 +121,8 @@ def map_standard_adapter_key(
     lowered = source.lower()
     role = _parameter_role(source)
 
-    for prefix, target in (
-        ("text_encoder_2.", "text_encoder_2"),
-        ("text_encoder.", "text_encoder"),
-        ("unet.", "unet"),
-    ):
+    contract = architecture_contract(family)
+    for prefix, target in contract.pipeline_prefixes:
         if lowered.startswith(prefix):
             module_path = source[len(prefix):]
             return StandardAdapterKeyMapping(
@@ -137,14 +135,10 @@ def map_standard_adapter_key(
                 parameter_role=role,
                 recognized=True,
                 reason="pipeline_component_prefix",
+                architecture_adapter_id=contract.architecture_adapter_id,
             )
 
-    for prefix, target in (
-        ("lora_te2_", "text_encoder_2"),
-        ("lora_te1_", "text_encoder"),
-        ("lora_te_", "text_encoder"),
-        ("lora_unet_", "unet"),
-    ):
+    for prefix, target in contract.kohya_prefixes:
         if lowered.startswith(prefix):
             return StandardAdapterKeyMapping(
                 source_key=source,
@@ -156,6 +150,7 @@ def map_standard_adapter_key(
                 parameter_role=role,
                 recognized=True,
                 reason="kohya_component_prefix",
+                architecture_adapter_id=contract.architecture_adapter_id,
             )
 
     if not _is_adapter_parameter_key(source) and role != "alpha":
@@ -169,6 +164,7 @@ def map_standard_adapter_key(
             parameter_role=role,
             recognized=False,
             reason="not_a_recognized_standard_lora_parameter_key",
+            architecture_adapter_id=contract.architecture_adapter_id,
         )
 
     module_path = source
@@ -184,7 +180,7 @@ def map_standard_adapter_key(
         if position >= 0:
             module_path = module_path[:position]
             break
-    component, reason = _direct_component_from_module(module_path, expected)
+    component, reason = _direct_component_from_module(module_path, expected, family)
     if not component:
         return StandardAdapterKeyMapping(
             source_key=source,
@@ -196,6 +192,7 @@ def map_standard_adapter_key(
             parameter_role=role,
             recognized=False,
             reason=reason,
+            architecture_adapter_id=contract.architecture_adapter_id,
         )
     return StandardAdapterKeyMapping(
         source_key=source,
@@ -207,6 +204,7 @@ def map_standard_adapter_key(
         parameter_role=role,
         recognized=True,
         reason=reason,
+        architecture_adapter_id=contract.architecture_adapter_id,
     )
 
 
@@ -229,6 +227,9 @@ def normalize_standard_state_dict(
             model_family=model_family,
             expected_targets=expected_targets,
         )
+        shape = tuple(int(item) for item in getattr(value, "shape", ()) or ())
+        if shape:
+            mapping = replace(mapping, source_tensor_shape=shape)
         mappings.append(mapping)
         normalized_state[mapping.normalized_key] = value
         changed = changed or mapping.normalized_key != str(key)
@@ -274,6 +275,7 @@ def normalize_standard_state_dict(
         "unmapped_alpha_examples": alpha_unmapped[:8],
         "component_key_counts": component_counts,
         "parameter_role_counts": role_counts,
+        "architecture_adapter_id": architecture_contract(_canonical_family(model_family)).architecture_adapter_id,
         "mapping_examples": [item.to_dict() for item in mappings[:8]],
     }
     return normalized_state, normalized_alphas, report
@@ -281,6 +283,8 @@ def normalize_standard_state_dict(
 
 def supported_component_targets_for_family(model_family: str) -> frozenset[str]:
     family = _canonical_family(model_family)
+    if family == "sd3":
+        return frozenset({"transformer", "text_encoder", "text_encoder_2", "text_encoder_3"})
     if family == "sdxl":
         return frozenset({"unet", "text_encoder", "text_encoder_2"})
     if family in {"sd1", "sd2"}:

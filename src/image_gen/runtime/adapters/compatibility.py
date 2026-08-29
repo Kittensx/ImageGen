@@ -22,6 +22,17 @@ class AdapterCompatibilityService:
         checkpoint_family = canonical_model_family(active_checkpoint_family)
         warnings = list(record.inspection_warnings)
 
+        if record.adapter_format == "inspection_restricted":
+            return AdapterCompatibilityResult(
+                family_status="unknown" if not adapter_family or not checkpoint_family else ("compatible" if adapter_family == checkpoint_family else "incompatible"),
+                format_status="restricted",
+                target_status="unknown",
+                overall_support_state="restricted",
+                runtime_loadable=False,
+                blocking_reason="Adapter inspection is restricted because this legacy format may contain executable pickle payloads.",
+                warnings=tuple(warnings),
+            )
+
         if record.inspection_errors or record.adapter_format == "invalid":
             return AdapterCompatibilityResult(
                 family_status="unknown" if not adapter_family or not checkpoint_family else ("compatible" if adapter_family == checkpoint_family else "incompatible"),
@@ -138,6 +149,7 @@ class AdapterCompatibilityService:
             "lycoris_locon": "Adapter uses a LyCORIS/LoCon representation that is not yet qualified by this build.",
             "lycoris_other": "Adapter uses a LyCORIS algorithm that is not yet supported by this build.",
             "unknown_adapter": "Adapter tensor format is not recognized by this build.",
+            "inspection_restricted": "Adapter inspection is restricted because this legacy format may contain executable pickle payloads.",
         }
         return mapping.get(record.adapter_format, f"Adapter format '{record.adapter_format}' is not supported by this build.")
 

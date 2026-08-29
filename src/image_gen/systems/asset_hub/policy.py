@@ -41,9 +41,9 @@ _BASE_MODEL_ALIASES = {
     "stable diffusion xl": "sdxl",
     "pony": "sdxl",
     "illustrious": "sdxl",
-    "sd 3": "sd3",
-    "sd3": "sd3",
-    "sd 3.5": "sd3",
+    "sd 3": "sd3.x",
+    "sd3": "sd3.x",
+    "sd 3.5": "sd3.x",
     "flux": "flux",
     "flux.1 d": "flux",
     "flux.1 s": "flux",
@@ -53,7 +53,7 @@ _PROVIDER_BASE_MODELS = {
     "sd1.x": ("SD 1.4", "SD 1.5"),
     "sd2.x": ("SD 2.0", "SD 2.1"),
     "sdxl": ("SDXL 1.0",),
-    "sd3": ("SD 3", "SD 3.5"),
+    "sd3.x": ("SD 3", "SD 3.5"),
     "flux": ("Flux.1 D", "Flux.1 S"),
 }
 
@@ -88,7 +88,7 @@ def normalize_architecture(value: Any) -> str:
     if "sdxl" in token or "stable diffusion xl" in token or token.startswith("xl"):
         return "sdxl"
     if "sd 3" in token or "sd3" in token or "stable diffusion 3" in token:
-        return "sd3"
+        return "sd3.x"
     if "sd 2" in token or "sd2" in token or "stable diffusion 2" in token:
         return "sd2.x"
     if "sd 1" in token or "sd1" in token or "stable diffusion 1" in token:

@@ -6,6 +6,10 @@ from typing import Any, Mapping
 ASSET_HUB_CONTRACT_VERSION = "image-gen-asset-hub-v1"
 ASSET_HUB_SCHEMA_VERSION = 1
 
+MATURITY_LEVELS = ("PG", "PG13", "R", "X", "XXX", "Blocked")
+MATURITY_UNKNOWN_LEVEL = "Unknown"
+PREVIEW_MATURITY_COMPLETENESS = ("complete", "provider_filtered", "unknown")
+
 
 def _dict_pairs(value: Mapping[str, Any] | None) -> tuple[tuple[str, Any], ...]:
     if not isinstance(value, Mapping):
@@ -15,6 +19,12 @@ def _dict_pairs(value: Mapping[str, Any] | None) -> tuple[tuple[str, Any], ...]:
 
 def _pairs_dict(value: tuple[tuple[str, Any], ...]) -> dict[str, Any]:
     return {str(key): item for key, item in value}
+
+
+def _maturity_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, ProviderMaturityRating):
+        return value.to_dict()
+    return ProviderMaturityRating().to_dict()
 
 
 @dataclass(frozen=True)
@@ -50,9 +60,13 @@ class ProviderSearchRequest:
     sort: str = ""
     period: str = ""
     safe_content: bool = True
+    support_filter: str = "supported"
+    library_filter: str = "any"
+    search_mode: str = "search"
     cursor: str = ""
     limit: int = 24
     refresh: bool = False
+    rating_policy: Mapping[str, Any] | None = None
     schema_version: int = ASSET_HUB_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,9 +79,13 @@ class ProviderSearchRequest:
             "sort": self.sort,
             "period": self.period,
             "safeContent": self.safe_content,
+            "supportFilter": self.support_filter,
+            "libraryFilter": self.library_filter,
+            "searchMode": self.search_mode,
             "cursor": self.cursor,
             "limit": self.limit,
             "refresh": self.refresh,
+            "ratingPolicy": dict(self.rating_policy or {}),
         }
 
 
@@ -106,11 +124,48 @@ class ProviderScanSummary:
 
 
 @dataclass(frozen=True)
+class ProviderMaturityRating:
+    """Provider-backed maturity data without collapsing provider truth.
+
+    ``raw`` preserves the provider value that was actually returned. ``mask``
+    and ``levels`` are normalized conveniences for consumers. A malformed,
+    absent, legacy boolean, or otherwise unrecognized value remains
+    ``state='unknown'`` and normalizes to the explicit ``Unknown`` level.
+
+    The contract is intentionally provider-neutral. Provider adapters own the
+    translation from their native representation into this shape.
+    """
+
+    provider_id: str = ""
+    raw: Any = None
+    mask: int | None = None
+    levels: tuple[str, ...] = (MATURITY_UNKNOWN_LEVEL,)
+    state: str = "unknown"
+    source_field: str = ""
+    unknown_bits: int = 0
+    schema_version: int = ASSET_HUB_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "providerId": self.provider_id or None,
+            "raw": self.raw,
+            "mask": self.mask,
+            "levels": list(self.levels or (MATURITY_UNKNOWN_LEVEL,)),
+            "state": self.state if self.state in {"known", "unknown"} else "unknown",
+            "sourceField": self.source_field or None,
+            "unknownBits": max(0, int(self.unknown_bits or 0)),
+        }
+
+
+@dataclass(frozen=True)
 class ProviderPreview:
     url: str
     width: int | None = None
     height: int | None = None
     nsfw_level: str = ""
+    provider_image_id: str = ""
+    maturity: ProviderMaturityRating = field(default_factory=ProviderMaturityRating)
     kind: str = "image"
     schema_version: int = ASSET_HUB_SCHEMA_VERSION
 
@@ -121,6 +176,8 @@ class ProviderPreview:
             "width": self.width,
             "height": self.height,
             "nsfwLevel": self.nsfw_level,
+            "providerImageId": self.provider_image_id or None,
+            "maturity": self.maturity.to_dict(),
             "kind": self.kind,
         }
 
@@ -258,9 +315,13 @@ class ProviderVersion:
     base_model: str = ""
     architecture: str = ""
     description: str = ""
+    support_state: str = "unknown"
+    support_reason: str = ""
     trained_words: tuple[str, ...] = ()
     published_at: str = ""
     updated_at: str = ""
+    maturity: ProviderMaturityRating = field(default_factory=ProviderMaturityRating)
+    preview_maturity_completeness: str = "unknown"
     files: tuple[ProviderFile, ...] = ()
     previews: tuple[ProviderPreview, ...] = ()
     stats: tuple[tuple[str, Any], ...] = ()
@@ -283,9 +344,27 @@ class ProviderVersion:
             "baseModel": self.base_model,
             "architecture": self.architecture,
             "description": self.description,
+            "supportState": self.support_state,
+            "supportReason": self.support_reason,
             "trainedWords": list(self.trained_words),
             "publishedAt": self.published_at,
             "updatedAt": self.updated_at,
+            "maturity": self.maturity.to_dict(),
+            "authorPreviewMaturity": {
+                "completeness": (
+                    self.preview_maturity_completeness
+                    if self.preview_maturity_completeness in PREVIEW_MATURITY_COMPLETENESS
+                    else "unknown"
+                ),
+                "items": [
+                    {
+                        "providerImageId": str(getattr(item, "provider_image_id", "") or "") or None,
+                        "kind": str(getattr(item, "kind", "image") or "image"),
+                        "maturity": _maturity_dict(getattr(item, "maturity", None)),
+                    }
+                    for item in self.previews
+                ],
+            },
             "files": [item.to_dict() for item in self.files],
             "previews": [item.to_dict() for item in self.previews],
             "stats": _pairs_dict(self.stats),
@@ -306,10 +385,18 @@ class ProviderModelSummary:
     description: str = ""
     tags: tuple[str, ...] = ()
     nsfw: bool = False
+    maturity: ProviderMaturityRating = field(default_factory=ProviderMaturityRating)
     versions: tuple[ProviderVersion, ...] = ()
+    support_state: str = "unknown"
+    support_reason: str = ""
+    search_rank: int = 0
+    search_matches: tuple[str, ...] = ()
     library_status: str = "not_installed"
     local_asset_id: str = ""
     local_asset_type: str = ""
+    provider_preview_url: str = ""
+    local_preview_url: str = ""
+    local_preview_source: str = ""
     schema_version: int = ASSET_HUB_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -324,10 +411,18 @@ class ProviderModelSummary:
             "description": self.description,
             "tags": list(self.tags),
             "nsfw": self.nsfw,
+            "maturity": self.maturity.to_dict(),
             "versions": [item.to_dict() for item in self.versions],
+            "supportState": self.support_state,
+            "supportReason": self.support_reason,
+            "searchRank": self.search_rank,
+            "searchMatches": list(self.search_matches),
             "libraryStatus": self.library_status,
             "localAssetId": self.local_asset_id or None,
             "localAssetType": self.local_asset_type or None,
+            "providerPreviewUrl": self.provider_preview_url or None,
+            "localPreviewUrl": self.local_preview_url or None,
+            "localPreviewSource": self.local_preview_source or None,
         }
 
 
@@ -342,12 +437,18 @@ class ProviderModel:
     description: str = ""
     tags: tuple[str, ...] = ()
     nsfw: bool = False
+    maturity: ProviderMaturityRating = field(default_factory=ProviderMaturityRating)
     source_page_url: str = ""
+    support_state: str = "unknown"
+    support_reason: str = ""
     permissions: ProviderPermissionSummary = field(default_factory=ProviderPermissionSummary)
     versions: tuple[ProviderVersion, ...] = ()
     library_status: str = "not_installed"
     local_asset_id: str = ""
     local_asset_type: str = ""
+    provider_preview_url: str = ""
+    local_preview_url: str = ""
+    local_preview_source: str = ""
     schema_version: int = ASSET_HUB_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -362,12 +463,18 @@ class ProviderModel:
             "description": self.description,
             "tags": list(self.tags),
             "nsfw": self.nsfw,
+            "maturity": self.maturity.to_dict(),
             "sourcePageUrl": self.source_page_url,
             "permissions": self.permissions.to_dict(),
             "versions": [item.to_dict() for item in self.versions],
+            "supportState": self.support_state,
+            "supportReason": self.support_reason,
             "libraryStatus": self.library_status,
             "localAssetId": self.local_asset_id or None,
             "localAssetType": self.local_asset_type or None,
+            "providerPreviewUrl": self.provider_preview_url or None,
+            "localPreviewUrl": self.local_preview_url or None,
+            "localPreviewSource": self.local_preview_source or None,
         }
 
 

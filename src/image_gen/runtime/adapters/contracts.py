@@ -17,6 +17,7 @@ ADAPTER_FORMATS = frozenset({
     "lycoris_other",
     "non_adapter_full_model",
     "unknown_adapter",
+    "inspection_restricted",
     "invalid",
 })
 
@@ -26,6 +27,7 @@ SUPPORT_STATES = frozenset({
     "partial",
     "unsupported",
     "misclassified",
+    "restricted",
     "invalid",
 })
 
@@ -154,6 +156,7 @@ class AdapterRuntimePlan:
     active_checkpoint_family: str = ""
     compatibility: Mapping[str, Any] = field(default_factory=dict)
     loader_id: str = ""
+    architecture_adapter_id: str = ""
     requested_weight: float = 1.0
     effective_weight: float = 1.0
     weight_semantics: str = "user multiplier after loader-native normalization"
@@ -175,6 +178,7 @@ class AdapterRuntimePlan:
             "active_checkpoint_family": self.active_checkpoint_family,
             "compatibility": dict(self.compatibility),
             "loader_id": self.loader_id,
+            "architecture_adapter_id": self.architecture_adapter_id,
             "requested_weight": float(self.requested_weight),
             "effective_weight": float(self.effective_weight),
             "weight_semantics": self.weight_semantics,

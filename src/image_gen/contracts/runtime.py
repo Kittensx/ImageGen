@@ -408,6 +408,8 @@ class GenerationRequest:
     save_images: bool = False
     output_dir: Optional[str] = None
     output_prefix: str = "img"
+    output_image_format: str = "png"
+    embedded_metadata_mode: str = "full_replay"
 
     def __post_init__(self) -> None:
         self.prompt_asset_contract_version = str(
@@ -490,8 +492,11 @@ class GenerationRequest:
             "hires_shortcut_profile_mode": str(self.hires_shortcut_profile_mode or "same_as_base"),
             "hires_shortcut_profile_name": str(self.hires_shortcut_profile_name or self.prompt_shortcut_profile_name or "legacy_default"),
             "hires_shortcut_profile_snapshot": _json_safe(self.hires_shortcut_profile_snapshot),
-            "hires_positive_prompt": str(self.hires_positive_prompt or self.positive_prompt),
-            "hires_negative_prompt": str(self.hires_negative_prompt or self.negative_prompt),
+            # Preserve the user's override intent. Empty means the hires pass
+            # inherits the current base prompt; serializing the effective base
+            # text here would turn inheritance into a stale explicit override.
+            "hires_positive_prompt": str(self.hires_positive_prompt or ""),
+            "hires_negative_prompt": str(self.hires_negative_prompt or ""),
             "hires_size_mode": str(self.hires_size_mode or "same_as_base"),
             "hires_scale": (float(self.hires_scale) if self.hires_scale is not None else None),
             "hires_width": int(self.hires_width or 0),
@@ -604,6 +609,8 @@ class GenerationRequest:
             "save_images": bool(self.save_images),
             "output_dir": self.output_dir,
             "output_prefix": self.output_prefix,
+            "output_image_format": str(self.output_image_format or "png"),
+            "embedded_metadata_mode": str(self.embedded_metadata_mode or "full_replay"),
         }
         generation_width = getattr(self, "generation_width", None)
         generation_height = getattr(self, "generation_height", None)

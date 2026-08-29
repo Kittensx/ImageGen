@@ -18,6 +18,9 @@ from image_gen.contracts.latent_vae import LatentVAEContract, resolve_latent_vae
 from image_gen.contracts.model_conditioning import (
     BranchModelConditioningKwargs,
     ModelConditioningKwargs,
+    SEMANTIC_CONDITIONING_CAPABILITY_CONTRACT_VERSION,
+    SemanticConditioningCapabilities,
+    semantic_conditioning_capabilities_for_runtime,
     select_model_conditioning_branch,
 )
 from image_gen.contracts.protocols import (
@@ -52,6 +55,8 @@ __all__ = [
     "ConditioningOutput",
     "BranchModelConditioningKwargs",
     "ModelConditioningKwargs",
+    "SEMANTIC_CONDITIONING_CAPABILITY_CONTRACT_VERSION",
+    "SemanticConditioningCapabilities",
     "LatentVAEContract",
     "GenerationRequest",
     "GenerationResult",
@@ -80,6 +85,7 @@ __all__ = [
     "SchedulerCompatibilityResult",
     "SchedulerOutput",
     "check_adapter_conformance",
+    "semantic_conditioning_capabilities_for_runtime",
     "select_model_conditioning_branch",
     "require_adapter_conformance",
     "resolve_latent_vae_contract",

@@ -183,6 +183,8 @@ class PreparedOutputSaveRequest:
     save_txt: bool = True
     save_json: bool = True
     save_diagnostics_json: bool = True
+    image_ext: str = ".png"
+    embedded_metadata_mode: str = "full_replay"
     lowres_prefix: str | None = None
     lowres_images: list[Image.Image] = field(default_factory=list)
     lowres_manifest: Any | None = None
@@ -608,6 +610,8 @@ class OutputSystem:
             save_txt=bool(save_txt),
             save_json=bool(save_json),
             save_diagnostics_json=bool(save_diagnostics_json),
+            image_ext=f".{str(getattr(request, 'output_image_format', 'png') or 'png').strip().casefold().lstrip('.')}",
+            embedded_metadata_mode=str(getattr(request, "embedded_metadata_mode", "full_replay") or "full_replay"),
             expected_count=len(final_images),
             artifact_disk_budget_mb=max(0, int(
                 getattr(request, "hires_artifact_disk_budget_mb", 0) or 0
@@ -704,6 +708,8 @@ class OutputSystem:
                     save_txt=prepared.save_txt,
                     save_json=prepared.save_json,
                     save_diagnostics_json=prepared.save_diagnostics_json,
+                    image_ext=prepared.image_ext,
+                    embedded_metadata_mode=prepared.embedded_metadata_mode,
                 )
                 records.extend(lowres_records)
                 for record in lowres_records:
@@ -724,6 +730,8 @@ class OutputSystem:
                     save_txt=prepared.save_txt,
                     save_json=prepared.save_json,
                     save_diagnostics_json=prepared.save_diagnostics_json,
+                    image_ext=prepared.image_ext,
+                    embedded_metadata_mode=prepared.embedded_metadata_mode,
                 )
                 # Register the committed batch before post-commit sidecar hashing
                 # so a hash/sidecar failure rolls back every file in this batch.
@@ -746,6 +754,8 @@ class OutputSystem:
                 save_txt=prepared.save_txt,
                 save_json=prepared.save_json,
                 save_diagnostics_json=prepared.save_diagnostics_json,
+                image_ext=prepared.image_ext,
+                embedded_metadata_mode=prepared.embedded_metadata_mode,
             )
             records.extend(final_records)
             return records
@@ -821,4 +831,13 @@ class OutputSystem:
                 artifact_metadata["hashes_recorded_after_persistence"] = True
                 offset += count
         pipeline_result.saved_paths = [record.image_path for record in records]
+        metadata_warnings = [
+            warning
+            for record in records
+            for warning in (record.metadata_warnings or [])
+            if str(warning or "").strip()
+        ]
+        if metadata_warnings:
+            pipeline_result.metadata.setdefault("output_metadata", {})["warnings"] = metadata_warnings
+            pipeline_result.metadata.setdefault("warnings", []).extend(metadata_warnings)
         return records

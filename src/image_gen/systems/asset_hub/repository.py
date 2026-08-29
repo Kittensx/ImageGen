@@ -137,6 +137,22 @@ class DownloadRepository:
             ).fetchall()
         return [self._record(row) for row in rows]
 
+    def delete(self, job_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(f"DELETE FROM {self.TABLE} WHERE job_id = ?", (str(job_id),))
+            connection.commit()
+        return bool(cursor.rowcount)
+
+    def delete_many(self, job_ids: list[str] | tuple[str, ...]) -> int:
+        ids = [str(value) for value in job_ids if str(value or "").strip()]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(f"DELETE FROM {self.TABLE} WHERE job_id IN ({placeholders})", ids)
+            connection.commit()
+        return max(0, int(cursor.rowcount or 0))
+
     def update(self, job_id: str, **changes: Any) -> DownloadJobRecord:
         allowed = set(DownloadJobRecord.__dataclass_fields__) - {"job_id", "created_at"}
         updates = {key: value for key, value in changes.items() if key in allowed}
@@ -292,6 +308,14 @@ class InstallRepository:
     def get_by_job(self, install_job_id: str) -> InstallRecord | None:
         with self._lock, self._connect() as connection:
             row = connection.execute(f"SELECT * FROM {self.TABLE} WHERE install_job_id = ?", (str(install_job_id),)).fetchone()
+        return self._record(row) if row is not None else None
+
+    def get_by_download_job(self, download_job_id: str) -> InstallRecord | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                f"SELECT * FROM {self.TABLE} WHERE download_job_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (str(download_job_id),),
+            ).fetchone()
         return self._record(row) if row is not None else None
 
     def list(self, *, status: str = "", limit: int = 500) -> list[InstallRecord]:

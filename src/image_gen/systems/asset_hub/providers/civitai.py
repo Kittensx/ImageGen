@@ -17,6 +17,7 @@ from image_gen.systems.asset_hub.contracts import (
     ProviderDescriptor,
     ProviderDownloadSource,
     ProviderFile,
+    ProviderMaturityRating,
     ProviderModel,
     ProviderModelSummary,
     ProviderPermissionSummary,
@@ -45,7 +46,7 @@ _PROVIDER_BASE_MODELS = {
     "sd1.x": ("SD 1.4", "SD 1.5"),
     "sd2.x": ("SD 2.0", "SD 2.1"),
     "sdxl": ("SDXL 1.0",),
-    "sd3": ("SD 3", "SD 3.5"),
+    "sd3.x": ("SD 3", "SD 3.5", "SD 3.5 Medium", "SD 3.5 Large", "SD 3.5 Large Turbo"),
     "flux": ("Flux.1 D", "Flux.1 S"),
 }
 _ALLOWED_SORTS = {
@@ -75,6 +76,23 @@ _SECRET_KEYS = {
     "download_url",
     "signedurl",
     "signed_url",
+}
+_CIVITAI_MATURITY_BITS = (
+    (1, "PG"),
+    (2, "PG13"),
+    (4, "R"),
+    (8, "X"),
+    (16, "XXX"),
+    (32, "Blocked"),
+)
+_CIVITAI_KNOWN_MATURITY_MASK = sum(bit for bit, _name in _CIVITAI_MATURITY_BITS)
+_CIVITAI_TEXT_MATURITY = {
+    "PG": 1,
+    "PG13": 2,
+    "R": 4,
+    "X": 8,
+    "XXX": 16,
+    "BLOCKED": 32,
 }
 
 
@@ -136,6 +154,76 @@ def _mapping_list(value: Any, *, limit: int = 200) -> list[dict[str, Any]]:
 
 def _optional_bool(value: Any) -> bool | None:
     return value if isinstance(value, bool) else None
+
+
+def _maturity_source(raw: Mapping[str, Any]) -> tuple[Any, str]:
+    """Return the provider field verbatim without guessing an ordinal level."""
+    if "nsfwLevel" in raw:
+        return raw.get("nsfwLevel"), "nsfwLevel"
+    if "nsfw" in raw:
+        return raw.get("nsfw"), "nsfw"
+    return None, ""
+
+
+def _maturity_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    # CivitAI currently exposes scalar maturity values. If a future/broken
+    # response changes shape, retain a bounded diagnostic representation while
+    # keeping the normalized state Unknown.
+    return str(value)[:256]
+
+
+def _parse_civitai_maturity_mask(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value >= 0 and value.is_integer() else None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    token = "".join(character for character in text.upper() if character.isalnum())
+    return _CIVITAI_TEXT_MATURITY.get(token)
+
+
+def _civitai_maturity(raw: Mapping[str, Any]) -> ProviderMaturityRating:
+    value, source_field = _maturity_source(raw)
+    preserved = _maturity_scalar(value)
+    mask = _parse_civitai_maturity_mask(value)
+    if mask is None or mask == 0:
+        return ProviderMaturityRating(
+            provider_id="civitai",
+            raw=preserved,
+            mask=None,
+            levels=("Unknown",),
+            state="unknown",
+            source_field=source_field,
+        )
+    levels = tuple(name for bit, name in _CIVITAI_MATURITY_BITS if mask & bit)
+    unknown_bits = mask & ~_CIVITAI_KNOWN_MATURITY_MASK
+    if not levels:
+        return ProviderMaturityRating(
+            provider_id="civitai",
+            raw=preserved,
+            mask=mask,
+            levels=("Unknown",),
+            state="unknown",
+            source_field=source_field,
+            unknown_bits=unknown_bits,
+        )
+    return ProviderMaturityRating(
+        provider_id="civitai",
+        raw=preserved,
+        mask=mask,
+        levels=levels,
+        state="known",
+        source_field=source_field,
+        unknown_bits=unknown_bits,
+    )
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -383,6 +471,8 @@ class CivitaiProvider:
             width=_safe_int(raw.get("width"), 0) or None,
             height=_safe_int(raw.get("height"), 0) or None,
             nsfw_level=str(raw.get("nsfwLevel") if "nsfwLevel" in raw else raw.get("nsfw") or "")[:64],
+            provider_image_id=str(raw.get("id") or "")[:128],
+            maturity=_civitai_maturity(raw),
             kind=kind,
         )
 
@@ -419,7 +509,13 @@ class CivitaiProvider:
         )
 
     @classmethod
-    def _version(cls, raw: Mapping[str, Any], *, model_id: str = "") -> ProviderVersion:
+    def _version(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        model_id: str = "",
+        preview_maturity_completeness: str = "unknown",
+    ) -> ProviderVersion:
         version_id = str(raw.get("id") or "")
         resolved_model_id = str(raw.get("modelId") or model_id or "")
         base_model = str(raw.get("baseModel") or "").strip()
@@ -444,17 +540,41 @@ class CivitaiProvider:
             trained_words=trained_words,
             published_at=str(raw.get("publishedAt") or "")[:128],
             updated_at=str(raw.get("updatedAt") or "")[:128],
+            maturity=_civitai_maturity(raw),
+            preview_maturity_completeness=(
+                preview_maturity_completeness
+                if preview_maturity_completeness in {"complete", "provider_filtered", "unknown"}
+                else "unknown"
+            ),
             files=files,
             previews=previews,
             stats=_mapping(raw.get("stats")),
         )
 
     @classmethod
-    def _summary(cls, raw: Mapping[str, Any]) -> ProviderModelSummary:
+    def _summary(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        preview_maturity_completeness: str = "unknown",
+    ) -> ProviderModelSummary:
         model_id = str(raw.get("id") or "")
         provider_type = str(raw.get("type") or "").strip()
         creator = _mapping(raw.get("creator"))
-        versions = tuple(cls._version(item, model_id=model_id) for item in _mapping_list(raw.get("modelVersions"), limit=64))
+        versions = tuple(
+            cls._version(
+                item,
+                model_id=model_id,
+                preview_maturity_completeness=preview_maturity_completeness,
+            )
+            for item in _mapping_list(raw.get("modelVersions"), limit=64)
+        )
+        provider_preview_url = ""
+        for version in versions:
+            preview = next((item for item in version.previews if item.kind == "image" and item.url), None)
+            if preview is not None:
+                provider_preview_url = preview.url
+                break
         return ProviderModelSummary(
             provider_id="civitai",
             remote_model_id=model_id,
@@ -465,7 +585,9 @@ class CivitaiProvider:
             description=_plain_text(raw.get("description")),
             tags=_string_tuple(raw.get("tags"), limit=128),
             nsfw=bool(raw.get("nsfw", False)),
+            maturity=_civitai_maturity(raw),
             versions=versions,
+            provider_preview_url=provider_preview_url,
         )
 
     @classmethod
@@ -487,16 +609,31 @@ class CivitaiProvider:
             description=summary.description,
             tags=summary.tags,
             nsfw=summary.nsfw,
+            maturity=summary.maturity,
             source_page_url=f"https://civitai.com/models/{summary.remote_model_id}" if summary.remote_model_id else "",
             permissions=permissions,
             versions=summary.versions,
+            provider_preview_url=summary.provider_preview_url,
         )
 
     @staticmethod
-    def _cursor_page(cursor: str) -> int:
+    def _pagination_params(cursor: str, *, has_query: bool) -> list[tuple[str, str]]:
+        """Return Civitai pagination parameters without mixing query + page.
+
+        Civitai's current /models contract rejects ``query`` together with the
+        page-number parameter. Search therefore starts without a pagination
+        parameter and continues with the provider's opaque cursor. Browse mode
+        may retain the older page cursor for compatibility with cached/provider
+        responses that do not expose ``nextCursor``.
+        """
         token = str(cursor or "").strip()
         if not token:
-            return 1
+            return [] if has_query else [("page", "1")]
+        if token.startswith("civitai:cursor:"):
+            opaque = token[len("civitai:cursor:") :]
+            if not opaque or len(opaque) > 4096:
+                raise AssetHubError("provider_policy_blocked", "Invalid provider continuation cursor.", status_code=400)
+            return [("cursor", opaque)]
         if token.startswith("civitai:page:"):
             token = token.rsplit(":", 1)[-1]
         try:
@@ -505,17 +642,26 @@ class CivitaiProvider:
             raise AssetHubError("provider_policy_blocked", "Invalid provider continuation cursor.", status_code=400) from exc
         if page < 1 or page > 100000:
             raise AssetHubError("provider_policy_blocked", "Invalid provider continuation cursor.", status_code=400)
-        return page
+        if has_query:
+            raise AssetHubError("provider_policy_blocked", "Search continuation requires the provider cursor, not page pagination.", status_code=400)
+        return [("page", str(page))]
 
     @staticmethod
-    def _next_cursor(metadata: Mapping[str, Any]) -> str:
+    def _next_cursor(metadata: Mapping[str, Any], *, has_query: bool = False) -> str:
+        opaque = str(metadata.get("nextCursor") or "").strip()
+        if opaque:
+            return f"civitai:cursor:{opaque}"
         next_page = str(metadata.get("nextPage") or "").strip()
         if next_page:
             parsed = urlparse(next_page)
             if parsed.scheme and (parsed.scheme.lower() != "https" or str(parsed.hostname or "").casefold() != _ALLOWED_HOST):
                 return ""
-            page_values = parse_qs(parsed.query).get("page") or []
-            if page_values:
+            query = parse_qs(parsed.query)
+            cursor_values = query.get("cursor") or []
+            if cursor_values and str(cursor_values[0]).strip():
+                return f"civitai:cursor:{str(cursor_values[0]).strip()}"
+            page_values = query.get("page") or []
+            if page_values and not has_query:
                 try:
                     page = int(page_values[0])
                 except (TypeError, ValueError):
@@ -524,22 +670,24 @@ class CivitaiProvider:
                     return f"civitai:page:{page}"
         current = _safe_int(metadata.get("currentPage"), 0)
         total = _safe_int(metadata.get("totalPages"), 0)
-        if current and total and current < total:
+        if current and total and current < total and not has_query:
             return f"civitai:page:{current + 1}"
         return ""
 
     async def search(self, request: ProviderSearchRequest) -> ProviderSearchPage:
         kind = str(request.asset_kind or "checkpoint").strip().casefold()
-        provider_type = _PROVIDER_TYPE_FILTERS.get(kind)
-        if not provider_type:
+        provider_type = None if kind in {"any", "all", "*"} else _PROVIDER_TYPE_FILTERS.get(kind)
+        if kind not in {"any", "all", "*"} and not provider_type:
             raise AssetHubError("provider_policy_blocked", f"Civitai search does not expose asset kind {kind!r} in Phase 01.", status_code=400)
+        query = request.query.strip()[:256]
         params: list[tuple[str, str]] = [
             ("limit", str(max(1, min(int(request.limit or 24), 50)))),
-            ("page", str(self._cursor_page(request.cursor))),
-            ("types", provider_type),
         ]
-        if request.query.strip():
-            params.append(("query", request.query.strip()[:256]))
+        params.extend(self._pagination_params(request.cursor, has_query=bool(query)))
+        if provider_type:
+            params.append(("types", provider_type))
+        if query:
+            params.append(("query", query))
         if request.creator.strip():
             params.append(("username", request.creator.strip()[:256]))
         sort = _ALLOWED_SORTS.get(request.sort.strip().casefold()) if request.sort else None
@@ -555,13 +703,17 @@ class CivitaiProvider:
                 params.append(("baseModels", provider_base))
 
         payload = await self._request_json("/models", params, refresh=request.refresh)
-        items = tuple(self._summary(item) for item in _mapping_list(payload.get("items"), limit=50))
+        preview_maturity_completeness = "provider_filtered" if request.safe_content else "unknown"
+        items = tuple(
+            self._summary(item, preview_maturity_completeness=preview_maturity_completeness)
+            for item in _mapping_list(payload.get("items"), limit=50)
+        )
         metadata = _mapping(payload.get("metadata"))
         total_items = _safe_int(metadata.get("totalItems"), -1)
         return ProviderSearchPage(
             provider_id=self.provider_id,
             items=items,
-            next_cursor=self._next_cursor(metadata),
+            next_cursor=self._next_cursor(metadata, has_query=bool(query)),
             total_items=total_items if total_items >= 0 else None,
         )
 

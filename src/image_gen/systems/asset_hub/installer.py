@@ -32,6 +32,7 @@ class AssetHubInstaller:
         upscaler_catalog: Any,
         registry: AssetRegistry,
         repository: InstallRepository,
+        discovery_index: Any | None = None,
     ) -> None:
         self.context = context
         self.service = service
@@ -40,6 +41,7 @@ class AssetHubInstaller:
         self.upscaler_catalog = upscaler_catalog
         self.registry = registry
         self.repository = repository
+        self.discovery_index = discovery_index
         self.planner = AssetHubInstallPlanner(context=context, service=service, downloads=downloads)
         self.metadata_index = InstalledAssetMetadataIndex(context.cache_root)
         self._plans: dict[str, InstallPlan] = {}
@@ -175,6 +177,42 @@ class AssetHubInstaller:
             return self.upscaler_catalog.refresh(mode="selected", selected_file=str(installed_path))
         return {}
 
+    @staticmethod
+    def _provider_discovery_payload(model: Any, version: Any) -> dict[str, Any]:
+        payload = dict(model.to_dict()) if hasattr(model, "to_dict") else dict(model or {})
+        version_payload = dict(version.to_dict()) if hasattr(version, "to_dict") else dict(version or {})
+        version_id = str(version_payload.get("remoteVersionId") or "")
+        versions = [dict(item) for item in (payload.get("versions") or []) if isinstance(item, Mapping)]
+        if version_id:
+            replaced = False
+            for index, item in enumerate(versions):
+                if str(item.get("remoteVersionId") or "") == version_id:
+                    versions[index] = {**item, **version_payload}
+                    replaced = True
+                    break
+            if not replaced:
+                versions.append(version_payload)
+        payload["versions"] = versions
+        return payload
+
+    def _sync_provider_discovery(self, model: Any, version: Any) -> dict[str, Any]:
+        if self.discovery_index is None:
+            return {"status": "unavailable", "indexed": 0}
+        try:
+            payload = self._provider_discovery_payload(model, version)
+            provider_id = str(payload.get("providerId") or getattr(model, "provider_id", "") or "")
+            indexed = int(self.discovery_index.ingest_model(provider_id, payload) or 0)
+            return {"status": "synced", "indexed": indexed}
+        except Exception as exc:
+            # A downloaded asset is already safely installed at this point. A
+            # discovery-index failure must remain repairable metadata drift, not
+            # roll the user's file back out of the library.
+            return {
+                "status": "stale",
+                "indexed": 0,
+                "error": f"{type(exc).__name__}: {exc}"[:512],
+            }
+
     async def install(self, plan_id: str, *, confirmed: bool = False) -> InstallRecord:
         plan = self._plan(plan_id)
         if plan.requires_confirmation and not confirmed:
@@ -214,7 +252,7 @@ class AssetHubInstaller:
             )
             provenance["deduplicated_existing_file"] = bool(deduplicated)
             provenance["archive_member"] = plan.source_member or ""
-            sidecar_payload = write_provenance_sidecar(target, provenance)
+            sidecar_payload = write_provenance_sidecar(target, provenance, hydrate_card_fields=True)
             library_root, managed_category, path_kind = self.registry.classify_path(str(target), self._managed_roots())
             registry_record = self.registry.register_file(
                 str(target),
@@ -225,6 +263,14 @@ class AssetHubInstaller:
                 path_kind=path_kind,
             )
             self._refresh_after_install(plan.proposed_asset_kind, target)
+            discovery_sync = self._sync_provider_discovery(plan.provider_model, plan.provider_version)
+            provenance["post_install_sync"] = {
+                "catalog": {"status": "synced"},
+                "discovery_index": discovery_sync,
+                "registry_asset_id": str(registry_record.id),
+                "metadata_index": {"status": "synced"},
+            }
+            sidecar_payload = write_provenance_sidecar(target, provenance, hydrate_card_fields=True)
             record = self.repository.create(InstallRecord(
                 install_id=install_id,
                 install_job_id=install_job_id,
@@ -275,8 +321,43 @@ class AssetHubInstaller:
                     pass
             raise
 
+    async def auto_install_download(self, download_job_id: str) -> InstallRecord:
+        existing = self.get_by_download_job(download_job_id)
+        if existing is not None and existing.status in {"installed", "quarantined"}:
+            self.downloads.cleanup_job_staging(download_job_id)
+            return existing
+        plan = await self.create_plan(download_job_id, conflict_policy="hash_suffix")
+        record = await self.install(plan.plan_id, confirmed=True)
+        if record.status in {"installed", "quarantined"}:
+            self.downloads.cleanup_job_staging(download_job_id)
+        return record
+
     def list_installed(self) -> list[InstallRecord]:
         return self.repository.list(limit=1000)
+
+    def get_by_download_job(self, download_job_id: str) -> InstallRecord | None:
+        return self.repository.get_by_download_job(download_job_id)
+
+    def open_install_folder(self, install_id: str) -> str:
+        record = self.repository.get(install_id)
+        if record is None:
+            raise AssetHubError("install_not_found", "Installed Asset Hub record not found.", status_code=404)
+        path = Path(record.installed_path).resolve()
+        target = path if path.is_dir() else path.parent
+        allowed_roots = [Path(value).resolve() for value in self._managed_roots().values()]
+        if not any(root == target or root in target.parents for root in allowed_roots):
+            raise AssetHubError("install_destination_unsafe", "Installed asset folder is outside configured managed roots.", status_code=409)
+        if not target.exists():
+            raise AssetHubError("installed_file_missing", "Installed asset folder no longer exists.", status_code=404)
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(target)], start_new_session=True)
+        except OSError as exc:
+            raise AssetHubError("open_folder_failed", f"Unable to open installed asset folder: {exc}", status_code=500) from exc
+        return str(target)
 
     def get_install_job(self, install_job_id: str) -> InstallRecord:
         record = self.repository.get_by_job(install_job_id)
@@ -294,8 +375,18 @@ class AssetHubInstaller:
         if not path.is_file():
             return self.repository.update(install_id, status="missing", error_code="installed_file_missing", error_message="Installed file is no longer present.")
         try:
-            model = await self.service.get_model(record.provider_id, record.remote_model_id, refresh=True)
-            version = await self.service.get_version(record.provider_id, record.remote_version_id, refresh=True)
+            model = await self.service.get_model(
+                record.provider_id,
+                record.remote_model_id,
+                refresh=True,
+                include_unsupported=True,
+            )
+            version = await self.service.get_version(
+                record.provider_id,
+                record.remote_version_id,
+                refresh=True,
+                include_unsupported=True,
+            )
             provider_file = next((item for item in version.files if item.remote_file_id == record.remote_file_id), None)
             if provider_file is None:
                 raise AssetHubError("provider_not_found", "Provider file is no longer available.", status_code=404)
@@ -313,7 +404,16 @@ class AssetHubInstaller:
                 source_metadata=existing,
             )
             provenance["metadata_created_at_utc"] = existing.get("metadata_created_at_utc") or provenance["metadata_created_at_utc"]
-            write_provenance_sidecar(path, provenance)
+            write_provenance_sidecar(path, provenance, hydrate_card_fields=True)
+            self._refresh_after_install(record.asset_kind, path)
+            discovery_sync = self._sync_provider_discovery(model, version)
+            provenance["post_install_sync"] = {
+                "catalog": {"status": "synced"},
+                "discovery_index": discovery_sync,
+                "registry_asset_id": record.registry_asset_id,
+                "metadata_index": {"status": "synced"},
+            }
+            write_provenance_sidecar(path, provenance, hydrate_card_fields=True)
             self.metadata_index.upsert(record.install_id, provenance)
             return self.repository.update(
                 install_id,

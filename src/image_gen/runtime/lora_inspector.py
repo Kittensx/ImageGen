@@ -347,7 +347,7 @@ def _adapter_parameter_key(key: str) -> bool:
             "hada_w2_",
             "lokr_",
         )
-    ) or lowered.startswith(("lora_unet_", "lora_te_", "lora_te1_", "lora_te2_"))
+    ) or lowered.startswith(("lora_unet_", "lora_transformer_", "lora_te_", "lora_te1_", "lora_te2_", "lora_te3_"))
 
 
 def _checkpoint_like_evidence(keys: list[str]) -> list[str]:
@@ -391,7 +391,7 @@ def _adapter_format(keys: list[str], metadata: Mapping[str, Any]) -> tuple[str, 
         return "lycoris_lokr", evidence
 
     has_kohya = any(
-        key.startswith(("lora_unet_", "lora_te_", "lora_te1_", "lora_te2_"))
+        key.startswith(("lora_unet_", "lora_transformer_", "lora_te_", "lora_te1_", "lora_te2_", "lora_te3_"))
         for key in lowered
     )
     has_peft = any(".lora_a.weight" in key or ".lora_b.weight" in key for key in lowered)
@@ -474,8 +474,10 @@ def _adapter_group_base(key: str) -> str:
 def _target_analysis(keys: list[str], shape_map: Mapping[str, tuple[int, ...]]) -> tuple[tuple[str, ...], dict[str, int]]:
     groups: dict[str, set[str]] = {
         "unet": set(),
+        "transformer": set(),
         "text_encoder": set(),
         "text_encoder_2": set(),
+        "text_encoder_3": set(),
         "linear": set(),
         "convolution": set(),
         "other": set(),
@@ -485,13 +487,20 @@ def _target_analysis(keys: list[str], shape_map: Mapping[str, tuple[int, ...]]) 
             continue
         lowered = key.lower()
         base = _adapter_group_base(key)
-        if lowered.startswith("lora_te2_") or "text_encoder_2" in lowered:
+        if lowered.startswith("lora_te3_") or "text_encoder_3" in lowered:
+            groups["text_encoder_3"].add(base)
+        elif lowered.startswith("lora_te2_") or "text_encoder_2" in lowered:
             groups["text_encoder_2"].add(base)
         elif (
             lowered.startswith(("lora_te_", "lora_te1_", "text_encoder.", "text_model."))
             or ".text_encoder." in lowered
         ):
             groups["text_encoder"].add(base)
+        elif (
+            lowered.startswith(("lora_transformer_", "transformer.", "transformer_blocks.", "single_transformer_blocks."))
+            or ".transformer." in lowered
+        ):
+            groups["transformer"].add(base)
         elif (
             lowered.startswith((
                 "lora_unet_",
@@ -518,7 +527,7 @@ def _target_analysis(keys: list[str], shape_map: Mapping[str, tuple[int, ...]]) 
                 groups["linear"].add(base)
 
     counts = {f"{name}_target_groups": len(values) for name, values in groups.items()}
-    scopes = tuple(name for name in ("unet", "text_encoder", "text_encoder_2", "linear", "convolution", "other") if groups[name])
+    scopes = tuple(name for name in ("unet", "transformer", "text_encoder", "text_encoder_2", "text_encoder_3", "linear", "convolution", "other") if groups[name])
     return scopes, counts
 
 

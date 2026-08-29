@@ -18,6 +18,7 @@ from image_gen.runtime.lora_inspector import (
 )
 from image_gen.runtime.adapters.compatibility import AdapterCompatibilityService
 from image_gen.runtime.adapters.contracts import AdapterInspectionRecord, AdapterRuntimePlan
+from image_gen.runtime.adapters.architecture_mapping import architecture_contract
 from image_gen.runtime.adapters.registry import (
     AdapterLoaderRegistry,
     default_adapter_loader_registry,
@@ -441,6 +442,11 @@ class LoRARuntimeManager:
                 active_checkpoint_family=checkpoint_family,
                 compatibility=compatibility.to_dict(),
                 loader_id=compatibility.loader_id,
+                architecture_adapter_id=(
+                    architecture_contract(inspection.model_family).architecture_adapter_id
+                    if canonical_model_family(inspection.model_family)
+                    else ""
+                ),
                 requested_weight=_coerce_float(item.get("weight"), 1.0),
                 effective_weight=_coerce_float(item.get("weight"), 1.0),
                 weight_semantics="user multiplier after loader-native rank/alpha normalization",
@@ -630,34 +636,38 @@ class LoRARuntimeManager:
                 continue
             polarity = str(item.get("polarity") or "positive").strip().lower()
             if polarity == "negative":
+                hires_inherits = not bool(str(request.hires_negative_prompt or "").strip())
                 request.negative_prompt, base_applied = self._append_prompt_text(
                     request.negative_prompt,
                     activation_text,
                 )
-                hires_negative_source = (
-                    request.hires_negative_prompt
-                    if str(request.hires_negative_prompt or "").strip()
-                    else request.negative_prompt
-                )
-                request.hires_negative_prompt, hires_applied = self._append_prompt_text(
-                    hires_negative_source,
-                    activation_text,
-                )
+                if hires_inherits:
+                    # The effective hires negative prompt inherits the now-updated
+                    # base prompt. Keep the stored override blank so later edits
+                    # continue to inherit instead of freezing this generation's text.
+                    hires_applied = base_applied
+                else:
+                    request.hires_negative_prompt, hires_applied = self._append_prompt_text(
+                        request.hires_negative_prompt,
+                        activation_text,
+                    )
                 targets = ["negative_prompt", "hires_negative_prompt"]
             else:
+                hires_inherits = not bool(str(request.hires_positive_prompt or "").strip())
                 request.positive_prompt, base_applied = self._append_prompt_text(
                     request.positive_prompt,
                     activation_text,
                 )
-                hires_positive_source = (
-                    request.hires_positive_prompt
-                    if str(request.hires_positive_prompt or "").strip()
-                    else request.positive_prompt
-                )
-                request.hires_positive_prompt, hires_applied = self._append_prompt_text(
-                    hires_positive_source,
-                    activation_text,
-                )
+                if hires_inherits:
+                    # Same rule for positive prompts: activation text reaches the
+                    # hires pass through base inheritance without materializing an
+                    # explicit hires override.
+                    hires_applied = base_applied
+                else:
+                    request.hires_positive_prompt, hires_applied = self._append_prompt_text(
+                        request.hires_positive_prompt,
+                        activation_text,
+                    )
                 targets = ["positive_prompt", "hires_positive_prompt"]
             report.append(
                 {

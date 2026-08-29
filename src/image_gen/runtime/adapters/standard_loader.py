@@ -6,7 +6,7 @@ from typing import Any, Iterable, Mapping
 from image_gen.runtime.adapters.registry import STANDARD_DIFFUSERS_LOADER_ID
 from image_gen.runtime.adapters.standard_mapping import normalize_standard_state_dict
 
-_COMPONENTS = ("unet", "text_encoder", "text_encoder_2")
+_COMPONENTS = ("unet", "transformer", "text_encoder", "text_encoder_2", "text_encoder_3")
 
 
 def _coerce_float(value: Any, default: float = 1.0) -> float:
@@ -46,18 +46,38 @@ class StandardDiffusersAdapterLoader:
     def _stable_diffusion_lora_loader_mixin() -> Any:
         try:
             from diffusers.loaders import StableDiffusionLoraLoaderMixin
-
             return StableDiffusionLoraLoaderMixin
         except Exception:
             try:
                 from diffusers.loaders import LoraLoaderMixin
-
                 return LoraLoaderMixin
             except Exception as exc:
                 raise ValueError(
                     "Unable to import diffusers LoRA loader support. Expected the pinned diffusers build "
                     "to expose StableDiffusionLoraLoaderMixin or LoraLoaderMixin."
                 ) from exc
+
+    def _lora_loader_mixin(self, model_family: str) -> Any:
+        family = str(model_family or "").strip().lower()
+        if family == "sd3":
+            try:
+                from diffusers.loaders import SD3LoraLoaderMixin
+
+                return SD3LoraLoaderMixin
+            except Exception as exc:
+                raise ValueError(
+                    "Unable to import diffusers SD3 LoRA loader support. Expected the pinned diffusers build "
+                    "to expose SD3LoraLoaderMixin."
+                ) from exc
+        return self._stable_diffusion_lora_loader_mixin()
+
+    @staticmethod
+    def _component_module(components: Any, component_name: str) -> Any:
+        if component_name == "transformer":
+            denoiser_kind = str(getattr(components, "denoiser_kind", "") or "").strip().lower()
+            if denoiser_kind in {"transformer", "sd3_transformer", "mmdit"}:
+                return getattr(components, "denoiser", None)
+        return getattr(components, component_name, None)
 
     @staticmethod
     def _count_prefixed_keys(state_dict: Mapping[str, Any], prefix: str) -> int:
@@ -129,7 +149,8 @@ class StandardDiffusersAdapterLoader:
         expected_targets = list(runtime_plan.get("expected_component_targets") or inspection_record.get("target_scopes") or [])
         kwargs = {
             "pretrained_model_name_or_path_or_dict": path,
-            "unet_config": getattr(getattr(components, "unet", None), "config", None),
+            "unet_config": getattr(self._component_module(components, "unet"), "config", None),
+            "transformer_config": getattr(self._component_module(components, "transformer"), "config", None),
             "return_lora_metadata": True,
         }
         try:
@@ -193,15 +214,19 @@ class StandardDiffusersAdapterLoader:
         )
         candidate_counts = {
             "unet": self._count_prefixed_keys(state_dict, "unet."),
+            "transformer": self._count_prefixed_keys(state_dict, "transformer."),
             "text_encoder": self._count_prefixed_keys(state_dict, "text_encoder."),
             "text_encoder_2": self._count_prefixed_keys(state_dict, "text_encoder_2."),
+            "text_encoder_3": self._count_prefixed_keys(state_dict, "text_encoder_3."),
         }
         component_target_count = sum(
             int(target_counts.get(key) or 0)
             for key in (
                 "unet_target_groups",
+                "transformer_target_groups",
                 "text_encoder_target_groups",
                 "text_encoder_2_target_groups",
+                "text_encoder_3_target_groups",
                 "other_target_groups",
             )
         )
@@ -214,6 +239,7 @@ class StandardDiffusersAdapterLoader:
             "loader_path": self.loader_id,
             "inspection_contract_version": str(inspection_record.get("contract_version") or ""),
             "runtime_plan_contract_version": str(runtime_plan.get("contract_version") or ""),
+            "runtime_plan_architecture_adapter_id": str(runtime_plan.get("architecture_adapter_id") or ""),
             "adapter_format": str(inspection_record.get("adapter_format") or entry.get("adapter_format") or ""),
             "model_family": str(inspection_record.get("model_family") or entry.get("detected_model_family") or entry.get("model_family") or ""),
             "active_checkpoint_family": str(runtime_plan.get("active_checkpoint_family") or ""),
@@ -233,6 +259,7 @@ class StandardDiffusersAdapterLoader:
             "final_effective_scale_semantics": "user multiplier applied after loader-native rank/alpha normalization",
             "key_prefix_mode": str(mapping_report.get("prefix_mode") or ""),
             "mapping_contract_version": str(mapping_report.get("contract_version") or ""),
+            "architecture_adapter_id": str(mapping_report.get("architecture_adapter_id") or ""),
             "mapping_count": int(mapping_report.get("mapping_count") or 0),
             "recognized_mapping_count": int(mapping_report.get("recognized_mapping_count") or 0),
             "unmapped_parameter_count": int(mapping_report.get("unmapped_parameter_count") or 0),
@@ -244,15 +271,21 @@ class StandardDiffusersAdapterLoader:
             "network_alpha_count": len(network_alphas),
             "metadata_key_count": len(metadata),
             "unet_candidate_keys": candidate_counts["unet"],
+            "transformer_candidate_keys": candidate_counts["transformer"],
             "text_encoder_candidate_keys": candidate_counts["text_encoder"],
             "text_encoder_2_candidate_keys": candidate_counts["text_encoder_2"],
+            "text_encoder_3_candidate_keys": candidate_counts["text_encoder_3"],
             "converted_key_examples": [str(key) for key in list(state_dict.keys())[:8]],
             "unet_expected": "unet" in expected_components,
+            "transformer_expected": "transformer" in expected_components,
             "text_encoder_expected": "text_encoder" in expected_components,
             "text_encoder_2_expected": "text_encoder_2" in expected_components,
+            "text_encoder_3_expected": "text_encoder_3" in expected_components,
             "unet_loaded": "unet" not in expected_components,
+            "transformer_loaded": "transformer" not in expected_components,
             "text_encoder_loaded": "text_encoder" not in expected_components,
             "text_encoder_2_loaded": "text_encoder_2" not in expected_components,
+            "text_encoder_3_loaded": "text_encoder_3" not in expected_components,
             "verification_failures": [],
             "activation_state": "prepared",
             "verified": False,
@@ -270,7 +303,7 @@ class StandardDiffusersAdapterLoader:
         adapter_name: str,
         entry: Mapping[str, Any],
     ) -> bool:
-        module = getattr(components, component_name, None)
+        module = self._component_module(components, component_name)
         if module is None:
             raise self._error(
                 entry=entry,
@@ -285,6 +318,20 @@ class StandardDiffusersAdapterLoader:
                         "state_dict": state_dict,
                         "network_alphas": network_alphas,
                         "unet": module,
+                        "adapter_name": adapter_name,
+                        "metadata": metadata_for_load,
+                    },
+                )
+            elif component_name == "transformer":
+                loader = getattr(mixin, "load_lora_into_transformer", None)
+                if not callable(loader):
+                    raise ValueError("selected diffusers LoRA mixin does not expose load_lora_into_transformer")
+                self._call_with_supported_kwargs(
+                    loader,
+                    {
+                        "state_dict": state_dict,
+                        "network_alphas": network_alphas,
+                        "transformer": module,
                         "adapter_name": adapter_name,
                         "metadata": metadata_for_load,
                     },
@@ -313,7 +360,9 @@ class StandardDiffusersAdapterLoader:
         if not adapter_name:
             raise self._error(entry=entry, failed_target="identity", detail="runtime entry is missing an adapter name.")
 
-        mixin = self._stable_diffusion_lora_loader_mixin()
+        inspection_record, runtime_plan = self._entry_context(entry)
+        family = str(runtime_plan.get("active_checkpoint_family") or inspection_record.get("model_family") or "")
+        mixin = self._lora_loader_mixin(family)
         state_dict, network_alphas, metadata, mapping_report = self._load_lora_state(
             path=path,
             components=components,
@@ -327,10 +376,24 @@ class StandardDiffusersAdapterLoader:
             metadata=metadata,
             mapping_report=mapping_report,
         )
+        planned_architecture_adapter_id = str(report.get("runtime_plan_architecture_adapter_id") or "")
+        mapped_architecture_adapter_id = str(report.get("architecture_adapter_id") or "")
+        if planned_architecture_adapter_id and mapped_architecture_adapter_id != planned_architecture_adapter_id:
+            raise self._error(
+                entry=entry,
+                failed_target="architecture_mapping",
+                detail=(
+                    "runtime plan architecture adapter does not match standard-LoRA mapping authority: "
+                    f"plan={planned_architecture_adapter_id}; mapping={mapped_architecture_adapter_id or 'missing'}"
+                ),
+            )
+
         candidate_counts = {
             "unet": int(report["unet_candidate_keys"]),
+            "transformer": int(report["transformer_candidate_keys"]),
             "text_encoder": int(report["text_encoder_candidate_keys"]),
             "text_encoder_2": int(report["text_encoder_2_candidate_keys"]),
+            "text_encoder_3": int(report["text_encoder_3_candidate_keys"]),
         }
         if not any(candidate_counts.values()):
             examples = ", ".join(report.get("converted_key_examples") or []) or "none"
@@ -413,7 +476,7 @@ class StandardDiffusersAdapterLoader:
 
     def deactivate(self, *, components: Any) -> None:
         for component_name in _COMPONENTS:
-            self._deactivate_module(getattr(components, component_name, None))
+            self._deactivate_module(self._component_module(components, component_name))
 
     @staticmethod
     def _component_stack(stack: Iterable[Mapping[str, Any]], component_name: str) -> tuple[list[str], list[float]]:
@@ -435,7 +498,7 @@ class StandardDiffusersAdapterLoader:
     def activate(self, *, components: Any, stack: Iterable[Mapping[str, Any]]) -> None:
         activated_any = False
         for component_name in _COMPONENTS:
-            module = getattr(components, component_name, None)
+            module = self._component_module(components, component_name)
             if module is None:
                 continue
             names, weights = self._component_stack(stack, component_name)

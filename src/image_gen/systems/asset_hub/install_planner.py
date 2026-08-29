@@ -265,8 +265,18 @@ class AssetHubInstallPlanner:
         if actual != str(record.actual_sha256).lower():
             raise AssetHubError("install_staging_hash_changed", "Staged payload changed after download verification.", status_code=409)
 
-        model = await self.service.get_model(record.provider_id, record.remote_model_id, refresh=False)
-        version = await self.service.get_version(record.provider_id, record.remote_version_id, refresh=False)
+        model = await self.service.get_model(
+            record.provider_id,
+            record.remote_model_id,
+            refresh=False,
+            include_unsupported=True,
+        )
+        version = await self.service.get_version(
+            record.provider_id,
+            record.remote_version_id,
+            refresh=False,
+            include_unsupported=True,
+        )
         provider_file = self._find_provider_file(version, record.remote_file_id)
         selected_source = source
         selected_member = ""
