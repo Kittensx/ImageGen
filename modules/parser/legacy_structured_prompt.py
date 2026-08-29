@@ -145,11 +145,11 @@ def _find_top_level_operator(source: str, operator: str, start: int = 0) -> int:
         if char == "\\" and not _is_escaped(source, index):
             index += 2
             continue
-        if char == "{" and not _is_escaped(source, index):
+        if char in {"{", "⦃"} and not _is_escaped(source, index):
             brace += 1
             index += 1
             continue
-        if char == "}" and not _is_escaped(source, index):
+        if char in {"}", "⦄"} and not _is_escaped(source, index):
             brace = max(0, brace - 1)
             index += 1
             continue
@@ -212,7 +212,7 @@ def _split_group_items(source: str) -> list[str]:
 
 def unescape_classic_literals(text: str) -> str:
     """Unescape Classic structural punctuation after structure is consumed."""
-    return re.sub(r"\\([:{}|,!\\])", r"\1", str(text or ""))
+    return re.sub(r"\\([:{}|,!^*⦃⦄\\])", r"\1", str(text or ""))
 
 
 def _unescape_literal(text: str) -> str:
@@ -333,11 +333,11 @@ def _find_sequence_closer(source: str, start: int = 0) -> tuple[int, str] | None
         if char == "\\" and not _is_escaped(source, index):
             index += 2
             continue
-        if char == "{" and not _is_escaped(source, index):
+        if char in {"{", "⦃"} and not _is_escaped(source, index):
             brace += 1
             index += 1
             continue
-        if char == "}" and not _is_escaped(source, index):
+        if char in {"}", "⦄"} and not _is_escaped(source, index):
             brace = max(0, brace - 1)
             index += 1
             continue
@@ -721,9 +721,9 @@ def split_top_level_and(source: str) -> list[str]:
         if char == "\\" and not _is_escaped(text, index):
             index += 2
             continue
-        if char == "{":
+        if char in {"{", "⦃"}:
             brace += 1
-        elif char == "}":
+        elif char in {"}", "⦄"}:
             brace = max(0, brace - 1)
         elif char == "[":
             bracket += 1

@@ -50,7 +50,7 @@ _COMPLETE_PREFIX = "MODEL_RUNTIME_COMMAND_COMPLETE_JSON: "
 
 
 def _emit(prefix: str, payload: dict[str, Any]) -> None:
-    print(prefix + json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+    print(prefix + json.dumps(payload, ensure_ascii=True, sort_keys=True), flush=True)
 
 
 def _utc_timestamp() -> float:
@@ -100,7 +100,7 @@ class ResidentTxt2ImgModelRuntime:
     def _emit_async_output_save_status(self, snapshot: dict[str, Any]) -> None:
         print(
             _ASYNC_OUTPUT_SAVE_STATUS_PREFIX
-            + json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+            + json.dumps(snapshot, ensure_ascii=True, sort_keys=True),
             flush=True,
         )
 
@@ -162,7 +162,7 @@ class ResidentTxt2ImgModelRuntime:
                     "error_type": type(error).__name__,
                     "error": str(error),
                 },
-                ensure_ascii=False,
+                ensure_ascii=True,
                 sort_keys=True,
             ),
             flush=True,
@@ -503,7 +503,7 @@ class ResidentTxt2ImgModelRuntime:
                         "base_seed": int(batch_request.seed),
                         "image_seeds": resolved_image_seeds,
                     },
-                    ensure_ascii=False,
+                    ensure_ascii=True,
                     sort_keys=True,
                 ),
                 flush=True,
@@ -553,7 +553,7 @@ class ResidentTxt2ImgModelRuntime:
             live_preview_summary = dict(result.pipeline_result.metadata.get("live_preview") or {})
             print(
                 "LIVE_PREVIEW_SUMMARY_JSON: "
-                + json.dumps(live_preview_summary, ensure_ascii=False, sort_keys=True),
+                + json.dumps(live_preview_summary, ensure_ascii=True, sort_keys=True),
                 flush=True,
             )
             output_quality_diagnostic = dict(
@@ -561,7 +561,7 @@ class ResidentTxt2ImgModelRuntime:
             )
             print(
                 "OUTPUT_QUALITY_DIAGNOSTIC_JSON: "
-                + json.dumps(output_quality_diagnostic, ensure_ascii=False, sort_keys=True),
+                + json.dumps(output_quality_diagnostic, ensure_ascii=True, sort_keys=True),
                 flush=True,
             )
 
@@ -570,14 +570,14 @@ class ResidentTxt2ImgModelRuntime:
             )
             print(
                 "PROMPT_PARSER_DIAGNOSTIC_JSON: "
-                + json.dumps(prompt_parser_diagnostic, ensure_ascii=False, sort_keys=True),
+                + json.dumps(prompt_parser_diagnostic, ensure_ascii=True, sort_keys=True),
                 flush=True,
             )
             model_diagnostic = dict(result.request_extras.get("model_provenance") or {})
             model_cache_reused = model_cache_reused or bool(model_diagnostic.get("cache_reused"))
             print(
                 "MODEL_DIAGNOSTIC_JSON: "
-                + json.dumps(model_diagnostic, ensure_ascii=False, sort_keys=True),
+                + json.dumps(model_diagnostic, ensure_ascii=True, sort_keys=True),
                 flush=True,
             )
 

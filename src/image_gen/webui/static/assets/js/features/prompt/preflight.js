@@ -742,6 +742,24 @@ export function formatSemanticInspection(role = {}) {
     });
     if (group.fallback_reason) lines.push(`  Fallback: ${group.fallback_reason}`);
   });
+  const experimentalGroups = Array.isArray(inspection.experimental_groups) ? inspection.experimental_groups : [];
+  experimentalGroups.forEach((group, index) => {
+    lines.push(`Experimental group ${index + 1} · ${group.algorithm || "unknown"} · ${group.member_count || 0} members${group.fallback_used ? " · FALLBACK" : ""}`);
+    (group.members || []).forEach((member) => {
+      const pct = Number.isFinite(Number(member.normalized_weight))
+        ? `${(Number(member.normalized_weight) * 100).toFixed(2)}%`
+        : "n/a";
+      lines.push(`  - ${member.source || "<empty>"} · focus ${pct}${member.explicit_weight ? ` · raw weight ${member.raw_weight}` : ""}`);
+      if (member.focus_encoder_text) lines.push(`    encoder: ${member.focus_encoder_text}`);
+    });
+    if (group.fallback_reason) lines.push(`  Fallback: ${group.fallback_reason}`);
+  });
+  const bindings = Array.isArray(inspection.bindings) ? inspection.bindings : [];
+  bindings.forEach((binding, index) => {
+    const scope = binding.scope === "subtree" ? "target + descendants" : "target only";
+    lines.push(`Binding ${index + 1} · ${binding.modifier || "?"}${binding.operator || "^"}${binding.target || "?"} · ${scope}`);
+    lines.push(`  Algorithm: ${binding.algorithm || "experimental"} · inheritance barrier=${binding.inheritance_barrier ? "yes" : "no"}`);
+  });
   const relations = Array.isArray(inspection.relationships) ? inspection.relationships : [];
   relations.forEach((relation, index) => {
     lines.push(`Relationship ${index + 1} · ${relation.syntax_origin || "structured"}`);

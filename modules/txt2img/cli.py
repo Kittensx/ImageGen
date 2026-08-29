@@ -509,6 +509,21 @@ def _console_verbose_enabled(args: argparse.Namespace) -> bool:
     }
 
 
+def _console_safe_text(value: Any, *, encoding: str | None = None) -> str:
+    """Return text safe for the active console encoding without changing source data."""
+
+    text = str(value)
+    target_encoding = str(encoding or getattr(sys.stdout, "encoding", None) or "utf-8")
+    try:
+        text.encode(target_encoding)
+        return text
+    except (LookupError, UnicodeEncodeError):
+        try:
+            return text.encode(target_encoding, errors="backslashreplace").decode(target_encoding)
+        except LookupError:
+            return text.encode("ascii", errors="backslashreplace").decode("ascii")
+
+
 def _emit_structured_console_json(
     prefix: str,
     payload: dict[str, Any],
@@ -517,8 +532,14 @@ def _emit_structured_console_json(
 ) -> None:
     if not enabled:
         return
+    # Structured console diagnostics must be safe on the default Windows
+    # cp1252 console. Experimental prompt syntax can contain Unicode (for
+    # example PPSR-09 white curly braces), so escape non-ASCII characters in
+    # console JSON instead of allowing diagnostic printing to abort a
+    # successfully completed generation. Saved request/manifest metadata keeps
+    # its original Unicode text; this affects console serialization only.
     print(
-        prefix + json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        prefix + json.dumps(payload, ensure_ascii=True, sort_keys=True),
         flush=True,
     )
 
@@ -1003,7 +1024,7 @@ def _run_generation(args: argparse.Namespace) -> int:
             total_saved += len(saved_paths)
             print("=== txt2img batch complete ===")
             print(f"Run ID: {result.run_id}")
-            print(f"Prompt: {result.request.positive_prompt}")
+            print("Prompt: " + _console_safe_text(result.request.positive_prompt))
             print(f"Batch base seed: {result.request.seed}")
             print(f"Image seeds: {result.request.resolved_seeds}")
             print(f"Sampler: {result.request.sampler_name}")

@@ -152,3 +152,7 @@ testing\test_validations\qualification\generation\ppsr08_prompt_parser_image_qua
 ```
 
 The qualification runner creates a unique `images/`, `requests/`, and `logs/` evidence run, compares `standing` with `{standing}`, verifies grouped/weighted prompts are image-distinct where expected, performs exact semantic-manifest replay, and creates a contact sheet for visual review.
+
+## PPSR-09 Semantic Structure experiments
+
+Prompt Inspector displays PPSR-09 experimental cohesive groups and modifier/target bindings. White-brace groups show their algorithm, members, normalized focus weights, and focus encoder text. Bindings show the source operator (`^` or `*`), target-only/subtree scope, inheritance-barrier state, and lowering algorithm. These diagnostics are experimental and do not replace the established `{...}` control until PPSR-10 decides the cutover.

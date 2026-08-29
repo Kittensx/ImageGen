@@ -21,9 +21,25 @@ from modules.prompt_parsers.group_conditioning import (
     contains_group,
     expand_group_operation,
 )
+from modules.prompt_parsers.experimental_group_conditioning import (
+    ExperimentalGroupDiagnostic,
+    contains_experimental_group,
+    expand_experimental_group_operation,
+)
+from modules.prompt_parsers.binding_semantics import (
+    BindingDiagnostic,
+    apply_inherited_bindings,
+    binding_diagnostics,
+    binding_phrase,
+    child_inheritance,
+    contains_binding,
+    inherited_text,
+)
 from modules.prompt_parsers.ir import (
     Alternate,
+    BoundConcept,
     Conjunction,
+    ExperimentalGroup,
     Group,
     IRNode,
     Literal,
@@ -39,7 +55,7 @@ from modules.prompt_parsers.ir import (
 )
 
 CONDITIONING_PLAN_CONTRACT_VERSION = "image-gen-conditioning-plan-v6"
-_ESCAPED_STRUCTURAL_RE = re.compile(r"\\[{}:!|\\]")
+_ESCAPED_STRUCTURAL_RE = re.compile(r"\\[{}⦃⦄^*:!|\\]")
 
 
 @dataclass(frozen=True)
@@ -144,12 +160,14 @@ class ConditioningPlan:
     fallbacks: tuple[str, ...] = field(default_factory=tuple)
     warnings: tuple[str, ...] = field(default_factory=tuple)
     group_diagnostics: tuple[GroupDiagnostic, ...] = field(default_factory=tuple)
+    experimental_group_diagnostics: tuple[ExperimentalGroupDiagnostic, ...] = field(default_factory=tuple)
+    binding_diagnostics: tuple[BindingDiagnostic, ...] = field(default_factory=tuple)
     relationship_diagnostics: tuple[RelationshipDiagnostic, ...] = field(default_factory=tuple)
     numeric_semantics: tuple[NumericSemantic, ...] = field(default_factory=tuple)
     contract: str = CONDITIONING_PLAN_CONTRACT_VERSION
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "contract": self.contract,
             "source": self.source,
             "lowering_required": bool(self.lowering_required),
@@ -160,6 +178,16 @@ class ConditioningPlan:
             "relationship_diagnostics": [item.to_dict() for item in self.relationship_diagnostics],
             "numeric_semantics": [item.to_dict() for item in self.numeric_semantics],
         }
+        # Preserve PPSR-08 exact-replay digests for prompts that do not use the
+        # PPSR-09 experiment. New fields serialize only when the new semantics
+        # are actually present.
+        if self.experimental_group_diagnostics:
+            payload["experimental_group_diagnostics"] = [
+                item.to_dict() for item in self.experimental_group_diagnostics
+            ]
+        if self.binding_diagnostics:
+            payload["binding_diagnostics"] = [item.to_dict() for item in self.binding_diagnostics]
+        return payload
 
 
 @dataclass
@@ -169,6 +197,8 @@ class _CompileContext:
     fallbacks: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     group_diagnostics: list[GroupDiagnostic] = field(default_factory=list)
+    experimental_group_diagnostics: list[ExperimentalGroupDiagnostic] = field(default_factory=list)
+    binding_diagnostics: list[BindingDiagnostic] = field(default_factory=list)
     relationship_diagnostics: list[RelationshipDiagnostic] = field(default_factory=list)
 
     def next_group_operation_id(self) -> str:
@@ -208,23 +238,32 @@ def _node_type(node: IRNode) -> str:
 
 
 
-def render_ir_node(node: IRNode) -> str:
+def _render_ir_node(node: IRNode, inherited_modifiers: tuple[str, ...] = ()) -> str:
     if isinstance(node, (Text, Literal)):
-        return str(node.value).replace(r"\!", "!").strip()
-    if isinstance(node, Group):
-        return ", ".join(filter(None, (render_ir_node(item) for item in node.items))).strip()
+        value = str(node.value).replace(r"\!", "!")
+        return inherited_text(value, inherited_modifiers).strip()
+    if isinstance(node, BoundConcept):
+        # Explicit local bindings are barriers: inherited subtree modifiers are
+        # deliberately not injected into this target.
+        return binding_phrase(node).strip()
+    if isinstance(node, (Group, ExperimentalGroup)):
+        return ", ".join(
+            filter(None, (_render_ir_node(item, inherited_modifiers) for item in node.items))
+        ).strip()
     if isinstance(node, Prompt):
         fragments: list[str] = []
         for item in node.parts:
             if isinstance(item, (Text, Literal)):
-                fragments.append(str(item.value).replace(r"\!", "!"))
+                value = str(item.value).replace(r"\!", "!")
+                fragments.append(inherited_text(value, inherited_modifiers))
             else:
-                fragments.append(render_ir_node(item))
+                fragments.append(_render_ir_node(item, inherited_modifiers))
         return "".join(fragments).strip()
     if isinstance(node, Relation):
-        parent = render_ir_node(node.parent).strip(" ,")
+        parent = _render_ir_node(node.parent, inherited_modifiers).strip(" ,")
         child_raw = getattr(node.child, "value", None)
-        child = render_ir_node(node.child).strip(" ,")
+        descendant_modifiers = child_inheritance(node.parent, inherited_modifiers)
+        child = _render_ir_node(node.child, descendant_modifiers).strip(" ,")
         # Closed-sequence terminators belong to the relationship, not encoder
         # text. A backslash-protected bang remains literal user text.
         if not isinstance(node.child, Literal) and not (
@@ -236,21 +275,31 @@ def render_ir_node(node: IRNode) -> str:
                 removed += 1
         return ", ".join(item for item in (parent, child) if item)
     if isinstance(node, Weighted):
-        return render_ir_node(node.node)
+        return _render_ir_node(node.node, inherited_modifiers)
     if isinstance(node, OwnerSequence):
-        owner = render_ir_node(node.owner).strip(" ,")
+        owner = _render_ir_node(node.owner, inherited_modifiers).strip(" ,")
+        descendant_modifiers = child_inheritance(node.owner, inherited_modifiers)
         return "; ".join(
-            ", ".join(part for part in (owner, render_ir_node(item.node).strip(" ,")) if part)
+            ", ".join(
+                part
+                for part in (owner, _render_ir_node(item.node, descendant_modifiers).strip(" ,"))
+                if part
+            )
             for item in node.items
         ).strip()
     if isinstance(node, Sequence):
-        return ", ".join(filter(None, (render_ir_node(item.node) for item in node.items))).strip()
+        return ", ".join(
+            filter(None, (_render_ir_node(item.node, inherited_modifiers) for item in node.items))
+        ).strip()
     if isinstance(node, Conjunction):
-        return " AND ".join(render_ir_node(item.node) for item in node.branches)
+        return " AND ".join(_render_ir_node(item.node, inherited_modifiers) for item in node.branches)
     if isinstance(node, (Scheduled, Alternate)):
         return node.value
     return str(node)
 
+
+def render_ir_node(node: IRNode) -> str:
+    return _render_ir_node(node, ())
 
 
 def _apply_sequence_metadata(branch: ConditioningBranch, metadata: _SequenceMetadata) -> ConditioningBranch:
@@ -284,8 +333,9 @@ def _compile_group_operation(
     sequence_metadata: _SequenceMetadata | None = None,
 ) -> list[ConditioningBranch]:
     operation_id = ctx.next_group_operation_id()
+    prepared_node = apply_inherited_bindings(node) if contains_binding(node) else node
     expansion = expand_group_operation(
-        node,
+        prepared_node,
         operation_id=operation_id,
         render_node=render_ir_node,
     )
@@ -331,6 +381,64 @@ def _compile_group_operation(
         output.append(_apply_sequence_metadata(branch, sequence_metadata) if sequence_metadata else branch)
     return output
 
+
+
+def _compile_experimental_group_operation(
+    node: IRNode,
+    ctx: _CompileContext,
+    *,
+    semantic_role: str,
+    source_node_type: str,
+    outer_weight: float = 1.0,
+    active_until_step: int | None = None,
+    hold_after_step: bool = False,
+    sequence_metadata: _SequenceMetadata | None = None,
+) -> list[ConditioningBranch]:
+    operation_id = ctx.next_group_operation_id()
+    prepared_node = apply_inherited_bindings(node) if contains_binding(node) else node
+    expansion = expand_experimental_group_operation(
+        prepared_node,
+        operation_id=operation_id,
+        render_node=render_ir_node,
+    )
+    ctx.experimental_group_diagnostics.extend(expansion.diagnostics)
+
+    if expansion.fallback_used:
+        ctx.fallbacks.append("experimental_group_deterministic_safe_flatten")
+        if expansion.warning:
+            ctx.warnings.append(expansion.warning)
+        branch = ConditioningBranch(
+            text=render_ir_node(node),
+            weight=float(outer_weight),
+            active_until_step=active_until_step,
+            hold_after_step=hold_after_step,
+            semantic_role="experimental_group_safe_flatten",
+            source_node_type=source_node_type,
+        )
+        return [_apply_sequence_metadata(branch, sequence_metadata)] if sequence_metadata else [branch]
+
+    singleton_only = bool(expansion.diagnostics) and all(
+        item.member_count == 1 for item in expansion.diagnostics
+    ) and len(expansion.variants) == 1
+
+    output: list[ConditioningBranch] = []
+    for variant in expansion.variants:
+        text = str(variant.text).strip()
+        if not text:
+            continue
+        branch = ConditioningBranch(
+            text=text,
+            weight=float(outer_weight),
+            active_until_step=active_until_step,
+            hold_after_step=hold_after_step,
+            semantic_role="text" if singleton_only else semantic_role,
+            source_node_type="text" if singleton_only else source_node_type,
+            group_operation_id=None if singleton_only else operation_id,
+            group_local_weight=1.0 if singleton_only else float(variant.local_weight),
+            group_member_path=() if singleton_only else tuple(variant.member_path),
+        )
+        output.append(_apply_sequence_metadata(branch, sequence_metadata) if sequence_metadata else branch)
+    return output
 
 
 def _normalized_weights(items: tuple[SequenceItemIR, ...]) -> tuple[float, ...]:
@@ -397,7 +505,18 @@ def _compile_terminal_attachment_owner_sequence(
             parent_scope="terminal_attachment",
             owner_composition=owner_composition,
         )
-        if contains_group(owner_item.node):
+        if contains_experimental_group(owner_item.node):
+            branches.extend(
+                _compile_experimental_group_operation(
+                    owner_item.node,
+                    ctx,
+                    semantic_role="owner_sequence_prefix_experimental_group",
+                    source_node_type="owner_sequence",
+                    active_until_step=owner_item.active_until_step,
+                    sequence_metadata=metadata,
+                )
+            )
+        elif contains_group(owner_item.node):
             branches.extend(
                 _compile_group_operation(
                     owner_item.node,
@@ -450,7 +569,18 @@ def _compile_terminal_attachment_owner_sequence(
         active_until = item.active_until_step
         if terminal_item.active_until_step is not None:
             active_until = terminal_item.active_until_step
-        if contains_group(contextual):
+        if contains_experimental_group(contextual):
+            branches.extend(
+                _compile_experimental_group_operation(
+                    contextual,
+                    ctx,
+                    semantic_role="terminal_owner_relation_experimental_group_variant",
+                    source_node_type="owner_sequence",
+                    active_until_step=active_until,
+                    sequence_metadata=metadata,
+                )
+            )
+        elif contains_group(contextual):
             branches.extend(
                 _compile_group_operation(
                     contextual,
@@ -540,7 +670,7 @@ def _compile_sequence(
             syntax_origin=syntax_origin,
             source_span=source_span,
             terminator=str(item.terminator or ""),
-            parent_scope=("whole_composition" if isinstance(node, OwnerSequence) and isinstance(node.owner, Group) else ""),
+            parent_scope=("whole_composition" if isinstance(node, OwnerSequence) and isinstance(node.owner, (Group, ExperimentalGroup)) else ""),
             owner_composition=(render_ir_node(node.owner).strip(" ,") if isinstance(node, OwnerSequence) else ""),
         )
 
@@ -553,6 +683,26 @@ def _compile_sequence(
             contextual = item.node
             semantic_role = "relation_item" if isinstance(item.node, Relation) else "sequence_item"
             source_node_type = "sequence"
+
+        if contains_experimental_group(contextual):
+            experimental_role = (
+                "owner_relation_experimental_group_variant"
+                if isinstance(node, OwnerSequence)
+                else "relation_experimental_group_variant" if isinstance(item.node, Relation) else "sequence_experimental_group_item"
+            )
+            branches.extend(
+                _compile_experimental_group_operation(
+                    contextual,
+                    ctx,
+                    semantic_role=experimental_role,
+                    source_node_type=source_node_type,
+                    outer_weight=outer_sequence_weight,
+                    active_until_step=active_until,
+                    hold_after_step=hold_after,
+                    sequence_metadata=metadata,
+                )
+            )
+            continue
 
         if contains_group(contextual):
             group_role = (
@@ -614,7 +764,7 @@ def _compile_sequence(
             terminators_consumed=tuple(str(item.terminator or "") for item in node.items),
             top_terminator_consumed=top_terminator,
             compatibility_aliases=aliases,
-            parent_scope=("whole_composition" if isinstance(node, OwnerSequence) and isinstance(node.owner, Group) else ""),
+            parent_scope=("whole_composition" if isinstance(node, OwnerSequence) and isinstance(node.owner, (Group, ExperimentalGroup)) else ""),
             owner_composition=(render_ir_node(node.owner).strip(" ,") if isinstance(node, OwnerSequence) else ""),
         )
     )
@@ -626,6 +776,14 @@ def _compile_node(node: IRNode, ctx: _CompileContext) -> list[ConditioningBranch
     if isinstance(node, (OwnerSequence, Sequence)):
         return _compile_sequence(node, ctx)
 
+    if isinstance(node, ExperimentalGroup):
+        return _compile_experimental_group_operation(
+            node,
+            ctx,
+            semantic_role="experimental_group_member",
+            source_node_type="experimental_group",
+        )
+
     if isinstance(node, Group):
         return _compile_group_operation(
             node,
@@ -635,6 +793,13 @@ def _compile_node(node: IRNode, ctx: _CompileContext) -> list[ConditioningBranch
         )
 
     if isinstance(node, Prompt):
+        if contains_experimental_group(node):
+            return _compile_experimental_group_operation(
+                node,
+                ctx,
+                semantic_role="experimental_group_context_variant",
+                source_node_type="prompt",
+            )
         if contains_group(node):
             return _compile_group_operation(
                 node,
@@ -651,6 +816,13 @@ def _compile_node(node: IRNode, ctx: _CompileContext) -> list[ConditioningBranch
         ]
 
     if isinstance(node, Relation):
+        if contains_experimental_group(node):
+            return _compile_experimental_group_operation(
+                node,
+                ctx,
+                semantic_role="relation_experimental_group_variant",
+                source_node_type="relation",
+            )
         if contains_group(node):
             return _compile_group_operation(
                 node,
@@ -701,6 +873,7 @@ def _root_is_structured(root: IRNode) -> bool:
 
 def compile_conditioning_plan(prompt_ir: PromptIR) -> ConditioningPlan:
     ctx = _CompileContext(warnings=list(prompt_ir.warnings))
+    ctx.binding_diagnostics.extend(binding_diagnostics(prompt_ir.root))
     branches = _compile_node(prompt_ir.root, ctx)
     branches = [
         replace(
@@ -720,6 +893,8 @@ def compile_conditioning_plan(prompt_ir: PromptIR) -> ConditioningPlan:
         fallbacks=tuple(dict.fromkeys(ctx.fallbacks)),
         warnings=tuple(dict.fromkeys(ctx.warnings)),
         group_diagnostics=tuple(ctx.group_diagnostics),
+        experimental_group_diagnostics=tuple(ctx.experimental_group_diagnostics),
+        binding_diagnostics=tuple(ctx.binding_diagnostics),
         relationship_diagnostics=tuple(ctx.relationship_diagnostics),
         numeric_semantics=tuple(prompt_ir.numeric_semantics),
     )

@@ -26,6 +26,8 @@ from modules.prompt_parsers.semantic_replay import (
 )
 from modules.prompt_parsers.model_family_compiler import compile_plan_for_runtime
 from modules.prompt_parsers.ir import (
+    BoundConcept,
+    ExperimentalGroup,
     Group,
     IRNode,
     OwnerSequence,
@@ -58,7 +60,7 @@ class SharedClassicExecution:
 
 
 def _contains_shared_node(node: IRNode) -> bool:
-    if isinstance(node, (Group, Relation, OwnerSequence)):
+    if isinstance(node, (Group, ExperimentalGroup, BoundConcept, Relation, OwnerSequence)):
         return True
     if isinstance(node, Sequence):
         return str(node.syntax_origin or "") in {"classic_closed_sequence", "classic_owner_sequence"}

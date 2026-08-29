@@ -58,6 +58,31 @@ class Group(IRNode):
 
 
 @dataclass(frozen=True)
+class ExperimentalGroup(IRNode):
+    """PPSR-09 cohesive-group experiment using white curly brackets.
+
+    Existing ``Group`` / ``{...}`` semantics remain frozen as the control.
+    """
+
+    items: tuple[IRNode, ...] = field(default_factory=tuple)
+    algorithm: str = "shared_context_focus_v1"
+
+
+@dataclass(frozen=True)
+class BoundConcept(IRNode):
+    """PPSR-09 explicit modifier-to-target binding.
+
+    ``^`` is target-only/non-inheriting. ``*`` binds the target and establishes
+    an inheriting subtree modifier for structural descendants.
+    """
+
+    modifier: str = ""
+    target: str = ""
+    scope: str = "target_only"
+    operator: str = "^"
+
+
+@dataclass(frozen=True)
 class Prompt(IRNode):
     parts: tuple[IRNode, ...] = field(default_factory=tuple)
 
@@ -144,7 +169,7 @@ class PromptIR:
         return prompt_ir_to_dict(self)
 
 
-_STRUCTURAL_ESCAPES = (r"\{", r"\}", r"\:", r"\!", r"\|", r"\\")
+_STRUCTURAL_ESCAPES = (r"\{", r"\}", r"\⦃", r"\⦄", r"\^", r"\*", r"\:", r"\!", r"\|", r"\\")
 
 
 def _legacy_to_ir(node: LegacyNode, *, source_text: str = "") -> IRNode:
@@ -258,6 +283,13 @@ def _has_quantity_prefix(source: str, brace_index: int) -> bool:
 
 
 
+_BINDING_RE = __import__("re").compile(
+    r"(?<![A-Za-z0-9_])(?P<modifier>[A-Za-z][A-Za-z0-9_-]*(?:_[A-Za-z0-9-]+)*)"
+    r"\s*(?P<operator>[\^*])\s*"
+    r"(?P<target>[A-Za-z][A-Za-z0-9_-]*(?:_[A-Za-z0-9-]+)*)(?![A-Za-z0-9_])"
+)
+
+
 def _text_leaf(value: str, *, source_text: str = "") -> IRNode:
     raw = str(value or "")
     source = str(source_text or raw)
@@ -269,14 +301,139 @@ def _text_leaf(value: str, *, source_text: str = "") -> IRNode:
     return cls(source_text=source, value=rendered, escaped_literal=escaped)
 
 
-def _text_node_to_ir(value: str, *, source_text: str = "") -> IRNode:
-    """Recursively preserve embedded Classic groups inside any text position.
+def _normalize_binding_term(value: str) -> str:
+    # PPSR-09 keeps underscore normalization local to binding syntax. Ordinary
+    # prompt underscores retain their historical behavior.
+    return " ".join(str(value or "").replace("_", " ").split())
 
-    PPSR-02 originally scanned embedded ``{...}`` groups only when the entire
-    prompt root was otherwise plain text.  PPSR-06A promotes that rule to every
-    text-bearing position (relation parent/child, owner item, sequence item,
-    and nested prompt fragment).  Quantity syntax such as ``2{cat|dog}`` and
-    escaped braces remain literal.
+
+def _append_ir_part(parts: list[IRNode], node: IRNode) -> None:
+    if isinstance(node, Prompt):
+        parts.extend(node.parts)
+    else:
+        parts.append(node)
+
+
+def _parse_bindings_only(value: str, *, source_text: str = "") -> IRNode:
+    """Parse PPSR-09 ``modifier^target`` / ``modifier*target`` atoms in text.
+
+    The first experiment intentionally requires each side to be one token or an
+    underscore-joined phrase. That keeps the grammar deterministic while still
+    allowing forms such as ``dark_red^long_hair``. Escaped operators stay
+    literal user text.
+    """
+    text = str(value or "")
+    parts: list[IRNode] = []
+    cursor = 0
+    found = False
+    for match in _BINDING_RE.finditer(text):
+        operator_index = match.start("operator")
+        if _is_escaped(text, operator_index):
+            continue
+        if match.start() > cursor:
+            segment = text[cursor:match.start()]
+            parts.append(_text_leaf(segment, source_text=segment))
+        operator = match.group("operator")
+        parts.append(
+            BoundConcept(
+                source_text=match.group(0),
+                modifier=_normalize_binding_term(match.group("modifier")),
+                target=_normalize_binding_term(match.group("target")),
+                scope="subtree" if operator == "*" else "target_only",
+                operator=operator,
+            )
+        )
+        cursor = match.end()
+        found = True
+    if not found:
+        return _text_leaf(text, source_text=source_text)
+    if cursor < len(text):
+        segment = text[cursor:]
+        parts.append(_text_leaf(segment, source_text=segment))
+    if len(parts) == 1:
+        return parts[0]
+    return Prompt(source_text=str(source_text or text), parts=tuple(parts))
+
+
+def _find_matching_structural_group(text: str, open_index: int) -> int:
+    pairs = {"{": "}", "⦃": "⦄"}
+    openers = set(pairs)
+    closers = set(pairs.values())
+    stack: list[str] = []
+    index = int(open_index)
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and not _is_escaped(text, index):
+            index += 2
+            continue
+        if char in openers and not _is_escaped(text, index):
+            stack.append(pairs[char])
+        elif char in closers and not _is_escaped(text, index):
+            if not stack or char != stack[-1]:
+                return -1
+            stack.pop()
+            if not stack:
+                return index
+        index += 1
+    return -1
+
+
+def _split_experimental_group_items(source: str) -> list[str]:
+    """Split an experimental group on top-level comma/pipe separators."""
+    text = str(source or "")
+    parts: list[str] = []
+    start = 0
+    braces: list[str] = []
+    bracket = paren = 0
+    pairs = {"{": "}", "⦃": "⦄"}
+    closers = set(pairs.values())
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and not _is_escaped(text, index):
+            index += 2
+            continue
+        if char in pairs and not _is_escaped(text, index):
+            braces.append(pairs[char])
+        elif char in closers and not _is_escaped(text, index):
+            if braces and char == braces[-1]:
+                braces.pop()
+        elif char == "[" and not _is_escaped(text, index):
+            bracket += 1
+        elif char == "]" and not _is_escaped(text, index):
+            bracket = max(0, bracket - 1)
+        elif char == "(" and not _is_escaped(text, index):
+            paren += 1
+        elif char == ")" and not _is_escaped(text, index):
+            paren = max(0, paren - 1)
+        elif not braces and bracket == paren == 0 and char in {",", "|"}:
+            part = text[start:index].strip()
+            if part:
+                parts.append(part)
+            start = index + 1
+        index += 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _experimental_group_member_to_ir(source: str) -> IRNode:
+    # Reuse the established {} member grammar for numeric weights without
+    # routing the experimental group itself through the control-group compiler.
+    wrapper = parse_legacy_node("{" + str(source or "") + "}")
+    if isinstance(wrapper, GroupNode) and len(wrapper.items) == 1:
+        return _legacy_to_ir(wrapper.items[0], source_text=str(source or ""))
+    return _mixed_prompt_root(str(source or ""))
+
+
+def _text_node_to_ir(value: str, *, source_text: str = "") -> IRNode:
+    """Recursively preserve control/experimental groups and PPSR-09 bindings.
+
+    PPSR-09 leaves ``{...}`` semantics frozen. White curly brackets ``⦃...⦄``
+    create an independent ExperimentalGroup node, while ``^`` and ``*`` create
+    BoundConcept nodes. Quantity syntax such as ``2{cat|dog}`` and escaped
+    structural characters remain literal.
     """
     text = str(value or "")
     if not text:
@@ -290,59 +447,54 @@ def _text_node_to_ir(value: str, *, source_text: str = "") -> IRNode:
         if text[index] == "\\" and not _is_escaped(text, index):
             index += 2
             continue
-        if text[index] != "{" or _is_escaped(text, index):
+        opener = text[index]
+        if opener not in {"{", "⦃"} or _is_escaped(text, index):
             index += 1
             continue
-        if _has_quantity_prefix(text, index):
+        if opener == "{" and _has_quantity_prefix(text, index):
             index += 1
             continue
 
-        depth = 0
-        escaped = False
-        close = -1
-        cursor = index
-        while cursor < len(text):
-            char = text[cursor]
-            if escaped:
-                escaped = False
-                cursor += 1
-                continue
-            if char == "\\":
-                escaped = True
-                cursor += 1
-                continue
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    close = cursor
-                    break
-            cursor += 1
+        close = _find_matching_structural_group(text, index)
         if close < 0:
             break
 
-        group_source = text[index : close + 1]
-        group_node = parse_legacy_node(group_source)
-        if not isinstance(group_node, GroupNode):
-            index += 1
-            continue
-
         if index > start:
             segment = text[start:index]
-            parts.append(_text_leaf(segment, source_text=segment))
-        parts.append(_legacy_to_ir(group_node, source_text=group_source))
+            _append_ir_part(parts, _parse_bindings_only(segment, source_text=segment))
+
+        group_source = text[index : close + 1]
+        if opener == "{":
+            group_node = parse_legacy_node(group_source)
+            if not isinstance(group_node, GroupNode):
+                _append_ir_part(parts, _parse_bindings_only(group_source, source_text=group_source))
+            else:
+                parts.append(_legacy_to_ir(group_node, source_text=group_source))
+        else:
+            inner = group_source[1:-1]
+            members = tuple(
+                _experimental_group_member_to_ir(item)
+                for item in _split_experimental_group_items(inner)
+            )
+            parts.append(
+                ExperimentalGroup(
+                    source_text=group_source,
+                    items=members,
+                    algorithm="shared_context_focus_v1",
+                )
+            )
         found_group = True
         start = close + 1
         index = close + 1
 
     if not found_group:
-        return _text_leaf(text, source_text=source_text)
+        return _parse_bindings_only(text, source_text=source_text)
     if start < len(text):
         segment = text[start:]
-        parts.append(_text_leaf(segment, source_text=segment))
+        _append_ir_part(parts, _parse_bindings_only(segment, source_text=segment))
+    if len(parts) == 1:
+        return parts[0]
     return Prompt(source_text=str(source_text or text), parts=tuple(parts))
-
 
 def _mixed_prompt_root(source: str) -> IRNode:
     """Parse structural Classic syntax, then recursively preserve embedded groups."""
@@ -412,6 +564,22 @@ def node_to_dict(node: IRNode) -> dict[str, Any]:
         return {**base, "type": "text", "value": node.value, "escaped_literal": bool(node.escaped_literal)}
     if isinstance(node, Group):
         return {**base, "type": "group", "items": [node_to_dict(item) for item in node.items]}
+    if isinstance(node, ExperimentalGroup):
+        return {
+            **base,
+            "type": "experimental_group",
+            "algorithm": node.algorithm,
+            "items": [node_to_dict(item) for item in node.items],
+        }
+    if isinstance(node, BoundConcept):
+        return {
+            **base,
+            "type": "bound_concept",
+            "modifier": node.modifier,
+            "target": node.target,
+            "scope": node.scope,
+            "operator": node.operator,
+        }
     if isinstance(node, Prompt):
         return {**base, "type": "prompt", "parts": [node_to_dict(item) for item in node.parts]}
     if isinstance(node, Relation):
@@ -512,6 +680,21 @@ def _node_from_dict(payload: Mapping[str, Any]) -> IRNode:
         )
     if node_type == "group":
         return Group(source_text=source_text, items=tuple(_node_from_dict(item) for item in data.get("items") or []))
+    if node_type == "experimental_group":
+        return ExperimentalGroup(
+            source_text=source_text,
+            items=tuple(_node_from_dict(item) for item in data.get("items") or []),
+            algorithm=str(data.get("algorithm") or "shared_context_focus_v1"),
+        )
+    if node_type == "bound_concept":
+        operator = str(data.get("operator") or "^")
+        return BoundConcept(
+            source_text=source_text,
+            modifier=str(data.get("modifier") or ""),
+            target=str(data.get("target") or ""),
+            scope=str(data.get("scope") or ("subtree" if operator == "*" else "target_only")),
+            operator=operator,
+        )
     if node_type == "prompt":
         return Prompt(source_text=source_text, parts=tuple(_node_from_dict(item) for item in data.get("parts") or []))
     if node_type == "relation":

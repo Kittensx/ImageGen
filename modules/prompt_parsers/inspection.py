@@ -57,6 +57,42 @@ def _group_payload(plan: ConditioningPlan) -> list[dict[str, Any]]:
     return output
 
 
+
+def _experimental_group_payload(plan: ConditioningPlan) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for item in plan.experimental_group_diagnostics:
+        data = item.to_dict()
+        members = []
+        raw = list(data.get("raw_member_weights") or [])
+        normalized = list(data.get("normalized_local_weights") or [])
+        explicit = list(data.get("explicit_weight_flags") or [])
+        focus = list(data.get("focus_branch_texts") or [])
+        for index, source in enumerate(data.get("source_members") or []):
+            members.append({
+                "index": index,
+                "source": str(source),
+                "focus_encoder_text": str(focus[index]) if index < len(focus) else "",
+                "raw_weight": float(raw[index]) if index < len(raw) else 1.0,
+                "normalized_weight": float(normalized[index]) if index < len(normalized) else None,
+                "explicit_weight": bool(explicit[index]) if index < len(explicit) else False,
+            })
+        output.append({
+            "operation_id": data.get("operation_id"),
+            "group_id": data.get("group_id"),
+            "source": data.get("source_text"),
+            "algorithm": data.get("algorithm"),
+            "member_count": data.get("member_count"),
+            "members": members,
+            "combination_count": data.get("combination_count", 0),
+            "fallback_used": bool(data.get("fallback_used", False)),
+            "fallback_reason": str(data.get("fallback_reason") or ""),
+        })
+    return output
+
+
+def _binding_payload(plan: ConditioningPlan) -> list[dict[str, Any]]:
+    return [item.to_dict() for item in plan.binding_diagnostics]
+
 def _relationship_payload(plan: ConditioningPlan) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for item in plan.relationship_diagnostics:
@@ -234,6 +270,8 @@ def build_semantic_inspection(
         "structure_digest": semantic_structure_digest(ir),
         "root_type": str((ir.to_dict().get("root") or {}).get("type") or "text"),
         "groups": _group_payload(plan),
+        "experimental_groups": _experimental_group_payload(plan),
+        "bindings": _binding_payload(plan),
         "relationships": _relationship_payload(plan),
         "schedules": _schedule_payload(plan),
         "fallbacks": list(plan.fallbacks),

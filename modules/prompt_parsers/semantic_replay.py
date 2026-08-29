@@ -217,7 +217,7 @@ def select_superhybrid_semantic_slot(
 # PPSR-08 parser-neutral semantic replay -------------------------------------
 PPSR_SEMANTIC_RECORD_CONTRACT_VERSION = "image-gen-ppsr-semantic-record-v1"
 PPSR_SEMANTIC_PASS_CONTRACT_VERSION = "image-gen-prompt-semantic-pass-v2"
-PPSR_SEMANTIC_COMPILER_VERSION = "ppsr-08"
+PPSR_SEMANTIC_COMPILER_VERSION = "ppsr-09"
 
 
 def _normalize_semantic_text(value: Any) -> str:

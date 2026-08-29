@@ -105,3 +105,31 @@ New prompt metadata records the semantic PromptIR and conditioning plan with sta
 Prompt Inspector includes a Semantic Structure view for groups, owner relationships, schedules, fallbacks, encoder-visible text, and static effective-final weights. Temporal weights are labeled dynamic by step.
 
 The normal `run.bat parser-test` gate remains model-free. Real-image cutover qualification is opt-in through `testing\test_validations\qualification\generation\ppsr08_prompt_parser_image_qualification.bat` and writes timestamped `images/`, `requests/`, and `logs/` evidence plus a contact sheet.
+
+**PPSR-08 qualification progress:** running `testing\test_validations\qualification\generation\ppsr08_prompt_parser_image_qualification.bat` now shows model discovery/selection, family and case progress, real runner loading diagnostics, an in-place sampling step/ETA/VRAM progress line, saved output paths, semantic replay, and runner-process resource release. The same real-runner output remains saved under the qualification run's `logs\` directory.
+
+Before each selected model is loaded, the qualification prints an `[PPSR-08][AUTO]` line with the effective model-aware generation profile. For example, SDXL-Lightning 2-step resolves to 2 steps, CFG 1, `simple_euler`, and `sdxl_euler_trailing`; SD3.5 Medium resolves to 20 steps, CFG 5, `flow_euler`, and `flow_match_euler`, with T5 forced off. `--steps` and `--cfg` remain explicit manual overrides.
+
+## PPSR-09 experimental grouping and binding
+
+PPSR-09 deliberately keeps the established `{...}` behavior unchanged while testing additional semantic controls:
+
+```text
+⦃red hair, green eyes⦄   experimental cohesive grouping
+red^hair                 bind red to hair only
+red*car                  bind red to car and structural descendants
+```
+
+`^` is target-only and acts as an inheritance barrier. `*` establishes a subtree scope. For example, `red*car:::interior::white seats!!` allows inherited red to influence the unbound seat description, while `red*car:::interior::white^seats!!` gives the seats an explicit local white binding and blocks inherited red at that target.
+
+These are conditioning biases, not hard symbolic constraints. The experimental qualification runner intentionally tests several seeds to determine whether binding reduces attribute/color leakage without damaging useful Stable Diffusion diversity.
+
+Run the model-free translation view with `run.bat parser-test`. The PPSR-09 section is saved as `experimental_group_binding_translation.txt`.
+
+For the real image experiment:
+
+```bat
+testing\test_validations\qualification\generation\ppsr09_experimental_group_binding_qualification.bat
+```
+
+The default selects one eligible SD3.5 Medium checkpoint, disables T5, uses the normal model Auto profile, generates five shared-seed rows, streams real `run.bat` progress to CMD, and saves portrait/subtree contact sheets under `testing\test_data\qualification\generation\ppsr09\<timestamp>\`. Use `--seed-count 10` for ten rows or `--all-families` to include SD1.x and SDXL.
