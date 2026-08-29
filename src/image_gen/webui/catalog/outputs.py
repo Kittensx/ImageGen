@@ -191,8 +191,12 @@ class OutputCatalogMixin:
             "prompt": replay.get("positive_prompt") or "",
             "negative_prompt": replay.get("negative_prompt") or "",
             "seed": replay.get("seed"),
-            "width": replay.get("width") or image.get("width"),
-            "height": replay.get("height") or image.get("height"),
+            # Report the actual saved file size in the gallery/lightbox.
+            # Replay metadata can still preserve the original base render size
+            # for hires workflows, but the visible output card should match the
+            # dimensions of the image file the user is inspecting.
+            "width": image.get("width") or replay.get("width"),
+            "height": image.get("height") or replay.get("height"),
             "steps": replay.get("steps"),
             "cfg_scale": replay.get("cfg_scale"),
             "sampler_name": replay.get("sampler_name") or "",

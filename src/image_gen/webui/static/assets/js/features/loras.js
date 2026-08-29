@@ -1402,6 +1402,12 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     renderCards();
     if (selectedDetails) renderDetails();
   });
+  window.addEventListener("image-gen-asset-installed", (event) => {
+    if (String(event.detail?.assetKind || "") !== "lora") return;
+    void refreshCatalog({ announce: false }).catch((error) => {
+      console.warn("Unable to synchronize the LoRA workspace after an Asset Hub install", error);
+    });
+  });
 
   const show = () => {
     workspace?.classList.remove("is-hidden");

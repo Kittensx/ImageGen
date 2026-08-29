@@ -507,6 +507,14 @@ def _normalize_top_level_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["save_images"] = _coerce_boolean(normalized.get("save_images", True), default=True)
     normalized["save_txt"] = _coerce_boolean(normalized.get("save_txt", False), default=False)
     normalized["save_json"] = _coerce_boolean(normalized.get("save_json", True), default=True)
+    image_format = str(normalized.get("output_image_format") or "png").strip().casefold().lstrip(".")
+    if image_format not in {"png", "webp"}:
+        image_format = "png"
+    normalized["output_image_format"] = image_format
+    metadata_mode = str(normalized.get("embedded_metadata_mode") or "full_replay").strip().casefold().replace("-", "_")
+    if metadata_mode not in {"full_replay", "compatibility"}:
+        metadata_mode = "full_replay"
+    normalized["embedded_metadata_mode"] = metadata_mode
     normalized["save_diagnostics_json"] = _coerce_boolean(
         normalized.get("save_diagnostics_json", False), default=False
     )

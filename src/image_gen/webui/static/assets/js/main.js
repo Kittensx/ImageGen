@@ -1,41 +1,44 @@
 import { loadFragments } from "./fragments.js";
 import { configureBranding, productName } from "./branding.js?v=brand1";
 
-import { api } from "./api.js?v=cancel-controls1-ha2";
+import { api } from "./api.js?v=cancel-controls1-ha2-p3b-gallery-cache1";
 import { state, setCatalogs, samplerDescriptor, schedulerDescriptor } from "./state.js";
 import { $, $$, debounce, option, replaceOptions, notify } from "./utils.js";
 import { renderAdvancedEditor } from "./components/advanced-editor.js?v=scheduler-profile-scope2";
 import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
 import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
-import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=sdxl-cfg-recommendations4";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=queue-active-pin1";
+import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=hires-prompt-inheritance1";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=queue-active-pin1-p3c-metadata1";
 import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=responsive-action-bar1";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
 import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
 import { bindSettings } from "./features/settings.js?v=theme-manager-tm02a";
-import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civitai-connect1";
+import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civitai-connect2";
 import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
 import { bindWorkspaceLayout } from "./features/layout.js?v=responsive-action-bar1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
 import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-preview-recovery1";
 import { bindLoraWorkspace } from "./features/loras.js?v=lora-catalog-preview-recovery1";
+// Legacy cachebuster contract retained for regression traceability:
+// import { bindAssetBrowser } from "./features/asset-browser.js?v=asset-browser18-search-lifecycle1-preview-staging1-fast-replay1-preview-recovery2-atomic-preview1-tab-responsive1-new-search-draft1-close-responsive1-dsv2-02-chip-sync2-p3a-gallery1-p3b-gallery-cache1-autoload1";
+import { bindAssetBrowser } from "./features/asset-browser.js?v=asset-browser18-search-lifecycle1-preview-staging1-fast-replay1-preview-recovery2-atomic-preview1-tab-responsive1-new-search-draft1-close-responsive1-dsv2-02-chip-sync2-p3a-gallery1-p3b-gallery-cache1-autoload1";
 import { bindWorkspaceTabs } from "./features/workspace-tabs.js?v=0.1.74";
 import { bindHomeWorkspace } from "./features/home.js?v=home-shell1";
-import { bindHomeComponents } from "./features/home-components.js?v=content-capabilities2";
-import { bindWorkspaceManager } from "./features/workspace-manager.js?v=workspace-responsive2";
+import { bindHomeComponents } from "./features/home-components.js?v=content-capabilities3-overlay2";
+import { bindWorkspaceManager } from "./features/workspace-manager.js?v=workspace-responsive4-overlay2";
 import { bindChangelog } from "./features/changelog.js?v=content-capabilities2";
 import { bindHelpCenter } from "./features/help-center.js?v=help-center1";
 import { bindBugReporter } from "./features/bug-reports.js?v=bug-manager1";
 import { bindImageGenProfile } from "./features/profile.js?v=clean-install1";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
-import { bindOutputDetails } from "./features/output-details.js?v=sdxl-cfg-recommendations4";
+import { bindOutputDetails } from "./features/output-details.js?v=p3c-embedded-metadata-partial-replay1";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js?v=responsive-action-bar1";
 import { applyCfgPreset, bindCfgLab } from "./features/cfg-lab.js?v=0.1.47-lightning-recommendation";
 import { bindOutputPatternBuilder } from "./features/output-pattern-builder.js";
-import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=r10.3";
+import { bindPromptTools, initializePromptTools, refreshPromptConfigurationCatalogs } from "./features/prompt-tools.js?v=hires-prompt-inheritance1";
 import { bindPromptLoraSync } from "./features/prompt-lora-sync.js?v=0.1.77";
 import { bindHiresUpscalers, initializeHiresUpscalers } from "./features/hires-upscalers.js?v=ha3";
 import { bindHiresProfiles } from "./features/hires-profiles.js?v=ha3";
@@ -867,7 +870,7 @@ async function applyReplayValues(values = {}) {
     },
   }));
 
-  applyGenerationValues(replayValues);
+  applyGenerationValues({ ...replayValues, _webui_output_root: state.bootstrap?.output_root || "" });
   window.imageGenPromptLoraSync?.syncFromPrompts?.();
   applyVaeSelectionPolicy();
   initializePromptTools(replayValues);
@@ -1164,7 +1167,7 @@ async function start() {
     populateModels(current);
     populatePlugins(current);
     initializeHiresUpscalers(bootstrap.upscalers || {}, current);
-    applyGenerationValues(current);
+    applyGenerationValues({ ...current, _webui_output_root: bootstrap.output_root || "" });
     applyGenerationCapabilities(state.generationCapabilities);
     [
       ["#sdxlEnforceRecommendedSteps", "steps"],
@@ -1256,7 +1259,8 @@ async function start() {
       defaultAssetsController,
       showGenerationWorkspace: () => workspaceTabs?.showGeneration(),
     });
-    workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace });
+    const assetBrowser = bindAssetBrowser();
+    workspaceTabs = bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace, assetBrowser });
     bindWorkspaceManager();
     bindHomeWorkspace({
       models: state.models,

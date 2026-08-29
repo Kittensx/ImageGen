@@ -1,17 +1,18 @@
 import { $ } from "../utils.js";
 
-const WORKSPACES = new Set(["home", "generation", "checkpoints", "loras", "workspace-manager"]);
+const WORKSPACES = new Set(["home", "generation", "checkpoints", "loras", "asset-browser", "workspace-manager"]);
 
 /*
  * Historical filename retained for compatibility. Workspace switching is no
  * longer owned by the removed top tabs; the shared sidebar and Home quick
  * actions request workspace changes through image-gen-workspace-request.
  */
-export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
+export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace, assetBrowser } = {}) {
   const home = $("#homeWorkspace");
   const generation = $("#workspace");
   const checkpoints = $("#checkpointWorkspace");
   const loras = $("#loraWorkspace");
+  const assetBrowserWorkspace = $("#assetBrowserWorkspace");
   const workspaceManager = $("#workspaceManagerWorkspace");
 
   const legacyTabs = {
@@ -26,6 +27,7 @@ export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
     generation?.classList.toggle("is-hidden", target !== "generation");
     checkpoints?.classList.toggle("is-hidden", target !== "checkpoints");
     loras?.classList.toggle("is-hidden", target !== "loras");
+    assetBrowserWorkspace?.classList.toggle("is-hidden", target !== "asset-browser");
     workspaceManager?.classList.toggle("is-hidden", target !== "workspace-manager");
 
     Object.entries(legacyTabs).forEach(([key, tab]) => {
@@ -38,6 +40,8 @@ export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
     else checkpointWorkspace?.hide?.();
     if (target === "loras") loraWorkspace?.show?.();
     else loraWorkspace?.hide?.();
+    if (target === "asset-browser") assetBrowser?.show?.();
+    else assetBrowser?.hide?.();
 
     document.body.dataset.activeWorkspace = target;
     window.dispatchEvent(new CustomEvent("image-gen-workspace-changed", { detail: { workspace: target } }));
@@ -58,6 +62,7 @@ export function bindWorkspaceTabs({ checkpointWorkspace, loraWorkspace } = {}) {
     showGeneration: () => activate("generation"),
     showCheckpoints: () => activate("checkpoints"),
     showLoras: () => activate("loras"),
+    showAssetBrowser: () => activate("asset-browser"),
     showWorkspaceManager: () => activate("workspace-manager"),
   };
 }

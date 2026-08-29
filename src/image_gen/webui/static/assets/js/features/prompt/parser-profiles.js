@@ -4,7 +4,7 @@ import { $, notify } from "../../utils.js";
 import { saveSessionSoon } from "./runtime.js";
 import { compatibleProfiles, currentParserId, currentProfile, defaultProfileId, option, presetById, safeParseJson, setParserKwargs, setSnapshot, slug } from "./shared.js";
 import { parserDefaultOptions, renderBaseParserSettings } from "./parser-settings.js";
-import { updateHiresRouting } from "./hires-prompt.js";
+import { updateHiresRouting } from "./hires-prompt.js?v=hires-prompt-inheritance1";
 import { renderPalette } from "./symbol-palette.js";
 
 export function populateParsers(selected = "legacy") {

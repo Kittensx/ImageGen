@@ -179,7 +179,7 @@
 
       const path = String(window.location.pathname || "/").replace(/\/+$/, "") || "/";
       const hash = String(window.location.hash || "").replace(/^#/, "").trim().toLowerCase();
-      const route = ["generation", "checkpoints", "loras", "workspace-manager"].includes(hash) ? hash : "home";
+      const route = ["generation", "checkpoints", "loras", "asset-browser", "workspace-manager"].includes(hash) ? hash : "home";
       if (path === "/" || path === "/index.html") {
         doc.dataset.prebootWorkspace = route;
       }
@@ -210,6 +210,7 @@
   <link rel="stylesheet" href="/assets/css/generation-workspace.css?v=r11">
   <link rel="stylesheet" href="/assets/css/default-assets.css?v=r11">
   <link rel="stylesheet" href="/assets/css/asset-manager.css?v=r11">
+  <link rel="stylesheet" href="/assets/css/asset-browser.css?v=asset-browser18-search-lifecycle1-atomic-preview1-dsv2-02-chip-sync2-p3a-gallery1-p3b-gallery-cache1-autoload1">
   <link rel="stylesheet" href="/assets/css/lora.css?v=r11">
   <link rel="stylesheet" href="/assets/css/system-status.css?v=r11">
   <link rel="stylesheet" href="/assets/css/prompt-tools-refinements.css?v=r11">
@@ -222,7 +223,7 @@
   <link rel="stylesheet" href="/assets/css/home.css?v=help-center1">
   <link rel="stylesheet" href="/assets/css/markdown-reader.css?v=help-center1">
   <link rel="stylesheet" href="/assets/css/help-center.css?v=help-center1">
-  <link rel="stylesheet" href="/assets/css/component-shell.css?v=content-capabilities1">
+  <link rel="stylesheet" href="/assets/css/component-shell.css?v=content-capabilities3-overlay2">
   <link rel="stylesheet" href="/assets/css/bug-reports.css?v=bug-reporter1">
   <link rel="stylesheet" href="/assets/css/profile.css?v=home-shell1">
   <link rel="stylesheet" href="/assets/css/ui-icons.css?v=home-shell1">
@@ -233,23 +234,33 @@
     html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #homeWorkspace,
     html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #checkpointWorkspace,
     html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #assetBrowserWorkspace,
     html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #homeWorkspace,
     html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #workspace,
     html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #assetBrowserWorkspace,
     html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #homeWorkspace,
     html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #workspace,
     html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #checkpointWorkspace,
+    html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #assetBrowserWorkspace,
     html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #homeWorkspace,
     html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #workspace,
     html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #checkpointWorkspace,
-    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #loraWorkspace {
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #assetBrowserWorkspace,
+    html[data-preboot-workspace="asset-browser"] body:not([data-active-workspace]) #homeWorkspace,
+    html[data-preboot-workspace="asset-browser"] body:not([data-active-workspace]) #workspace,
+    html[data-preboot-workspace="asset-browser"] body:not([data-active-workspace]) #checkpointWorkspace,
+    html[data-preboot-workspace="asset-browser"] body:not([data-active-workspace]) #loraWorkspace,
+    html[data-preboot-workspace="asset-browser"] body:not([data-active-workspace]) #workspaceManagerWorkspace {
       display: none !important;
     }
 
     html[data-preboot-workspace="generation"] body:not([data-active-workspace]) #workspace,
     html[data-preboot-workspace="checkpoints"] body:not([data-active-workspace]) #checkpointWorkspace,
     html[data-preboot-workspace="loras"] body:not([data-active-workspace]) #loraWorkspace,
-    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #workspaceManagerWorkspace {
+    html[data-preboot-workspace="workspace-manager"] body:not([data-active-workspace]) #workspaceManagerWorkspace,
+    html[data-preboot-workspace="asset-browser"] body:not([data-active-workspace]) #assetBrowserWorkspace {
       display: grid !important;
     }
   </style>
@@ -285,6 +296,7 @@
     </main>
     <div data-fragment="/assets/views/checkpoints.html?v=asset-grid-qol1"></div>
     <div data-fragment="/assets/views/loras.html?v=asset-grid-qol1"></div>
+    <div data-fragment="/assets/views/asset-browser.html?v=asset-browser18-search-lifecycle1-preview-staging1-fast-replay1-preview-recovery2-atomic-preview1-tab-responsive1-new-search-draft1-close-responsive1-dsv2-02-chip-sync2-p3a-gallery1-p3b-gallery-cache1-autoload1"></div>
     <div data-fragment="/assets/views/workspace-manager.html?v=workspace-responsive2"></div>
     <footer class="statusbar">
       <span data-product-name-template="{product} WebUI">WebUI</span>
@@ -343,6 +355,6 @@ Reload UI after applying the latest patch.`;
     })();
   </script>
   <script type="module" src="/assets/js/site-sidebar.js?v=shared-sidebar-r3"></script>
-  <script type="module" src="/assets/js/main.js?v=cancel-controls1-r10.3-scheduler-profile-scope2-ha3-lora-gallery-hotfix1"></script>
+  <script type="module" src="/assets/js/main.js?v=cancel-controls1-r10.3-scheduler-profile-scope2-ha3-lora-gallery-hotfix1-civitai-auth2-asset-browser18-search-lifecycle1-preview-staging1-fast-replay1-preview-recovery2-atomic-preview1-tab-responsive1-new-search-draft1-close-responsive1-dsv2-02-chip-sync2-p3a-gallery1-p3b-gallery-cache1-autoload1-hires-prompt-inheritance1"></script>
 </body>
 </html>

@@ -24,8 +24,8 @@ const SECTION_DEFINITIONS = [
       ["Filename", "image.name"],
       ["Output path", "image.relative_path"],
       ["Generated", "image.timestamp"],
-      ["Width", "replay.width", "width"],
-      ["Height", "replay.height", "height"],
+      ["Width", "image.width"],
+      ["Height", "image.height"],
     ],
   },
   {
@@ -72,8 +72,8 @@ const SECTION_DEFINITIONS = [
       ["Hires parser options", "replay.hires_prompt_parser_kwargs", "hires_prompt_parser_kwargs", "json"],
       ["Hires shortcut mode", "replay.hires_shortcut_profile_mode", "hires_shortcut_profile_mode"],
       ["Hires shortcut profile", "replay.hires_shortcut_profile_name", "hires_shortcut_profile_name"],
-      ["Hires positive prompt", "replay.hires_positive_prompt", "hires_positive_prompt", "prompt"],
-      ["Hires negative prompt", "replay.hires_negative_prompt", "hires_negative_prompt", "prompt"],
+      ["Hires positive prompt", "derived.hires_positive_prompt_display", "hires_positive_prompt", "prompt"],
+      ["Hires negative prompt", "derived.hires_negative_prompt_display", "hires_negative_prompt", "prompt"],
       ["Hires size mode", "replay.hires_size_mode", "hires_size_mode"],
       ["Uniform hires scale", "replay.hires_uniform_scale", "hires_uniform_scale"],
       ["Hires target width", "replay.hires_width", "hires_width"],
@@ -92,6 +92,8 @@ const SECTION_DEFINITIONS = [
   {
     title: "Core generation",
     fields: [
+      ["Width", "replay.width", "width"],
+      ["Height", "replay.height", "height"],
       ["Seed", "replay.seed", "seed"],
       ["Steps", "replay.steps", "steps"],
       ["CFG scale", "replay.cfg_scale", "cfg_scale"],
@@ -348,6 +350,179 @@ const SECTION_DEFINITIONS = [
     ],
   },
 ];
+
+const PRIORITY_SECTION_DEFINITIONS = [
+  {
+    title: "Replay essentials",
+    priority: true,
+    fields: [
+      ["Filename", "image.name"],
+      ["Saved image size", "derived.final_image_size"],
+      ["Base generation size", "derived.replay_base_size"],
+      ["Hires enabled", "replay.hires_enabled", "hires_enabled"],
+      ["Hires target", "derived.hires_target_size"],
+      ["Hires steps", "derived.hires_steps_display"],
+      ["Hires denoise", "replay.hires_denoising_strength", "hires_denoising_strength"],
+      ["Hires sampler", "derived.hires_sampler_display"],
+      ["Hires scheduler", "derived.hires_scheduler_display"],
+      ["Hires CFG", "derived.hires_cfg_display"],
+      ["Seed", "replay.seed", "seed"],
+      ["Steps", "replay.steps", "steps"],
+      ["CFG scale", "replay.cfg_scale", "cfg_scale"],
+      ["Sampler", "replay.sampler_name", "sampler_name"],
+      ["Scheduler", "replay.scheduler_name", "scheduler_name"],
+      ["Model", "derived.model_display"],
+      ["VAE", "derived.vae_display"],
+      ["LoRAs", "derived.lora_summary", "", "multiline"],
+      ["Prompt assets", "derived.prompt_asset_summary", "", "multiline"],
+      ["Textual inversions", "derived.textual_inversion_summary", "", "multiline"],
+      ["Output path", "image.relative_path"],
+      ["Generated", "image.timestamp"],
+    ],
+  },
+  {
+    title: "Base prompts",
+    priority: true,
+    fields: [
+      ["Positive prompt", "replay.positive_prompt", "positive_prompt", "prompt"],
+      ["Negative prompt", "replay.negative_prompt", "negative_prompt", "prompt"],
+    ],
+  },
+  {
+    title: "Hires prompts",
+    priority: true,
+    fields: [
+      ["Hires positive prompt", "derived.hires_positive_prompt_display", "", "prompt"],
+      ["Hires negative prompt", "derived.hires_negative_prompt_display", "", "prompt"],
+    ],
+  },
+];
+
+function positiveNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function formatDimensionPair(width, height) {
+  const resolvedWidth = positiveNumber(width);
+  const resolvedHeight = positiveNumber(height);
+  if (!resolvedWidth || !resolvedHeight) return "";
+  return `${resolvedWidth} × ${resolvedHeight}`;
+}
+
+function formatStrengthLabel(value) {
+  if (value === undefined || value === null || value === "") return "";
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return String(numeric);
+  return String(value);
+}
+
+function describePromptAssets(items = []) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return items
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const kind = item.asset_type ? `[${item.asset_type}] ` : "";
+      const name = item.display_name || item.name || item.path || item.identifier || item.asset_id || "asset";
+      const path = item.path ? ` → ${item.path}` : "";
+      return `${kind}${name}${path}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function summarizeLoras(items = []) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return items
+    .map((item) => {
+      if (!item) return "";
+      if (typeof item === "string") return item;
+      if (typeof item !== "object") return "";
+      const label = item.display_name || item.name || item.path || item.requested_path || item.resolved_path || "LoRA";
+      const strength = formatStrengthLabel(item.weight ?? item.strength ?? item.scale ?? item.multiplier);
+      return strength ? `${label} — strength ${strength}` : label;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function summarizeAssets(items = []) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return items
+    .map((item) => {
+      if (!item) return "";
+      if (typeof item === "string") return item;
+      if (typeof item !== "object") return "";
+      return item.display_name || item.name || item.path || item.identifier || item.asset_id || "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resolveHiresTargetSummary(replay = {}) {
+  const explicit = formatDimensionPair(replay.hires_width, replay.hires_height);
+  if (explicit) {
+    const scale = positiveNumber(replay.hires_uniform_scale);
+    return scale ? `${explicit} (${scale}×)` : explicit;
+  }
+  const scale = positiveNumber(replay.hires_uniform_scale);
+  const baseWidth = positiveNumber(replay.width);
+  const baseHeight = positiveNumber(replay.height);
+  if (scale && baseWidth && baseHeight) {
+    return `${Math.round(baseWidth * scale)} × ${Math.round(baseHeight * scale)} (${scale}×)`;
+  }
+  return scale ? `${scale}×` : "";
+}
+
+function buildDerivedDetails(data = {}) {
+  const replay = data.replay || {};
+  const image = data.image || {};
+  const model = image.model || {};
+  const vae = image.vae || {};
+  const hiresEnabled = replay.hires_enabled === true;
+  const baseSampler = String(replay.sampler_name || "").trim();
+  const baseScheduler = String(replay.scheduler_name || "").trim();
+  const hiresSampler = String(replay.hires_sampler_name || "").trim();
+  const hiresScheduler = String(replay.hires_scheduler_name || "").trim();
+  const explicitHiresPositive = String(replay.hires_positive_prompt ?? "");
+  const explicitHiresNegative = String(replay.hires_negative_prompt ?? "");
+  const basePositive = String(replay.positive_prompt ?? "");
+  const baseNegative = String(replay.negative_prompt ?? "");
+  const hiresCfg = replay.hires_cfg_scale;
+  const hiresSteps = replay.hires_steps;
+  return {
+    final_image_size: formatDimensionPair(image.width, image.height),
+    replay_base_size: formatDimensionPair(replay.width, replay.height),
+    hires_target_size: hiresEnabled ? resolveHiresTargetSummary(replay) : "",
+    hires_steps_display: hiresEnabled && !valueIsMissing(hiresSteps) ? String(hiresSteps) : "",
+    hires_sampler_display: hiresEnabled
+      ? (hiresSampler || (baseSampler ? `${baseSampler} (same as base)` : ""))
+      : "",
+    hires_scheduler_display: hiresEnabled
+      ? (hiresScheduler || (baseScheduler ? `${baseScheduler} (same as base)` : ""))
+      : "",
+    hires_cfg_display: hiresEnabled
+      ? (!valueIsMissing(hiresCfg)
+          ? String(hiresCfg)
+          : (!valueIsMissing(replay.cfg_scale) ? `${replay.cfg_scale} (same as base)` : ""))
+      : "",
+    hires_positive_prompt_display: hiresEnabled
+      ? (explicitHiresPositive.trim() ? explicitHiresPositive : (basePositive ? `${basePositive}
+
+[Uses base positive prompt]` : ""))
+      : "",
+    hires_negative_prompt_display: hiresEnabled
+      ? (explicitHiresNegative.trim() ? explicitHiresNegative : (baseNegative ? `${baseNegative}
+
+[Uses base negative prompt]` : ""))
+      : "",
+    model_display: model.display_name || replay.model_path || "",
+    vae_display: vae.display_name || replay.vae_path || "Automatic / checkpoint embedded",
+    lora_summary: summarizeLoras(image.loras || replay.loras || []),
+    prompt_asset_summary: describePromptAssets(replay.prompt_assets || replay._webui_active_prompt_assets || []),
+    textual_inversion_summary: summarizeAssets(image.textual_inversions || replay.textual_inversions || []),
+  };
+}
 
 function valueAt(source, path) {
   return String(path || "").split(".").reduce((value, part) => value?.[part], source);
@@ -706,33 +881,56 @@ function renderCfgStepDiagnostics(data) {
   return section;
 }
 
+function fieldHasDisplayValue(data, field) {
+  const [, path, replayField = "", displayKind = ""] = field;
+  const value = valueAt(data, path);
+  if (replayField) {
+    if (!hasPath(data?.replay || {}, replayField)) return false;
+    if (value === undefined || value === null) return false;
+    if (value === "" && displayKind !== "prompt") return false;
+  } else if (!hasPath(data, path) || value === undefined || value === null || value === "") {
+    return false;
+  }
+  if (Array.isArray(value) && value.length === 0) return false;
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return false;
+  return true;
+}
+
 function renderDetails() {
   const data = state.outputDetails.data;
-  $("#outputDetailsTitle").textContent = data?.image?.name || "Image Details";
-  $("#outputDetailsImage").src = data?.image?.url || "";
-  $("#outputDetailsImage").alt = data?.image?.name ? `Selected output ${data.image.name}` : "Selected output";
-  $("#outputDetailsSourceBadge").textContent = String(data?.metadata_source || "unknown").replaceAll("_", " ");
+  const detailData = { ...(data || {}), derived: buildDerivedDetails(data || {}) };
+  state.outputDetails.data = detailData;
+  $("#outputDetailsTitle").textContent = detailData?.image?.name || "Image Details";
+  $("#outputDetailsImage").src = detailData?.image?.url || "";
+  $("#outputDetailsImage").alt = detailData?.image?.name ? `Selected output ${detailData.image.name}` : "Selected output";
+  $("#outputDetailsSourceBadge").textContent = String(detailData?.metadata_source || "unknown").replaceAll("_", " ");
 
   const content = $("#outputDetailsContent");
   content.replaceChildren();
-  SECTION_DEFINITIONS.forEach((definition) => {
+
+  const renderSectionDefinition = (definition) => {
     const section = document.createElement("section");
-    section.className = "metadata-section";
+    section.className = definition.priority ? "metadata-section metadata-section-priority" : "metadata-section";
     const title = document.createElement("h3");
     title.textContent = definition.title;
     const fields = document.createElement("div");
     fields.className = "metadata-fields";
     definition.fields.forEach((field) => {
+      if (!fieldHasDisplayValue(detailData, field)) return;
       if (field[3] === "json") {
         fields.append(renderObjectFieldGroup(field[0], field[1], field[2]));
       } else {
         fields.append(renderField(field));
       }
     });
+    if (fields.childElementCount === 0) return;
     section.append(title, fields);
     content.append(section);
-  });
-  const cfgDiagnostics = renderCfgStepDiagnostics(data);
+  };
+
+  PRIORITY_SECTION_DEFINITIONS.forEach(renderSectionDefinition);
+  SECTION_DEFINITIONS.forEach(renderSectionDefinition);
+  const cfgDiagnostics = renderCfgStepDiagnostics(detailData);
   if (cfgDiagnostics) content.append(cfgDiagnostics);
 
   state.outputDetails.selectedFields = [...document.querySelectorAll("[data-replay-field]:checked")]
@@ -743,7 +941,7 @@ function renderDetails() {
   $("#outputDetailsBody").hidden = false;
   $("#outputDetailsCopyFullButton").disabled = false;
   const noSelectedFields = state.outputDetails.selectedFields.length === 0;
-  const noReplayFields = Object.keys(selectedReplayPayload(Object.keys(data.replay || {}))).length === 0;
+  const noReplayFields = Object.keys(selectedReplayPayload(Object.keys(detailData.replay || {}))).length === 0;
   $("#outputDetailsSendSelectedButton").disabled = noSelectedFields;
   $("#outputDetailsPreviewMergedButton").disabled = noSelectedFields;
   $("#outputDetailsDuplicateButton").disabled = noReplayFields;

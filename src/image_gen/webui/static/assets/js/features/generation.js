@@ -26,6 +26,7 @@ let pollJobsPromise = null;
 let submitInFlight = false;
 let eventStream = null;
 let eventStreamJobId = null;
+const shownOutputMetadataWarnings = new Set();
 let eventStreamFailures = 0;
 let eventStreamDisabledUntil = 0;
 let workerState = {};
@@ -824,6 +825,20 @@ async function handleTerminalEvent(payload) {
   await pollJobs();
 }
 
+function notifyOutputMetadataWarnings(job) {
+  const warnings = Array.isArray(job?.output_save_status?.warnings)
+    ? job.output_save_status.warnings
+    : [];
+  warnings.forEach((warning) => {
+    const message = String(warning || "").trim();
+    if (!message) return;
+    const key = `${job.job_id || "job"}:${message}`;
+    if (shownOutputMetadataWarnings.has(key)) return;
+    shownOutputMetadataWarnings.add(key);
+    notify(message, "warning");
+  });
+}
+
 function applyEventPayload(payload) {
   const job = payload?.job || payload;
   if (!job?.job_id) return;
@@ -831,6 +846,7 @@ function applyEventPayload(payload) {
   state.activeJobId = job.job_id;
   renderQueue(state.jobs);
   renderLivePreviewJob(job);
+  notifyOutputMetadataWarnings(job);
   updateActiveState();
 }
 

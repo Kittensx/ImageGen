@@ -1,0 +1,168 @@
+<section class="asset-browser-workspace is-hidden" id="assetBrowserWorkspace" data-active-workspace="asset-browser" aria-label="Asset Browser">
+  <div class="home-component-grid asset-browser-component-grid" id="assetBrowserComponentGrid" data-workspace-page="asset-browser">
+    <section class="home-component asset-browser-overview-component" data-workspace-component="asset-browser.overview" data-component-shell data-component-variant="feature" data-component-span="12">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="models" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Asset Browser</strong>
+        </div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Asset Browser actions"></div>
+      </header>
+      <div class="component-shell__body asset-browser-overview-body" data-component-shell-body>
+        <div class="asset-browser-header-copy">
+          <p class="eyebrow">Provider resources</p>
+          <h2>Discover and manage model assets</h2>
+          <p class="subtle">Browse or search current provider resources through IMAGE_GEN's native provider API. Remote assets remain visible even when the current runtime cannot use them yet.</p>
+        </div>
+        <div class="asset-browser-overview-controls">
+          <div class="asset-browser-provider-pill" id="assetBrowserProviderStatus">CivitAI</div>
+          <label class="field-block asset-browser-detail-mode-control"><span>Details view</span><select id="assetBrowserDetailMode" data-workspace-overlay-mode-select data-workspace-overlay-for="asset-browser.details"><option value="drawer" selected>Right drawer</option><option value="focused">Focused lightbox</option></select></label>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-component asset-browser-search-component" data-workspace-component="asset-browser.search" data-component-shell data-component-variant="standard" data-component-span="12">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity>
+          <span class="ui-icon component-shell__icon" data-icon="filter" aria-hidden="true"></span>
+          <strong class="component-shell__title" data-component-shell-title>Search and browse</strong>
+        </div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Search and browse actions"></div>
+      </header>
+      <div class="component-shell__body asset-browser-search-body" data-component-shell-body>
+        <form class="asset-browser-search-panel" id="assetBrowserSearchForm">
+          <label class="field-block asset-browser-query"><span>Search</span><input id="assetBrowserQuery" type="search" placeholder="Provider discovery keyword…" autocomplete="off"></label>
+          <label class="field-block"><span>Asset type</span><select id="assetBrowserType">
+            <option value="any">Any</option><option value="lora" selected>LoRA</option><option value="checkpoint">Checkpoint</option><option value="vae">VAE</option><option value="textual_inversion">Textual Inversion</option><option value="upscaler">Upscaler</option>
+          </select></label>
+          <label class="field-block"><span>Sort</span><select id="assetBrowserSort">
+            <option value="">Any / provider default</option><option selected>Highest Rated</option><option>Most Downloaded</option><option>Newest</option><option>Most Liked</option><option>Most Discussed</option><option>Most Collected</option>
+          </select></label>
+          <label class="field-block"><span>Period</span><select id="assetBrowserPeriod">
+            <option value="">Any / provider default</option><option value="AllTime" selected>All time</option><option value="Year">Year</option><option value="Month">Month</option><option value="Week">Week</option><option value="Day">Day</option>
+          </select></label>
+          <label class="asset-browser-checkbox"><input id="assetBrowserSafeContent" type="checkbox" checked><span>Provider safe-content transport</span></label>
+          <div class="asset-browser-search-actions"><button class="primary" id="assetBrowserSearchButton" type="submit">Search</button><button id="assetBrowserBrowseButton" type="button">Browse</button><button id="assetBrowserRefreshButton" type="button">Refresh Provider</button></div>
+        </form>
+        <div class="asset-browser-search-session-strip">
+          <div class="asset-browser-search-tabs" id="assetBrowserSearchTabs" role="tablist" aria-label="Asset searches"></div>
+          <div class="asset-browser-search-session-actions"><button id="assetBrowserNewSearch" type="button">New Search</button><button id="assetBrowserStopSearch" type="button" disabled>Pause</button></div>
+        </div>
+        <div class="asset-browser-search-preferences" aria-label="Search behavior preferences">
+          <label class="asset-browser-checkbox"><input id="assetBrowserPausePreviousSearch" type="checkbox" checked><span>Pause the current fetch when starting a new search</span></label>
+          <label class="field-block asset-browser-paging-preference"><span>Result loading</span><select id="assetBrowserPagingMode"><option value="continuous" selected>Continue automatically until the provider reaches the end</option><option value="manual">Pause after each provider page and show Load more</option></select></label>
+        </div>
+        <div class="asset-browser-status subtle" id="assetBrowserStatus" role="status">Choose filters, then Search or Browse.</div>
+        <div class="asset-browser-provider-progress" id="assetBrowserProviderProgress" hidden aria-live="polite"><div class="asset-browser-provider-progress-track"><div class="asset-browser-provider-progress-bar"></div></div><span id="assetBrowserProviderProgressText">Gathering CivitAI assets…</span></div>
+      </div>
+    </section>
+
+    <section class="home-component asset-browser-filter-component" data-workspace-component="asset-browser.filters" data-component-shell data-component-variant="standard" data-component-span="12">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity><span class="ui-icon component-shell__icon" data-icon="filter" aria-hidden="true"></span><strong class="component-shell__title" data-component-shell-title>Filter current results</strong><span class="home-status-pill" id="assetBrowserFacetMatchSummary">All candidates</span></div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Current result filter actions"></div>
+      </header>
+      <div class="component-shell__body asset-browser-filter-body" data-component-shell-body>
+        <div class="asset-browser-active-filters" id="assetBrowserActiveFilters" aria-label="Active result filters"><span class="subtle">No local filters active.</span></div>
+        <div class="asset-browser-filter-grid">
+          <label class="field-block asset-browser-filter-keywords"><span>Add keyword filter</span><input id="assetBrowserFilterKeywords" type="search" placeholder="Type a word or phrase; it becomes a removable chip" autocomplete="off"><small class="subtle">Committed keywords stay active until their chip × is removed.</small></label>
+          <label class="field-block"><span>Keyword match</span><select id="assetBrowserKeywordMode"><option value="all_words" selected>All words</option><option value="any_word">Any word</option><option value="exact_phrase">Exact phrase</option></select></label>
+          <label class="field-block"><span>Rating basis</span><select id="assetBrowserRatingBasis"><option value="strictest" selected>Strictest of page + previews</option><option value="model">Model page only</option><option value="author_previews">Author previews only</option></select></label>
+          <label class="field-block"><span>Local sort</span><select id="assetBrowserLocalSort"><option value="candidate_order" selected>Provider / candidate order</option><option value="safest">Safest first</option><option value="most_mature">Most mature first</option><option value="newest">Newest known / refreshed</option><option value="title">Title</option></select></label>
+          <label class="field-block"><span>Support</span><select id="assetBrowserSupport"><option value="any" selected>Any</option><option value="supported">Supported</option><option value="unsupported">Unsupported</option><option value="unknown">Unknown</option></select></label>
+          <label class="field-block"><span>Library</span><select id="assetBrowserLibrary"><option value="any" selected>Any</option><option value="not_installed">Not in library</option><option value="installed">Already in library</option></select></label>
+          <label class="field-block"><span>Preview source</span><select id="assetBrowserPreviewMode"><option value="any" selected>Any</option><option value="provider">Provider only</option><option value="local">Local only</option><option value="both">Both CivitAI + user image</option><option value="none">No preview</option></select></label>
+          <label class="field-block"><span>Creator</span><input id="assetBrowserFilterCreator" type="search" list="assetBrowserCreatorFacetOptions" placeholder="Any creator" autocomplete="off"><datalist id="assetBrowserCreatorFacetOptions"></datalist></label>
+        </div>
+        <div class="asset-browser-facet-groups">
+          <fieldset class="asset-browser-facet-group"><legend>Architecture / base model</legend><div class="asset-browser-facet-options" id="assetBrowserFacetArchitecture"><span class="subtle">No architecture values yet.</span></div></fieldset>
+          <fieldset class="asset-browser-facet-group"><legend>Model type</legend><div class="asset-browser-facet-options" id="assetBrowserFacetAssetKind"><span class="subtle">No type values yet.</span></div></fieldset>
+          <fieldset class="asset-browser-facet-group"><legend>Ratings</legend><div class="asset-browser-facet-options asset-browser-rating-options" id="assetBrowserFacetRating"><span class="subtle">No rating values yet.</span></div></fieldset>
+          <fieldset class="asset-browser-facet-group" id="assetBrowserCategoryFacetGroup" hidden><legend>Provider category</legend><div class="asset-browser-facet-options" id="assetBrowserFacetCategory"></div></fieldset>
+        </div>
+        <div class="asset-browser-mature-preview-row">
+          <span class="asset-browser-filter-label">Mature previews</span>
+          <div class="asset-browser-segmented" id="assetBrowserMaturePreviewMode" role="group" aria-label="Mature preview presentation"><button type="button" data-value="show" aria-pressed="true">Show</button><button type="button" data-value="blur" aria-pressed="false">Blur</button><button type="button" data-value="hide" aria-pressed="false">Hide</button></div>
+          <button id="assetBrowserClearFilters" type="button">Clear filters</button>
+        </div>
+        <div class="asset-browser-filter-status subtle" id="assetBrowserFilterStatus" role="status">Local filters refine the current tab without contacting the provider.</div>
+      </div>
+    </section>
+
+    <section class="home-component asset-download-manager" id="assetDownloadManager" data-workspace-component="asset-browser.downloads" data-component-shell data-component-variant="standard" data-component-span="8">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity><span class="ui-icon component-shell__icon" data-icon="queue-compose" aria-hidden="true"></span><strong class="component-shell__title" data-component-shell-title>Downloads</strong><span class="home-status-pill" id="assetDownloadSummary">Idle</span></div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Download manager actions"></div>
+      </header>
+      <div class="component-shell__summary" data-component-shell-summary hidden><span class="component-shell__summary-item"><strong>Status</strong><span data-component-summary-source="#assetDownloadSummary" data-component-summary-fallback="Idle">Idle</span></span></div>
+      <div class="component-shell__body asset-download-manager-body" data-component-shell-body>
+        <div class="asset-download-settings">
+          <label class="field-block"><span>Max active</span><input id="assetDownloadMaxActive" type="number" min="1" max="8" step="1"></label><label class="field-block"><span>Max queued</span><input id="assetDownloadMaxQueued" type="number" min="1" max="500" step="1"></label><label class="field-block"><span>Speed limit (MiB/s)</span><input id="assetDownloadBandwidth" type="number" min="0" max="10240" step="0.5" title="0 means unlimited"></label><label class="field-block"><span>Provider request spacing (s)</span><input id="assetDownloadRequestSpacing" type="number" min="0" max="60" step="0.05"></label><label class="field-block"><span>Retries</span><input id="assetDownloadRetries" type="number" min="0" max="5" step="1"></label><button id="assetDownloadSaveSettings" type="button">Apply downloader settings</button>
+        </div>
+        <div class="asset-gallery-policy" aria-label="Gallery and preview storage policy">
+          <div class="asset-gallery-policy-heading"><strong>Gallery & preview storage</strong><span class="subtle" id="assetGalleryCacheSummary">Temporary gallery cache is empty.</span></div>
+          <div class="asset-gallery-policy-grid">
+            <label class="field-block"><span>Details gallery fetch</span><select id="assetGalleryDetailFetchMode"><option value="current_only" selected>Current image only</option><option value="current_and_adjacent">Current + adjacent (library assets only)</option></select></label>
+            <label class="field-block"><span>After library install</span><select id="assetGalleryLibraryMode"><option value="hero_only" selected>Hero image only</option><option value="selected_version">Selected version gallery</option><option value="all_versions">All version galleries</option></select></label>
+            <label class="field-block"><span>Temporary retention</span><select id="assetGalleryRetentionMode"><option value="session">Session only</option><option value="days" selected>Age based</option><option value="until_limit">Until cache limit</option><option value="permanent">Permanent</option></select></label>
+            <label class="field-block"><span>Retention days</span><input id="assetGalleryRetentionDays" type="number" min="1" max="3650" step="1" value="7"></label>
+            <label class="field-block"><span>Max temporary cache (GiB)</span><input id="assetGalleryMaxCacheGiB" type="number" min="0.25" max="4096" step="0.25" value="10"></label>
+            <div class="asset-gallery-policy-actions"><button id="assetGallerySaveSettings" type="button">Apply gallery policy</button><button id="assetGalleryCleanTemporary" type="button">Clean temporary gallery cache</button></div>
+          </div>
+          <p class="subtle asset-gallery-policy-note">Search cards remain single-image only. Expanded gallery persistence is available only after the asset is installed in the IMAGE_GEN library.</p>
+        </div>
+        <div class="asset-download-toolbar" aria-label="Download manager controls">
+          <label class="field-block"><span>Show</span><select id="assetDownloadFilterStatus"><option value="all">All downloads</option><option value="active">Active</option><option value="queued">Queued</option><option value="paused">Paused</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
+          <label class="field-block asset-download-filter-text"><span>Filter</span><input id="assetDownloadFilterText" type="search" placeholder="Filename, provider, model ID…" autocomplete="off"></label>
+          <div class="asset-download-bulk-actions"><button id="assetDownloadPauseAll" type="button">Pause all</button><button id="assetDownloadResumeAll" type="button">Resume all</button><button id="assetDownloadCancelAll" type="button">Cancel active</button><button id="assetDownloadClearFiltered" type="button">Clear filtered</button><button id="assetDownloadCleanOldPartials" type="button">Clean old partials</button></div>
+        </div>
+        <div class="asset-download-maintenance-status subtle" id="assetDownloadMaintenanceStatus" role="status"></div>
+        <div class="asset-download-jobs" id="assetDownloadJobs"><div class="subtle">No download jobs yet.</div></div>
+      </div>
+    </section>
+
+    <section class="home-component asset-saved-manager" id="assetBrowserSavedLater" data-workspace-component="asset-browser.saved" data-component-shell data-component-variant="standard" data-component-span="4">
+      <header class="component-shell__header" data-component-shell-header>
+        <div class="component-shell__identity" data-component-shell-identity><span class="ui-icon component-shell__icon" data-icon="save" aria-hidden="true"></span><strong class="component-shell__title" data-component-shell-title>Saved for later</strong><span class="home-status-pill" id="assetBrowserSavedCount">Empty</span></div>
+        <div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Saved assets actions"></div>
+      </header>
+      <div class="component-shell__summary" data-component-shell-summary hidden><span class="component-shell__summary-item"><strong>Saved</strong><span data-component-summary-source="#assetBrowserSavedCount" data-component-summary-fallback="Empty">Empty</span></span></div>
+      <div class="component-shell__body" data-component-shell-body><div class="asset-saved-items" id="assetBrowserSavedItems"><div class="subtle">No assets saved for later.</div></div></div>
+    </section>
+
+    <section class="home-component asset-browser-results-panel" data-workspace-component="asset-browser.results" data-component-shell data-component-variant="standard" data-component-span="12" aria-label="Provider results">
+      <header class="component-shell__header" data-component-shell-header><div class="component-shell__identity" data-component-shell-identity><span class="ui-icon component-shell__icon" data-icon="models" aria-hidden="true"></span><strong class="component-shell__title" data-component-shell-title>Search results</strong></div><div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Search result actions"></div></header>
+      <div class="component-shell__body asset-browser-results-component-body" data-component-shell-body><div class="asset-browser-results" id="assetBrowserResults"><button class="asset-browser-load-more" id="assetBrowserLoadMoreLocal" type="button" hidden>Load more matching results</button><button class="asset-browser-load-more" id="assetBrowserLoadMore" type="button" hidden>Load more provider results</button></div></div>
+    </section>
+
+    <aside class="home-component asset-browser-detail-panel" id="assetBrowserDetailPanel" data-workspace-component="asset-browser.details" data-component-shell data-component-variant="standard" data-component-span="4" data-workspace-overlay-mode="drawer" data-workspace-overlay-open="false" aria-label="Selected asset details" aria-hidden="true">
+      <div class="workspace-overlay-resize-handle asset-browser-detail-resize-handle" id="assetBrowserDetailResizeHandle" data-workspace-overlay-resize-handle role="separator" aria-orientation="vertical" aria-label="Resize asset details drawer" tabindex="0" title="Drag to resize the details drawer"></div>
+      <header class="component-shell__header" data-component-shell-header><div class="component-shell__identity" data-component-shell-identity><span class="ui-icon component-shell__icon" data-icon="info" aria-hidden="true"></span><strong class="component-shell__title" data-component-shell-title>Asset details</strong></div><div class="component-shell__actions" data-component-shell-actions data-action-bar data-action-bar-overflow-label="Asset detail actions"><div class="asset-browser-detail-mode-switch" role="group" aria-label="Asset details view"><button id="assetBrowserDetailModeDrawer" type="button" data-workspace-overlay-mode-button="drawer" aria-pressed="true" title="Show asset details in the right drawer">Drawer</button><button id="assetBrowserDetailModeFocused" type="button" data-workspace-overlay-mode-button="focused" aria-pressed="false" title="Show asset details in a focused lightbox">Focus</button></div><button class="asset-browser-detail-close" id="assetBrowserDetailClose" type="button" data-workspace-overlay-close aria-label="Close asset details" title="Close asset details">×</button></div></header>
+      <div class="component-shell__body asset-browser-detail-component-body" data-component-shell-body>
+        <div id="assetBrowserDetail" hidden>
+          <div class="asset-browser-detail-previews" id="assetBrowserDetailPreviews" hidden>
+            <figure class="asset-browser-detail-preview-figure asset-browser-detail-provider-gallery" id="assetBrowserDetailProviderPreviewFigure" hidden>
+              <figcaption class="asset-browser-detail-gallery-caption"><span id="assetBrowserDetailProviderPreviewLabel">CivitAI</span><span class="asset-browser-detail-gallery-counter" id="assetBrowserDetailProviderPreviewCounter" hidden></span></figcaption>
+              <div class="asset-browser-detail-gallery-stage">
+                <button class="asset-browser-detail-gallery-nav is-previous" id="assetBrowserDetailPreviewPrevious" type="button" hidden aria-label="Previous gallery image" title="Previous gallery image"><img src="/assets/icons/navigation/chevron-left.svg" alt="" aria-hidden="true"></button>
+                <div class="asset-browser-detail-gallery-media">
+                  <div class="asset-browser-detail-gallery-placeholder" id="assetBrowserDetailProviderPreviewPlaceholder" hidden>Loading preview…</div>
+                  <img class="asset-browser-detail-preview" id="assetBrowserDetailPreview" alt="CivitAI preview" hidden>
+                </div>
+                <button class="asset-browser-detail-gallery-nav is-next" id="assetBrowserDetailPreviewNext" type="button" hidden aria-label="Next gallery image" title="Next gallery image"><img src="/assets/icons/navigation/chevron-right.svg" alt="" aria-hidden="true"></button>
+              </div>
+            </figure>
+            <figure class="asset-browser-detail-preview-figure" id="assetBrowserDetailLocalPreviewFigure" hidden><figcaption id="assetBrowserDetailLocalPreviewLabel">Local image</figcaption><img class="asset-browser-detail-preview" id="assetBrowserDetailLocalPreview" alt="Local asset preview"></figure>
+          </div>
+          <div class="asset-browser-detail-heading-row"><p class="eyebrow" id="assetBrowserDetailKind">Asset</p><span class="asset-browser-badge" id="assetBrowserDetailSupport">Unknown</span></div>
+          <h3 id="assetBrowserDetailName">—</h3><div class="subtle" id="assetBrowserDetailCreator">—</div><p class="subtle asset-browser-detail-provider-status" id="assetBrowserDetailProviderStatus" role="status"></p><p class="asset-browser-description" id="assetBrowserDetailDescription"></p>
+          <label class="field-block"><span>Version</span><select id="assetBrowserVersion"></select></label><label class="field-block"><span>File</span><select id="assetBrowserFile"></select></label><dl class="asset-browser-metadata" id="assetBrowserMetadata"></dl>
+          <div class="asset-browser-detail-actions"><button class="primary" id="assetBrowserDownload" type="button" hidden>Download</button><button id="assetBrowserCancelDownload" type="button" hidden>Cancel download</button><button id="assetBrowserSaveLater" type="button" hidden aria-pressed="false">Save for later</button><a class="button-link" id="assetBrowserOpenCivitai" href="https://civitai.com" target="_blank" rel="noopener noreferrer">Open on CivitAI</a></div>
+          <p class="subtle asset-browser-download-status" id="assetBrowserDownloadStatus" role="status"></p>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <div class="workspace-overlay-backdrop asset-browser-detail-backdrop" id="assetBrowserDetailBackdrop" data-workspace-overlay-backdrop data-workspace-overlay-for="asset-browser.details" hidden aria-hidden="true"></div>
+  <button class="workspace-overlay-edge-tab asset-browser-detail-edge-tab" id="assetBrowserDetailEdgeTab" data-workspace-overlay-edge-tab data-workspace-overlay-for="asset-browser.details" type="button" hidden aria-label="Open asset details" title="Open asset details"><span>Details</span></button>
+</section>

@@ -970,7 +970,6 @@ class ReplayService:
         use_recorded_prompt_semantics = bool(
             mode == "exact"
             and recorded_prompt_semantics
-            and use_recorded_prompt_expansion
             and not (replaced & prompt_expansion_sensitive_fields)
         )
         if use_recorded_prompt_semantics:
@@ -1038,6 +1037,8 @@ class ReplayService:
             "recorded_prompt_cfg_available": bool(recorded_prompt_cfg_schedules),
             "prompt_expansion_replay_mode": request.get("prompt_expansion_replay_mode", "reconstruct"),
             "recorded_prompt_expansion_available": bool(recorded_prompt_expansions),
+            "prompt_semantic_replay_mode": request.get("prompt_semantic_replay_mode", "reconstruct"),
+            "recorded_prompt_semantics_available": bool(recorded_prompt_semantics),
             "region_replay_mode": request.get("region_replay_mode", "reconstruct"),
             "recorded_region_available": bool(recorded_regions),
         }

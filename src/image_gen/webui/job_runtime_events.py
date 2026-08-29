@@ -163,7 +163,20 @@ class JobRuntimeEventsMixin:
         progress_percent = float(payload.get("progress_percent") or (step_number / max(total_steps, 1)) * 100.0)
         progress_percent = min(max(progress_percent, 0.0), 100.0)
         updated_at = str(payload.get("updated_at") or _utc_now())
+        current_phase_index = max(
+            0,
+            int(_coerce_top_level_number((job.sampling_timing or {}).get("phase_index"), integer=True, default=0) or 0),
+        )
+        payload_phase_index = _coerce_top_level_number(
+            payload.get("phase_index"), integer=True, default=None
+        )
+        phase_index = (
+            current_phase_index
+            if payload_phase_index is None
+            else max(0, int(payload_phase_index))
+        )
         record = {
+            "phase_index": phase_index,
             "step": step_number,
             "total_steps": total_steps,
             "progress_percent": progress_percent,
@@ -230,6 +243,11 @@ class JobRuntimeEventsMixin:
             job.live_preview_path = record["preview_path"] or None
             job.live_preview_url = record["preview_url"]
 
+            # History remains keyed by sampler step so unlimited generations do
+            # not retain stale previews from the prior image when phase_index
+            # cycles back to 1 for the next base pass. Phase identity is carried
+            # on each record for diagnostics, but the strip stays latest-step
+            # oriented as before this hotfix.
             history = [item for item in job.live_preview_history if int(item.get("step", 0)) != step_number]
             history.append(record)
             history.sort(key=lambda item: int(item.get("step", 0)))
@@ -257,12 +275,35 @@ class JobRuntimeEventsMixin:
             if effective_cfg is None:
                 effective_cfg = requested_cfg
             series = dict(job.live_cfg_step_series or {})
+            series_phase_index = _coerce_top_level_number(
+                series.get("phase_index"), integer=True, default=None
+            )
+            # A hires pass (and the next image in unlimited mode) restarts its
+            # sampler step coordinate. CFG points are meaningful only within the
+            # phase that produced them, so never merge step 1..N from one phase
+            # with step 1..M from another.
+            if series_phase_index is not None and int(series_phase_index) != phase_index:
+                series = {}
+            elif series_phase_index is None and (series.get("points") or []):
+                # The first explicitly phase-aware event must not inherit an
+                # unscoped legacy series. Without a phase id, overlapping base
+                # and hires step coordinates cannot be proven to belong together.
+                if payload_phase_index is not None:
+                    series = {}
+                else:
+                    legacy_latest_step = max(
+                        (int(item.get("step_index", -1)) + 1 for item in (series.get("points") or [])),
+                        default=0,
+                    )
+                    if legacy_latest_step > total_steps:
+                        series = {}
             points = [
                 dict(item)
                 for item in (series.get("points") or [])
                 if int(item.get("step_index", -1)) != step_number - 1
             ]
             points.append({
+                "phase_index": phase_index,
                 "step_index": step_number - 1,
                 "requested_cfg_scale": float(requested_cfg),
                 "effective_cfg_scale": float(effective_cfg),
@@ -279,6 +320,8 @@ class JobRuntimeEventsMixin:
                 "schema_version": 1,
                 "coordinate": "live_denoising_step",
                 "source": "preview_stream",
+                "phase_index": phase_index,
+                "total_steps": total_steps,
                 "supports_future_step_overrides": True,
                 "points": points,
             })
@@ -426,17 +469,25 @@ class JobRuntimeEventsMixin:
                         "telemetry_source": "resident_model_runtime",
                         "updated_at": _utc_now(),
                     }
-                if stage in {"preparing_model", "loading_tokenizer"}:
+                preserve_control_state = job.status in {"cancelling", "cancelled", "failed", "completed"}
+                if preserve_control_state:
+                    # Runtime stdout can still contain buffered status records after a cancel
+                    # request terminates the resident worker. Treat those records as telemetry
+                    # only; they must never resurrect a cancelling/terminal job back into a
+                    # schedulable preparing/warming/running/finalizing state.
+                    self._touch_job_runtime(job, progress=False)
+                elif stage in {"preparing_model", "loading_tokenizer"}:
                     self._transition_job(job, status="preparing_model", worker_stage=stage)
                 elif stage in {"loading_checkpoint", "moving_to_gpu", "reusing_checkpoint", "model_ready"}:
                     self._transition_job(job, status="warming_model", worker_stage=stage)
-                elif stage in {"applying_retention_policy", "ready"} and job.status not in {"completed", "cancelled", "failed"}:
+                elif stage in {"applying_retention_policy", "ready"}:
                     self._transition_job(job, status="finalizing", worker_stage=stage)
                 elif stage == "running":
                     self._transition_job(job, status="running", worker_stage=stage)
                 else:
                     self._transition_job(job, worker_stage=stage)
-                self._touch_job_runtime(job, progress=stage == "running")
+                if not preserve_control_state:
+                    self._touch_job_runtime(job, progress=stage == "running")
                 if stage == "failed" and job.status not in {"cancelled", "cancelling"}:
                     job.error = str(status_payload.get("error") or status_payload.get("last_error") or "Model runtime failed.")
                 self._persist_job(job)

@@ -6,7 +6,7 @@ import {
   registerWorkspacePage,
   setWorkspaceComponentVisibility,
   workspaceLayoutSnapshot,
-} from "../workspace/registry.js?v=workspace-responsive2";
+} from "../workspace/registry.js?v=workspace-responsive4-overlay2";
 
 const HOME_COMPONENTS = [
   { componentId: "home.welcome", title: "Welcome", icon: "home", category: "navigation", defaultVariant: "feature", defaultGridSpan: 12, responsive: { compact: "standard", narrow: "standard" }, minUsefulWidth: 520 },

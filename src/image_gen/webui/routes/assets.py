@@ -16,13 +16,24 @@ from image_gen.webui.civitai_asset_metadata import (
     CivitaiMetadataNotFound,
     CivitaiRequestError,
     civitai_api_key_status,
+    civitai_authentication_request_status,
     delete_civitai_api_key,
     write_civitai_api_key,
+    sync_civitai_api_key_to_secret_store,
 )
 from image_gen.webui.routes.payloads import CivitaiCredentialPayload
 
 
-def build_assets_router(*, context, catalog, upscaler_catalog, civitai_connection, _lora_auto_scan_enabled, _preview_media_type) -> APIRouter:
+def build_assets_router(
+    *,
+    context,
+    catalog,
+    upscaler_catalog,
+    civitai_connection,
+    asset_hub_secrets=None,
+    _lora_auto_scan_enabled,
+    _preview_media_type,
+) -> APIRouter:
     router = APIRouter()
 
     @router.post("/api/models/refresh")
@@ -93,10 +104,18 @@ def build_assets_router(*, context, catalog, upscaler_catalog, civitai_connectio
         return civitai_api_key_status(context)
 
 
+    @router.get("/api/integrations/civitai/auth-request")
+    async def civitai_auth_request_status() -> dict[str, Any]:
+        return civitai_authentication_request_status(context)
+
+
     @router.put("/api/integrations/civitai/credential")
     async def save_civitai_credential(payload: CivitaiCredentialPayload) -> dict[str, Any]:
         try:
-            return await asyncio.to_thread(write_civitai_api_key, context, payload.api_key)
+            status = await asyncio.to_thread(write_civitai_api_key, context, payload.api_key)
+            if asset_hub_secrets is not None:
+                await asyncio.to_thread(sync_civitai_api_key_to_secret_store, context, asset_hub_secrets)
+            return status
         except CivitaiCredentialError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -104,7 +123,10 @@ def build_assets_router(*, context, catalog, upscaler_catalog, civitai_connectio
     @router.delete("/api/integrations/civitai/credential")
     async def remove_civitai_credential() -> dict[str, Any]:
         try:
-            return await asyncio.to_thread(delete_civitai_api_key, context)
+            status = await asyncio.to_thread(delete_civitai_api_key, context)
+            if asset_hub_secrets is not None:
+                asset_hub_secrets.delete("civitai")
+            return status
         except CivitaiCredentialError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

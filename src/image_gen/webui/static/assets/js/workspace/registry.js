@@ -5,6 +5,7 @@ import {
   responsivePresentationSpan,
   resolveResponsiveVariant,
 } from "./responsive.js?v=workspace-responsive2";
+import { bindWorkspaceComponentOverlay, workspaceComponentOverlay } from "./overlay.js?v=workspace-overlay2";
 
 const components = new Map();
 const pages = new Map();
@@ -82,9 +83,11 @@ export function registerWorkspaceComponent(descriptor) {
     supportedVariants: Object.freeze([...new Set([...(source.supportedVariants || [source.defaultVariant || "standard"])].map((value) => canonicalVariant(value)))]),
     defaultGridSpan: normalizedSpan(source.defaultGridSpan),
     defaultVisible: source.defaultVisible !== false,
+    resizable: source.resizable === true,
     minGridSpan: normalizedSpan(source.minGridSpan || 1),
     maxGridSpan: normalizedSpan(source.maxGridSpan || 12),
     shell: Object.freeze({ ...(source.shell || {}) }),
+    overlay: source.overlay && typeof source.overlay === "object" ? Object.freeze({ ...source.overlay }) : null,
     settingsSchema: source.settingsSchema || { type: "object", properties: {}, additionalProperties: false },
     responsive: Object.freeze(canonicalResponsiveVariants(source.responsive)),
     minUsefulWidth: Number.isFinite(Number(source.minUsefulWidth)) ? Math.max(1, Math.round(Number(source.minUsefulWidth))) : null,
@@ -247,6 +250,91 @@ function applyWorkspaceResponsiveState(root, pageId, widthClass, applyResponsive
   });
 }
 
+function persistMountedWorkspace(root, pageId) {
+  saveWorkspaceLayoutPreference(pageId, workspaceLayoutSnapshot(root, pageId));
+}
+
+function ensureWorkspaceComponentResize(node, descriptor, pageId, workspaceRoot) {
+  if (!node || !descriptor?.resizable || !workspaceRoot) return null;
+  node.dataset.workspaceResizable = "true";
+  let handle = node.querySelector(":scope > [data-workspace-resize-handle]");
+  if (!handle) {
+    handle = document.createElement("div");
+    handle.className = "workspace-component-resize-handle";
+    handle.dataset.workspaceResizeHandle = "";
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("tabindex", "0");
+    handle.setAttribute("aria-label", `Resize ${descriptor.title}`);
+    handle.title = `Drag to resize ${descriptor.title}; use Left/Right arrows for one-column steps. Double-click to reset.`;
+    node.append(handle);
+  }
+  if (handle.dataset.workspaceResizeBound === "true") return handle;
+  handle.dataset.workspaceResizeBound = "true";
+
+  const apply = (span, { persist = false } = {}) => {
+    const next = setWorkspaceComponentSpan(workspaceRoot, pageId, descriptor.componentId, span);
+    if (next !== null) handle.setAttribute("aria-valuenow", String(next));
+    handle.setAttribute("aria-valuemin", String(descriptor.minGridSpan));
+    handle.setAttribute("aria-valuemax", String(descriptor.maxGridSpan));
+    if (persist) persistMountedWorkspace(workspaceRoot, pageId);
+    return next;
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = workspaceRoot.getBoundingClientRect();
+    const styles = window.getComputedStyle(workspaceRoot);
+    const gap = Number.parseFloat(styles.columnGap || styles.gap || "0") || 0;
+    const columnWidth = Math.max(1, (rect.width - (gap * 11)) / 12);
+    const startX = event.clientX;
+    const startSpan = Number(node.dataset.componentSpan || descriptor.defaultGridSpan || 12);
+    handle.classList.add("is-dragging");
+    handle.setPointerCapture?.(event.pointerId);
+
+    const move = (moveEvent) => {
+      const deltaColumns = Math.round((moveEvent.clientX - startX) / columnWidth);
+      apply(startSpan + deltaColumns);
+    };
+    const finish = (upEvent) => {
+      handle.classList.remove("is-dragging");
+      try { handle.releasePointerCapture?.(upEvent.pointerId); } catch (_error) {}
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      persistMountedWorkspace(workspaceRoot, pageId);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    const current = Number(node.dataset.componentSpan || descriptor.defaultGridSpan || 12);
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      apply(current - 1, { persist: true });
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      apply(current + 1, { persist: true });
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      apply(descriptor.defaultGridSpan, { persist: true });
+    }
+  });
+
+  handle.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    apply(descriptor.defaultGridSpan, { persist: true });
+  });
+
+  apply(Number(node.dataset.componentSpan || descriptor.defaultGridSpan || 12));
+  return handle;
+}
+
 export function refreshWorkspaceResponsiveState(scope, pageId) {
   const root = scope?.matches?.(`[data-workspace-page="${CSS.escape(pageId)}"]`)
     ? scope
@@ -288,7 +376,9 @@ export function mountWorkspacePage(scope, pageId, { initComponent = null, applyR
     node.hidden = !visible;
     try {
       initComponent?.(node, descriptor, page);
-      mounted.push({ node, descriptor });
+      ensureWorkspaceComponentResize(node, descriptor, pageId, root);
+      const overlay = bindWorkspaceComponentOverlay(node, descriptor, root);
+      mounted.push({ node, descriptor, overlay });
     } catch (error) {
       const message = `Unable to initialize ${descriptor.title}: ${error?.message || error}`;
       errors.push({ componentId: id, message });
@@ -323,6 +413,13 @@ export function mountWorkspacePage(scope, pageId, { initComponent = null, applyR
     controller.refresh();
   });
   return { page, root, mounted, errors, responsive: controller };
+}
+
+export function workspaceOverlayCapability(scope, componentId) {
+  const id = normalizedId(componentId);
+  const root = scope?.querySelector?.(`[data-workspace-component="${CSS.escape(id)}"]`)
+    || (scope?.matches?.(`[data-workspace-component="${CSS.escape(id)}"]`) ? scope : null);
+  return root ? workspaceComponentOverlay(root) : null;
 }
 
 export function workspaceLayoutSnapshot(scope, pageId) {
@@ -380,7 +477,10 @@ export function setWorkspaceComponentOrder(scope, pageId, componentId, targetInd
 
 export function setWorkspaceComponentSpan(scope, pageId, componentId, span) {
   const descriptor = workspaceComponent(componentId);
-  const root = scope?.querySelector?.(`[data-workspace-page="${CSS.escape(pageId)}"] [data-workspace-component="${CSS.escape(componentId)}"]`);
+  const pageRoot = scope?.matches?.(`[data-workspace-page="${CSS.escape(pageId)}"]`)
+    ? scope
+    : scope?.querySelector?.(`[data-workspace-page="${CSS.escape(pageId)}"]`);
+  const root = pageRoot?.querySelector?.(`[data-workspace-component="${CSS.escape(componentId)}"]`);
   if (!descriptor || !root) return null;
   const next = Math.max(descriptor.minGridSpan, Math.min(descriptor.maxGridSpan, normalizedSpan(span, descriptor.defaultGridSpan)));
   root.dataset.componentSpan = String(next);

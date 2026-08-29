@@ -456,3 +456,187 @@
   }
 }
 
+
+/* Shared opt-in grid resizing for workspace components. Components declare
+   `resizable: true` in the workspace registry; feature CSS does not reimplement
+   the shell or layout primitive. */
+.home-component[data-workspace-resizable="true"] {
+  position: relative;
+}
+
+.workspace-component-resize-handle {
+  position: absolute;
+  z-index: 6;
+  right: 3px;
+  bottom: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  cursor: ew-resize;
+  opacity: 0.44;
+  touch-action: none;
+  transition: opacity 0.14s ease, background 0.14s ease;
+}
+
+.workspace-component-resize-handle::before,
+.workspace-component-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 9px;
+  height: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 62%, transparent);
+  transform: rotate(-45deg);
+  transform-origin: right center;
+}
+
+.workspace-component-resize-handle::after {
+  right: 7px;
+  bottom: 4px;
+  width: 5px;
+}
+
+.home-component[data-workspace-resizable="true"]:hover > .workspace-component-resize-handle,
+.workspace-component-resize-handle:focus-visible,
+.workspace-component-resize-handle.is-dragging {
+  opacity: 1;
+  background: color-mix(in srgb, var(--sky-500) 16%, transparent);
+}
+
+.workspace-component-resize-handle:focus-visible {
+  outline: 2px solid var(--sky-300);
+  outline-offset: 1px;
+}
+
+@media (max-width: 760px) {
+  .workspace-component-resize-handle {
+    display: none;
+  }
+}
+
+/* Shared opt-in overlay capability for workspace components. */
+.workspace-overlay-surface {
+  --workspace-overlay-drawer-width: 520px;
+  position: fixed !important;
+  z-index: 72;
+  top: var(--workspace-overlay-top, 16px) !important;
+  right: var(--workspace-overlay-right, 16px) !important;
+  bottom: var(--workspace-overlay-bottom, 52px) !important;
+  left: auto !important;
+  width: min(var(--workspace-overlay-drawer-width), calc(100vw - 32px)) !important;
+  min-width: min(360px, calc(100vw - 32px));
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  transform: translateX(calc(100% + 36px));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  background: var(--theme-surface-secondary, var(--surface-2, var(--charcoal-800))) !important;
+  background-image: none !important;
+  color: var(--text);
+  box-shadow: 0 24px 64px rgba(0,0,0,.48), var(--shadow);
+  transition: transform .18s ease, opacity .14s ease, visibility 0s linear .18s;
+}
+.workspace-overlay-surface[data-workspace-overlay-open="true"] {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform .18s ease, opacity .14s ease;
+}
+.workspace-overlay-surface[data-workspace-overlay-mode="focused"] {
+  left: var(--workspace-overlay-left, 16px) !important;
+  right: var(--workspace-overlay-right, 16px) !important;
+  width: auto !important;
+  min-width: 0;
+  transform: translateY(18px) scale(.985);
+}
+.workspace-overlay-surface[data-workspace-overlay-mode="focused"][data-workspace-overlay-open="true"] { transform: translateY(0) scale(1); }
+.workspace-overlay-backdrop {
+  position: fixed;
+  z-index: 70;
+  top: var(--workspace-overlay-top, 0);
+  right: var(--workspace-overlay-right, 0);
+  bottom: var(--workspace-overlay-bottom, 0);
+  left: var(--workspace-overlay-left, 0);
+  background: rgba(5,12,20,.58);
+  backdrop-filter: blur(3px);
+}
+.workspace-overlay-backdrop[hidden], .workspace-overlay-edge-tab[hidden], .workspace-overlay-floating-close[hidden] { display:none !important; }
+.workspace-overlay-edge-tab {
+  position: fixed;
+  z-index: 74;
+  right: var(--workspace-overlay-right, 0);
+  top: calc(var(--workspace-overlay-top, 16px) + 92px);
+  min-width: 34px;
+  min-height: 112px;
+  padding: 9px 6px;
+  border-radius: var(--radius-small) 0 0 var(--radius-small);
+  border-right: 0;
+  box-shadow: 0 10px 24px rgba(0,0,0,.34);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+.workspace-overlay-floating-close {
+  position: fixed;
+  z-index: 76;
+  top: calc(var(--workspace-overlay-top, 16px) + 10px);
+  right: calc(var(--workspace-overlay-right, 16px) + 10px);
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--theme-surface-secondary, var(--surface-2, var(--charcoal-800)));
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(0,0,0,.34);
+  font-size: 1.35rem;
+  line-height: 1;
+  font-weight: 700;
+}
+.workspace-overlay-floating-close:hover { border-color: var(--sky-300); }
+.workspace-overlay-floating-close:focus-visible { outline: 2px solid var(--sky-300); outline-offset: 2px; }
+.workspace-overlay-resize-handle {
+  position:absolute;
+  z-index:5;
+  top:48px;
+  bottom:8px;
+  left:-5px;
+  width:11px;
+  cursor:ew-resize;
+  touch-action:none;
+}
+.workspace-overlay-resize-handle::after {
+  content:"";
+  position:absolute;
+  top:18%; bottom:18%; left:4px; width:2px;
+  border-radius:999px;
+  background:color-mix(in srgb,var(--sky-300) 42%,transparent);
+  opacity:.55;
+}
+.workspace-overlay-resize-handle:hover::after,
+.workspace-overlay-resize-handle:focus-visible::after,
+.workspace-overlay-resize-handle.is-dragging::after { opacity:1; background:var(--sky-300); }
+.workspace-overlay-resize-handle:focus-visible { outline:2px solid var(--sky-300); outline-offset:-1px; }
+.workspace-overlay-resize-handle[hidden] { display:none !important; }
+@media (max-width:900px) {
+  .workspace-overlay-surface,
+  .workspace-overlay-surface[data-workspace-overlay-mode="focused"] {
+    left:var(--workspace-overlay-left,8px) !important;
+    right:var(--workspace-overlay-right,8px) !important;
+    width:auto !important;
+    min-width:0;
+  }
+  .workspace-overlay-resize-handle { display:none; }
+  .workspace-overlay-edge-tab { min-height:90px; }
+}

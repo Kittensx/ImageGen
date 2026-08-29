@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -194,6 +195,97 @@ def read_civitai_api_key(context: ProjectContext) -> tuple[Path, str]:
     return path, key
 
 
+
+
+def sync_civitai_api_key_to_secret_store(context: ProjectContext, secret_store: Any) -> dict[str, Any]:
+    """Load the existing project CivitAI key into an in-memory provider secret store.
+
+    This intentionally reuses ``secrets/civitai_api_key.txt`` (or the configured
+    override) and never creates a second credential file. The Asset Hub secret
+    store receives only a session copy so download/runtime code can use the same
+    credential source as the existing CivitAI metadata integration.
+    """
+
+    path, key = read_civitai_api_key(context)
+    secret_store.set("civitai", key, persistent=False)
+    try:
+        display_path = path.relative_to(context.project_root.resolve()).as_posix()
+    except ValueError:
+        display_path = str(path)
+    return {
+        "configured": True,
+        "source": "project_file",
+        "key_file": display_path,
+    }
+
+
+def _civitai_auth_request_path(context: ProjectContext) -> Path:
+    return (Path(context.cache_root) / "asset-hub" / "civitai-auth-request.json").resolve()
+
+
+def request_civitai_authentication(
+    context: ProjectContext,
+    *,
+    reason: str,
+    source: str = "",
+    fixture_id: str = "",
+) -> dict[str, Any]:
+    """Publish a secret-free authentication handoff for the local WebUI."""
+
+    path = _civitai_auth_request_path(context)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    request_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "pending": True,
+        "request_id": request_id,
+        "provider": "civitai",
+        "reason": str(reason or "CivitAI authentication is required.").strip(),
+        "source": str(source or "").strip(),
+        "fixture_id": str(fixture_id or "").strip(),
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "credential_path": civitai_api_key_status(context).get("key_file", "secrets/civitai_api_key.txt"),
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+    return payload
+
+
+def civitai_authentication_request_status(context: ProjectContext) -> dict[str, Any]:
+    path = _civitai_auth_request_path(context)
+    if not path.is_file():
+        return {"pending": False}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"pending": False}
+    if not isinstance(payload, Mapping) or payload.get("pending") is not True:
+        return {"pending": False}
+    allowed = {
+        "pending",
+        "request_id",
+        "provider",
+        "reason",
+        "source",
+        "fixture_id",
+        "requested_at",
+        "credential_path",
+    }
+    return {key: payload.get(key) for key in allowed if key in payload}
+
+
+def clear_civitai_authentication_request(context: ProjectContext, *, request_id: str = "") -> None:
+    path = _civitai_auth_request_path(context)
+    if not path.is_file():
+        return
+    if request_id:
+        current = civitai_authentication_request_status(context)
+        if str(current.get("request_id") or "") != str(request_id):
+            return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 def _validate_civitai_api_key_value(value: Any) -> str:
     key = str(value or "").strip()
@@ -691,6 +783,14 @@ class CivitaiAssetMetadataService:
             try:
                 filename, content = self.download_preview_image(image_url)
                 local_preview, metadata = replace_asset_preview(path, filename=filename, content=content)
+                metadata = save_asset_sidecar_fields(path, {
+                    "_preview_provenance": {
+                        "source": "civitai_cache",
+                        "provider": "civitai",
+                        "source_url": image_url,
+                        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    }
+                })
                 metadata = synchronize_asset_companions(path, metadata)
             except (CivitaiMetadataError, OSError, ValueError) as exc:
                 preview_download_error = str(exc)
@@ -728,9 +828,13 @@ __all__ = [
     "CivitaiMetadataNotFound",
     "CivitaiRequestError",
     "civitai_api_key_status",
+    "civitai_authentication_request_status",
+    "clear_civitai_authentication_request",
     "delete_civitai_api_key",
     "read_civitai_api_key",
+    "request_civitai_authentication",
     "resolve_civitai_key_path",
     "sha256_file",
+    "sync_civitai_api_key_to_secret_store",
     "write_civitai_api_key",
 ]

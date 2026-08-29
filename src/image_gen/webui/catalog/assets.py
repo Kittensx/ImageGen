@@ -163,6 +163,33 @@ class AssetCatalogMixin:
         embedded_name = str(item.get("embedded_name") or "").strip()
         lookup = metadata.get("_civitai_lookup")
         lookup = dict(lookup) if isinstance(lookup, dict) else {}
+        asset_hub_metadata = metadata.get("asset_hub")
+        asset_hub_metadata = dict(asset_hub_metadata) if isinstance(asset_hub_metadata, dict) else {}
+        asset_hub_provider = str(asset_hub_metadata.get("provider") or "").strip().casefold()
+        preview_provenance = metadata.get("_preview_provenance")
+        preview_provenance = dict(preview_provenance) if isinstance(preview_provenance, dict) else {}
+        provider_preview_url = str(lookup.get("image_url") or "").strip()
+        if not provider_preview_url:
+            provider_previews = asset_hub_metadata.get("preview_images")
+            if isinstance(provider_previews, list):
+                for provider_preview in provider_previews:
+                    if not isinstance(provider_preview, dict):
+                        continue
+                    candidate = str(provider_preview.get("url") or "").strip()
+                    if candidate and str(provider_preview.get("kind") or "image").casefold() == "image":
+                        provider_preview_url = candidate
+                        break
+        local_preview_source = str(preview_provenance.get("source") or "").strip().casefold()
+        if preview is not None and not local_preview_source:
+            lookup_preview_path = str(lookup.get("preview_image_path") or "").strip()
+            if bool(lookup.get("preview_image_downloaded")) and lookup_preview_path:
+                try:
+                    same_preview = Path(lookup_preview_path).expanduser().resolve() == preview.resolve()
+                except OSError:
+                    same_preview = False
+                local_preview_source = "civitai_cache" if same_preview else "local"
+            else:
+                local_preview_source = "local"
         nickname_explicit = "nickname" in metadata
         nickname = str(metadata.get("nickname") or "").strip()
         if not nickname_explicit and not nickname:
@@ -181,6 +208,16 @@ class AssetCatalogMixin:
                 nickname = legacy_display_name
         display_name = nickname or embedded_name or canonical_name
         tags = metadata.get("tags") if isinstance(metadata.get("tags"), list) else []
+        if not tags and isinstance(asset_hub_metadata.get("tags"), list):
+            tags = list(asset_hub_metadata.get("tags") or [])
+        provider_trigger_words = asset_hub_metadata.get("trigger_words") or asset_hub_metadata.get("trained_words") or []
+        if isinstance(provider_trigger_words, str):
+            provider_trigger_words = [provider_trigger_words]
+        elif not isinstance(provider_trigger_words, list):
+            provider_trigger_words = list(provider_trigger_words) if isinstance(provider_trigger_words, tuple) else []
+        provider_classification = asset_hub_metadata.get("classification_result")
+        provider_classification = dict(provider_classification) if isinstance(provider_classification, dict) else {}
+        provider_model_family = str(asset_hub_metadata.get("model_family") or provider_classification.get("architecture") or "").strip()
         try:
             preferred_weight = float(metadata.get("preferred_weight", 1.0) or 1.0)
         except (TypeError, ValueError):
@@ -202,19 +239,48 @@ class AssetCatalogMixin:
             "metadata_path": str(sidecar_path(path)),
             **preview_payload,
             "preview_url": preview_url,
-            "source_url": str(metadata.get("source_url") or ""),
-            "description": str(metadata.get("description") or ""),
+            "local_preview_url": preview_url,
+            "local_preview_source": local_preview_source,
+            "provider_preview_url": provider_preview_url,
+            "source_url": str(metadata.get("source_url") or asset_hub_metadata.get("source_page_url") or ""),
+            "description": str(metadata.get("description") or asset_hub_metadata.get("description_plaintext") or ""),
             "notes": str(metadata.get("notes") or ""),
             "tags": [str(value) for value in tags if str(value).strip()],
             "category": str(metadata.get("category") or ""),
             "favorite": bool(metadata.get("favorite", False)),
-            "model_family": str(metadata.get("model_family") or ""),
-            "architecture": str(metadata.get("architecture") or ""),
+            "model_family": str(metadata.get("model_family") or provider_model_family or ""),
+            "architecture": str(metadata.get("architecture") or provider_classification.get("architecture") or provider_model_family or ""),
             "prediction_type": str(metadata.get("prediction_type") or ""),
             "conditioning_dimension": metadata.get("conditioning_dimension"),
-            "activation_text": str(metadata.get("activation_text") or ""),
+            "activation_text": str(metadata.get("activation_text") or (provider_trigger_words[0] if provider_trigger_words else "")),
+            "provider_metadata": asset_hub_metadata,
+            "provider_id": str(asset_hub_metadata.get("provider") or ""),
+            "provider_model_id": str(asset_hub_metadata.get("provider_model_id") or ""),
+            "provider_model_version_id": str(asset_hub_metadata.get("provider_model_version_id") or ""),
+            "provider_file_id": str(asset_hub_metadata.get("provider_file_id") or ""),
+            "provider_creator": str(asset_hub_metadata.get("provider_creator_name") or asset_hub_metadata.get("author_name") or ""),
+            "provider_base_model": str(asset_hub_metadata.get("base_model") or ""),
+            "provider_version_name": str(asset_hub_metadata.get("version_name") or ""),
             "preferred_weight": max(-4.0, min(4.0, preferred_weight)),
         }
+        if not lookup and asset_hub_provider == "civitai":
+            lookup = {
+                "status": "matched",
+                "model_id": asset_hub_metadata.get("provider_model_id"),
+                "model_version_id": asset_hub_metadata.get("provider_model_version_id"),
+                "model_name": str(asset_hub_metadata.get("display_name") or asset_hub_metadata.get("title") or ""),
+                "model_version_name": str(asset_hub_metadata.get("version_name") or ""),
+                "model_type": str(asset_hub_metadata.get("provider_asset_type") or ""),
+                "creator": str(asset_hub_metadata.get("provider_creator_name") or ""),
+                "base_model": str(asset_hub_metadata.get("base_model") or ""),
+                "source_url": str(asset_hub_metadata.get("source_page_url") or ""),
+                "image_url": provider_preview_url,
+                "matched_file": {
+                    "id": asset_hub_metadata.get("provider_file_id"),
+                    "name": str(asset_hub_metadata.get("original_filename") or asset_hub_metadata.get("filename") or ""),
+                    "hashes": dict(asset_hub_metadata.get("hashes") or {}) if isinstance(asset_hub_metadata.get("hashes"), dict) else {},
+                },
+            }
         entry.update({
             "civitai_lookup": lookup,
             "civitai_model_id": lookup.get("model_id"),

@@ -1,6 +1,6 @@
 const SIDEBAR_STORAGE_KEY = "image-gen.site-sidebar.state";
 const MAIN_PATHS = new Set(["/", "/index.html"]);
-const MAIN_WORKSPACES = new Set(["home", "generation", "checkpoints", "loras", "workspace-manager"]);
+const MAIN_WORKSPACES = new Set(["home", "generation", "checkpoints", "loras", "asset-browser", "workspace-manager"]);
 const MAIN_OVERLAY_ROUTES = new Set(["settings", "bug-manager"]);
 const MAIN_ROUTES = new Set([...MAIN_WORKSPACES, ...MAIN_OVERLAY_ROUTES]);
 

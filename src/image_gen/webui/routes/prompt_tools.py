@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from modules.prompt_parsers import (
+    CANONICAL_PROMPT_CONTRACT_VERSION,
     PROMPT_MERGE_CONTRACT_VERSION,
     PROMPT_ROUTE_CONTRACT_VERSION,
     PROMPT_SHADOW_CONTRACT_VERSION,
@@ -19,7 +20,7 @@ def build_prompt_tools_router(*, prompt_parsers, prompt_configuration) -> APIRou
         return {
             "default": "legacy",
             "contract_version": "image-gen-prompt-parser-v1",
-            "canonical_contract_version": "image-gen-canonical-prompt-v1",
+            "canonical_contract_version": CANONICAL_PROMPT_CONTRACT_VERSION,
             "route_contract_version": PROMPT_ROUTE_CONTRACT_VERSION,
             "shadow_contract_version": PROMPT_SHADOW_CONTRACT_VERSION,
             "merge_contract_version": PROMPT_MERGE_CONTRACT_VERSION,

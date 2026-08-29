@@ -363,13 +363,21 @@ class GenerationJobManager(
         self._last_job_cache_report: dict[str, Any] = {}
         self.model_runtime = ResidentModelRuntimeClient(context)
         self._watchdog_task: asyncio.Task[None] | None = None
+        # Wall-clock inactivity is only meaningful while the watchdog itself is
+        # able to run. A sleep/suspend or severely blocked event loop creates an
+        # observation gap; after such a gap, stall timing restarts from resume.
+        self._watchdog_observation_floor_timestamp: float | None = None
         self._watchdog_report: dict[str, Any] = {
             "enabled": True,
             "running": False,
             "interval_seconds": 5,
             "running_stall_timeout_seconds": 180,
             "transition_stall_timeout_seconds": 120,
+            "suspension_gap_threshold_seconds": 30,
             "checks": 0,
+            "observation_gap_count": 0,
+            "last_observation_gap_seconds": None,
+            "last_observation_resumed_at": None,
             "recoveries": 0,
             "last_check_at": None,
             "last_recovery_at": None,
@@ -1087,6 +1095,12 @@ class GenerationJobManager(
                 except Exception as retry_exc:
                     job.model_runtime_diagnostics["retry_error"] = f"{type(retry_exc).__name__}: {retry_exc}"
                     exc = ModelRuntimeUnavailable(str(retry_exc))
+                    if job.status in {"cancelling", "cancelled"}:
+                        if job.status != "cancelled":
+                            self._transition_job(job, status="cancelled", worker_stage="cancelled")
+                        job.return_code = 130
+                        self._finalize_resident_job(job)
+                        return
             self._transition_job(job, status="failed", worker_stage="failed")
             job.error = f"Model runtime unavailable: {exc}"
             self._finalize_resident_job(job)

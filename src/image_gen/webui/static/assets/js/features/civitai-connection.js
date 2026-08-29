@@ -1,4 +1,4 @@
-import { api } from "../api.js?v=civitai-connect1";
+import { api } from "../api.js?v=civitai-connect2";
 import { productName } from "../branding.js?v=brand1";
 import { $, notify } from "../utils.js";
 
@@ -12,6 +12,7 @@ const STATUS_ICON = Object.freeze({
 
 let lastStatus = null;
 let dialogReason = "";
+let lastPendingAuthRequestId = "";
 
 function stateFromStatus(status = {}) {
   if (status.usable === true) return "healthy";
@@ -162,6 +163,25 @@ async function testConnection() {
   }
 }
 
+async function checkPendingAuthRequest() {
+  try {
+    const request = await api.civitaiAuthRequestStatus();
+    if (request?.pending !== true) return;
+    const requestId = String(request.request_id || "").trim();
+    if (!requestId || requestId === lastPendingAuthRequestId) return;
+    lastPendingAuthRequestId = requestId;
+    const fixture = String(request.fixture_id || "").trim();
+    const reason = String(request.reason || "CivitAI authentication is required.").trim();
+    await openCivitaiConnection({
+      reason: fixture ? `${reason} Fixture: ${fixture}` : reason,
+    });
+  } catch (error) {
+    // Authentication handoff polling is opportunistic; normal CivitAI controls
+    // remain usable if the local request endpoint is temporarily unavailable.
+    console.debug("Unable to check pending CivitAI authentication request", error);
+  }
+}
+
 export function bindCivitaiConnection() {
   $("#openCivitaiConnectionButton")?.addEventListener("click", () => openCivitaiConnection());
   $("#civitaiSettingsStatusButton")?.addEventListener("click", () => openCivitaiConnection());
@@ -179,4 +199,6 @@ export function bindCivitaiConnection() {
   });
   window.addEventListener("image-gen-settings-opened", refreshStatus);
   refreshStatus();
+  checkPendingAuthRequest();
+  window.setInterval(checkPendingAuthRequest, 2000);
 }

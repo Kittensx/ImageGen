@@ -22,6 +22,7 @@ from image_gen.webui.prompt_assets import extract_inline_loras_from_prompts, mer
 from image_gen.webui.schema_utils import normalize_config_schema
 from modules.checkpoint_inspector import build_architecture_contract
 from modules.project_context import ProjectContext
+from modules.txt2img.png_metadata import parse_webp_xmp, webp_exif_parameters
 
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -99,6 +100,9 @@ _FORM_REPLAY_FIELDS = {
     "hires_cfg_scale",
     "hires_cfg_rescale",
     "hires_upscaler",
+    "hires_blurred_edge_method",
+    "hires_blurred_edge_compare_diagnostics",
+    "hires_lifecycle_state",
     "hires_save_lowres",
     "outpaint_prototype_enabled",
     "outpaint_source_image",
@@ -206,6 +210,9 @@ _BACKEND_REPLAY_EXTRA_FIELDS = {
     "hires_final_size_correction_filter",
     "hires_aspect_policy",
     "hires_padding_mode",
+    "hires_blurred_edge_method",
+    "hires_blurred_edge_compare_diagnostics",
+    "hires_lifecycle_state",
     "hires_recorded_target_correction",
     "hires_correction_fingerprint_enabled",
     "hires_recorded_correction_fingerprint",
@@ -792,6 +799,7 @@ def manifest_to_replay_payload(
                 "memory_management",
                 "pipeline_metadata",
                 "prompt_assets",
+                "hires_prompt_inheritance",
             }:
                 continue
             if key in _FORM_REPLAY_FIELDS and key not in replay:
@@ -814,6 +822,36 @@ def manifest_to_replay_payload(
                 value,
                 "The metadata value is preserved for inspection but has no current form control.",
             )
+
+    # Preserve hires prompt inheritance as a semantic state. New manifests
+    # record it explicitly. Older ImageGen manifests materialized inherited
+    # base prompts into hires_* fields, so equality is the only recoverable
+    # signal for those files; infer inheritance there rather than turning the
+    # old base text into a stale override after replay.
+    hires_prompt_inheritance = _dict(
+        optional_extra.get("hires_prompt_inheritance")
+        or extra.get("hires_prompt_inheritance")
+    )
+    if hires_prompt_inheritance:
+        positive_inherits = hires_prompt_inheritance.get("positive") is True
+        negative_inherits = hires_prompt_inheritance.get("negative") is True
+    else:
+        positive_inherits = bool(
+            replay.get("hires_positive_prompt") is not None
+            and str(replay.get("hires_positive_prompt") or "") == str(replay.get("positive_prompt") or "")
+        )
+        negative_inherits = bool(
+            replay.get("hires_negative_prompt") is not None
+            and str(replay.get("hires_negative_prompt") or "") == str(replay.get("negative_prompt") or "")
+        )
+    if positive_inherits:
+        replay["hires_positive_prompt"] = ""
+    if negative_inherits:
+        replay["hires_negative_prompt"] = ""
+    replay["_webui_hires_prompt_inheritance"] = {
+        "positive": positive_inherits,
+        "negative": negative_inherits,
+    }
 
     inline_loras = extract_inline_loras_from_prompts(
         replay.get("positive_prompt"),
@@ -1006,9 +1044,22 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
     metadata_source = "partial_summary"
 
     image_info: dict[str, Any] = {}
+    image_exif = None
     with Image.open(image_path) as image:
         width, height = image.size
         image_info = dict(image.info or {})
+        try:
+            image_exif = image.getexif()
+        except Exception:
+            image_exif = None
+
+    webp_xmp = parse_webp_xmp(image_info.get("xmp")) if image_path.suffix.lower() == ".webp" else {}
+    webp_compatibility_parameters = (
+        str(webp_xmp.get("parameters") or "")
+        or webp_exif_parameters(image_exif)
+        if image_path.suffix.lower() == ".webp"
+        else ""
+    )
 
     if json_path.is_file():
         try:
@@ -1037,6 +1088,18 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
         except (OSError, json.JSONDecodeError) as exc:
             warnings.append(f"The diagnostics JSON sidecar could not be read: {exc}")
 
+    if manifest is None and webp_xmp.get("replay"):
+        try:
+            loaded = json.loads(str(webp_xmp["replay"]))
+            if isinstance(loaded, dict):
+                manifest = loaded
+                replay_manifest = loaded
+                metadata_source = "webp_xmp_replay"
+            else:
+                warnings.append(f"The embedded {PRODUCT_NAME} WebP replay payload was not an object and was skipped.")
+        except json.JSONDecodeError as exc:
+            warnings.append(f"The embedded {PRODUCT_NAME} WebP replay payload was invalid JSON: {exc}")
+
     if manifest is None and image_info.get("image_gen_manifest"):
         try:
             loaded = json.loads(str(image_info["image_gen_manifest"]))
@@ -1052,6 +1115,14 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
         manifest = parse_a1111_parameters(str(image_info["parameters"]))
         metadata_source = "png_parameters"
 
+    if manifest is None and webp_compatibility_parameters:
+        manifest = parse_a1111_parameters(webp_compatibility_parameters)
+        metadata_source = "webp_compatibility"
+        warnings.append(
+            "This WebP contains compatibility metadata rather than a full replay payload. "
+            "ImageGen loaded every replay field it could recover and left unavailable settings unchanged/defaulted."
+        )
+
     if manifest is None and txt_path.is_file():
         try:
             manifest = parse_txt_infotext(txt_path.read_text(encoding="utf-8"))
@@ -1061,7 +1132,7 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
 
     if manifest is None:
         manifest = _empty_manifest()
-        warnings.append("No JSON, embedded PNG, or TXT generation metadata was found.")
+        warnings.append("No JSON sidecar, embedded image metadata, or TXT generation metadata was found.")
 
     replay, unsupported = manifest_to_replay_payload(
         replay_manifest or manifest,
@@ -1110,6 +1181,10 @@ def _load_details_for_image_path(context: ProjectContext, image_path: Path, norm
         },
         "png_manifest_available": bool(image_info.get("image_gen_manifest")),
         "png_parameters_available": bool(image_info.get("parameters")),
+        "webp_full_replay_available": bool(webp_xmp.get("replay")),
+        "webp_compatibility_available": bool(webp_compatibility_parameters),
+        "embedded_full_replay_available": bool(image_info.get("image_gen_manifest") or webp_xmp.get("replay")),
+        "embedded_compatibility_available": bool(image_info.get("parameters") or webp_compatibility_parameters),
         "metadata_source": metadata_source,
         "runtime_diagnostics": _dict(_dict(manifest.get("runtime_info")).get("extra")).get("diagnostics"),
     }

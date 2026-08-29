@@ -19,7 +19,7 @@ import {
   bindHiresPrompt,
   initializeHiresPrompt,
   normalizedHiresSizeMode,
-} from "./prompt/hires-prompt.js";
+} from "./prompt/hires-prompt.js?v=hires-prompt-inheritance1";
 import { bindRegionTools } from "./prompt/region-tools.js";
 import { bindPromptPreflight, preflightCurrentPrompt } from "./prompt/preflight.js";
 import { bindProfileEditor } from "./prompt/profile-editor.js";
@@ -73,6 +73,10 @@ export function refreshPromptConfigurationCatalogs(payload = {}) {
     hires_shortcut_profile_snapshot: safeParseJson($("#hiresShortcutProfileSnapshot")?.value, {}),
     hires_positive_prompt: $("#hiresPositivePrompt")?.value,
     hires_negative_prompt: $("#hiresNegativePrompt")?.value,
+    _webui_hires_prompt_inheritance: {
+      positive: String($("#hiresPositivePrompt")?.value || "").trim() === "",
+      negative: String($("#hiresNegativePrompt")?.value || "").trim() === "",
+    },
     hires_enabled: Boolean($("#hiresEnabled")?.checked),
     hires_size_mode: normalizedHiresSizeMode(
       $("#hiresSizeMode")?.value,

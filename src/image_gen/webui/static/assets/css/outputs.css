@@ -156,10 +156,20 @@
   background: rgba(10, 24, 35, 0.64);
 }
 
+.metadata-section-priority {
+  border-color: rgba(122, 192, 255, 0.35);
+  background: linear-gradient(180deg, rgba(16, 35, 53, 0.92), rgba(10, 24, 35, 0.76));
+  box-shadow: inset 0 0 0 1px rgba(122, 192, 255, 0.12);
+}
+
 .metadata-section h3 {
   margin-bottom: 9px;
   color: var(--sky-200);
   font-size: 0.83rem;
+}
+
+.metadata-section-priority h3 {
+  color: #cfe8ff;
 }
 
 .metadata-fields {

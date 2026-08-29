@@ -131,7 +131,14 @@ class PreviewCatalogMixin:
             raise ValueError(f"Recent output could not be loaded: {exc}") from exc
         if not image_path.is_file():
             raise ValueError("The chosen recent output image no longer exists on disk.")
-        return self.replace_asset_preview(asset_type, asset_id, filename=image_path.name, content=image_path.read_bytes())
+        return self.replace_asset_preview(
+            asset_type,
+            asset_id,
+            filename=image_path.name,
+            content=image_path.read_bytes(),
+            source="generated_output",
+            source_reference=str(output_id or ""),
+        )
 
     def asset_preview_path(self, asset_type: str, asset_id: str) -> Path:
         record = self._asset_record(asset_type, asset_id)
@@ -150,9 +157,18 @@ class PreviewCatalogMixin:
         *,
         filename: str,
         content: bytes,
+        source: str = "user_upload",
+        source_reference: str = "",
     ) -> dict[str, Any]:
         record = self._asset_record(asset_type, asset_id)
         replace_asset_preview(record["path"], filename=filename, content=content)
+        save_asset_sidecar_fields(record["path"], {
+            "_preview_provenance": {
+                "source": str(source or "user_upload").strip().casefold(),
+                "source_reference": str(source_reference or "").strip(),
+                "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            }
+        })
         refreshed = self._catalog_entry(record, asset_type=asset_type)
         self._replace_catalog_record(asset_type, refreshed)
         self._bump_catalog_revision(asset_type)

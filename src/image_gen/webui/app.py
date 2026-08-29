@@ -28,11 +28,17 @@ from image_gen.systems.asset_hub import (
     ASSET_HUB_CONTRACT_VERSION,
     ArchitectureCompatibilityPolicy,
     AssetHubDownloadManager,
+    AssetGalleryCache,
+    AssetDiscoveryIndex,
     AssetHubInstaller,
     AssetHubSecretStore,
+    AssetHubSelectionStore,
+    AssetSearchSessionStore,
     AssetHubService,
     CivitaiProvider,
     DownloadRepository,
+    DownloadRuntimeSettings,
+    GalleryCacheSettings,
     InstallRepository,
     UpscalerFavoriteStore,
     LocalPresenceResolver,
@@ -64,6 +70,7 @@ from image_gen.webui.civitai_asset_metadata import (
     civitai_api_key_status,
     delete_civitai_api_key,
     write_civitai_api_key,
+    sync_civitai_api_key_to_secret_store,
 )
 from image_gen.webui.image_refs import decode_external_image_ref, is_within_root
 from image_gen.webui.jobs import GenerationJobManager
@@ -224,15 +231,31 @@ def create_app(
                 yield item
 
     asset_hub_secrets = AssetHubSecretStore()
+    try:
+        sync_civitai_api_key_to_secret_store(context, asset_hub_secrets)
+    except CivitaiCredentialError:
+        # The WebUI connection dialog owns creation/repair of the existing
+        # secrets/civitai_api_key.txt credential. Asset Hub stays disconnected
+        # until that same file becomes usable.
+        pass
     civitai_provider = CivitaiProvider(
         context.cache_root / "asset-hub" / "providers" / "civitai",
         secret_provider=lambda: asset_hub_secrets.get("civitai"),
     )
+    asset_hub_presence = LocalPresenceResolver(_asset_hub_local_records)
+    asset_hub_policy = ArchitectureCompatibilityPolicy()
     asset_hub = AssetHubService(
         [civitai_provider],
-        policy=ArchitectureCompatibilityPolicy(),
-        presence=LocalPresenceResolver(_asset_hub_local_records),
+        policy=asset_hub_policy,
+        presence=asset_hub_presence,
     )
+    asset_hub_discovery_database = context.data_root / "asset-hub" / "asset-discovery.sqlite3"
+    asset_hub_discovery_index = AssetDiscoveryIndex(
+        asset_hub_discovery_database,
+        presence=asset_hub_presence,
+        policy=asset_hub_policy,
+    )
+    asset_hub_search_sessions = AssetSearchSessionStore(asset_hub_discovery_database)
     asset_hub_database = context.data_root / "asset-hub" / "asset-hub.sqlite3"
     asset_hub_download_repository = DownloadRepository(asset_hub_database)
     asset_hub_downloads = AssetHubDownloadManager(
@@ -241,19 +264,30 @@ def create_app(
         repository=asset_hub_download_repository,
         temporary_root=context.temporary_root,
         report_root=context.data_root / "asset-hub" / "reports" / "downloads",
+        settings=DownloadRuntimeSettings.from_config(context.config),
+    )
+    asset_hub_gallery_cache = AssetGalleryCache(
+        context.cache_root / "asset-hub" / "gallery",
+        asset_hub_database,
+        settings=GalleryCacheSettings.from_config(context.config),
     )
     asset_hub_install_repository = InstallRepository(asset_hub_database)
     asset_hub_registry = AssetRegistry(str(context.registry_db_path))
     asset_hub_upscaler_favorites = UpscalerFavoriteStore(context.cache_root)
+    asset_hub_selections = AssetHubSelectionStore(context.data_root / "asset-hub" / "selections")
     asset_hub_installer = AssetHubInstaller(
         context=context,
         service=asset_hub,
         downloads=asset_hub_downloads,
+        gallery_cache=asset_hub_gallery_cache,
         catalog=catalog,
         upscaler_catalog=upscaler_catalog,
         registry=asset_hub_registry,
         repository=asset_hub_install_repository,
+        discovery_index=asset_hub_discovery_index,
     )
+
+    asset_hub_downloads.set_completion_handler(asset_hub_installer.auto_install_download)
 
     def _lora_auto_scan_enabled() -> bool:
         settings = store.load_application_settings()
@@ -265,10 +299,18 @@ def create_app(
         except Exception:
             pass
 
+    async def _recover_asset_hub_downloads() -> None:
+        try:
+            await asyncio.to_thread(asset_hub_downloads.cleanup_stale_partials)
+            await asset_hub_downloads.reconcile_completed()
+        except Exception:
+            pass
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await jobs.start()
         lora_scan_task = None
+        asset_hub_recovery_task = asyncio.create_task(_recover_asset_hub_downloads())
         if _lora_auto_scan_enabled():
             lora_scan_task = asyncio.create_task(_scan_unknown_loras_in_background())
         try:
@@ -279,6 +321,8 @@ def create_app(
                 pass
             yield
         finally:
+            if asset_hub_recovery_task is not None and not asset_hub_recovery_task.done():
+                asset_hub_recovery_task.cancel()
             if lora_scan_task is not None and not lora_scan_task.done():
                 lora_scan_task.cancel()
             try:
@@ -309,9 +353,13 @@ def create_app(
     app.state.asset_hub = asset_hub
     app.state.asset_hub_secrets = asset_hub_secrets
     app.state.asset_hub_downloads = asset_hub_downloads
+    app.state.asset_hub_gallery_cache = asset_hub_gallery_cache
     app.state.asset_hub_installer = asset_hub_installer
     app.state.asset_hub_registry = asset_hub_registry
     app.state.asset_hub_upscaler_favorites = asset_hub_upscaler_favorites
+    app.state.asset_hub_selections = asset_hub_selections
+    app.state.asset_hub_discovery_index = asset_hub_discovery_index
+    app.state.asset_hub_search_sessions = asset_hub_search_sessions
     app.include_router(build_asset_hub_router(
         asset_hub,
         secrets=asset_hub_secrets,
@@ -319,6 +367,10 @@ def create_app(
         installer=asset_hub_installer,
         upscaler_catalog=upscaler_catalog,
         upscaler_favorites=asset_hub_upscaler_favorites,
+        selections=asset_hub_selections,
+        discovery_index=asset_hub_discovery_index,
+        search_sessions=asset_hub_search_sessions,
+        user_config_path=context.config_path,
     ))
     app.state.theme_library = theme_library
     app.state.theme_storage_warning = theme_storage_warning
@@ -530,6 +582,7 @@ def create_app(
         catalog=catalog,
         upscaler_catalog=upscaler_catalog,
         civitai_connection=civitai_connection,
+        asset_hub_secrets=asset_hub_secrets,
         _lora_auto_scan_enabled=_lora_auto_scan_enabled,
         _preview_media_type=_preview_media_type,
     ))

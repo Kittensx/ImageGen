@@ -11,7 +11,7 @@ async function request(path, options = {}) {
     let detail = null;
     try {
       const payload = await response.json();
-      detail = payload.detail ?? null;
+      detail = payload.detail ?? payload.error ?? null;
       if (detail && typeof detail === "object") {
         code = String(detail.code || "");
         message = String(detail.message || message);
@@ -25,7 +25,7 @@ async function request(path, options = {}) {
     error.code = code;
     error.detail = detail;
     error.status = response.status;
-    if (code === "civitai_credentials_required") {
+    if (code === "civitai_credentials_required" || code === "provider_auth_required") {
       window.dispatchEvent(new CustomEvent("image-gen-civitai-credential-required", {
         detail: { message },
       }));
@@ -159,6 +159,7 @@ export const api = {
   unloadModel: () => request("/api/models/unload", { method: "POST" }),
   assetCatalog: () => request("/api/assets/catalog"),
   civitaiConnectionStatus: () => request("/api/integrations/civitai"),
+  civitaiAuthRequestStatus: () => request("/api/integrations/civitai/auth-request"),
   saveCivitaiCredential: (apiKey) => request("/api/integrations/civitai/credential", {
     method: "PUT",
     body: JSON.stringify({ api_key: String(apiKey || "") }),
@@ -259,6 +260,113 @@ export const api = {
   enableThemePackage: (packageId) => request(`/api/themes/${encodeURIComponent(packageId)}/enable`, { method: "POST" }),
   disableThemePackage: (packageId) => request(`/api/themes/${encodeURIComponent(packageId)}/disable`, { method: "POST" }),
   removeThemePackage: (packageId) => request(`/api/themes/${encodeURIComponent(packageId)}`, { method: "DELETE" }),
+  assetHubProviders: () => request("/api/asset-hub/providers"),
+  assetHubSearchSessions: (includeClosed = false, limit = 100) => request(`/api/asset-hub/search-sessions?include_closed=${includeClosed ? "true" : "false"}&limit=${encodeURIComponent(limit)}`),
+  assetHubCreateSearchSession: (values = {}) => request("/api/asset-hub/search-sessions", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
+  assetHubSearchSession: (sessionId) => request(`/api/asset-hub/search-sessions/${encodeURIComponent(sessionId)}`),
+  assetHubUpdateSearchSession: (sessionId, values = {}) => request(`/api/asset-hub/search-sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(values || {}),
+  }),
+  assetHubPauseSearchSession: (sessionId) => request(`/api/asset-hub/search-sessions/${encodeURIComponent(sessionId)}/pause`, { method: "POST" }),
+  assetHubResumeSearchSession: (sessionId) => request(`/api/asset-hub/search-sessions/${encodeURIComponent(sessionId)}/resume`, { method: "POST" }),
+  assetHubStopSearchSession: (sessionId) => request(`/api/asset-hub/search-sessions/${encodeURIComponent(sessionId)}/stop`, { method: "POST" }),
+  assetHubCloseSearchSession: (sessionId) => request(`/api/asset-hub/search-sessions/${encodeURIComponent(sessionId)}/close`, { method: "POST" }),
+  assetHubSearch: (filters = {}, options = {}) => {
+    const params = new URLSearchParams();
+    const mapping = {
+      provider: "provider_id", query: "q", type: "asset_kind", creator: "creator",
+      sort: "sort", period: "period", cursor: "cursor", limit: "limit",
+      safeContent: "safe_content", mode: "mode", sessionId: "sessionId",
+    };
+    Object.entries(mapping).forEach(([key, target]) => {
+      const value = filters?.[key];
+      if (value === undefined || value === null || value === "") return;
+      params.set(target, String(value));
+    });
+    return request(`/api/asset-hub/search?${params.toString()}`, options);
+  },
+  assetHubIndexQuery: (values = {}, options = {}) => request("/api/asset-hub/index/query", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+    ...options,
+  }),
+  assetHubIndexSearch: (filters = {}, options = {}) => {
+    const params = new URLSearchParams();
+    const mapping = {
+      provider: "provider_id", query: "q", creator: "creator", type: "asset_kind", limit: "limit", offset: "offset",
+      safeContent: "safe_content", supportFilter: "support_filter",
+      libraryFilter: "library_filter", previewFilter: "preview_filter",
+      sort: "sort", period: "period", mode: "mode", sessionId: "sessionId",
+    };
+    Object.entries(mapping).forEach(([key, target]) => {
+      const value = filters?.[key];
+      if (value === undefined || value === null || value === "") return;
+      params.set(target, String(value));
+    });
+    (filters?.baseModels || []).forEach((value) => {
+      if (String(value || "").trim()) params.append("base_models", String(value).trim());
+    });
+    return request(`/api/asset-hub/index/search?${params.toString()}`, options);
+  },
+  assetHubIndexModel: (providerId, modelId) => request(`/api/asset-hub/index/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}`),
+  assetHubIndexStatus: () => request("/api/asset-hub/index/status"),
+  assetHubModel: (providerId, modelId, refresh = false, { browser = true, ...options } = {}) => request(`/api/asset-hub/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}?refresh=${refresh ? "true" : "false"}&browser=${browser ? "true" : "false"}`, options),
+  assetHubCreateDownloadPlan: (values = {}) => request("/api/asset-hub/download-plans", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
+  assetHubCreateDownloadJob: (planId) => request("/api/asset-hub/download-jobs", {
+    method: "POST",
+    body: JSON.stringify({ planId: String(planId || "") }),
+  }),
+  assetHubDownloadJobs: (limit = 100) => request(`/api/asset-hub/download-jobs?limit=${encodeURIComponent(limit)}`),
+  assetHubDownloadJob: (jobId) => request(`/api/asset-hub/download-jobs/${encodeURIComponent(jobId)}`),
+  assetHubPauseDownload: (jobId) => request(`/api/asset-hub/download-jobs/${encodeURIComponent(jobId)}/pause`, { method: "POST" }),
+  assetHubResumeDownload: (jobId) => request(`/api/asset-hub/download-jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" }),
+  assetHubCancelDownload: (jobId) => request(`/api/asset-hub/download-jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+  assetHubBulkDownloadAction: (action) => request("/api/asset-hub/download-jobs/bulk", { method: "POST", body: JSON.stringify({ action: String(action || "") }) }),
+  assetHubClearDownloadHistory: (status = "inactive") => request(`/api/asset-hub/download-jobs/history?status=${encodeURIComponent(status)}`, { method: "DELETE" }),
+  assetHubCleanupStaleDownloads: (values = {}) => request("/api/asset-hub/download-jobs/cleanup-stale", { method: "POST", body: JSON.stringify(values || {}) }),
+  assetHubGallerySettings: () => request("/api/asset-hub/gallery-settings"),
+  saveAssetHubGallerySettings: (values = {}) => request("/api/asset-hub/gallery-settings", {
+    method: "PUT",
+    body: JSON.stringify(values || {}),
+  }),
+  assetHubGalleryCacheStatus: () => request("/api/asset-hub/gallery-cache/status"),
+  assetHubCleanupGalleryCache: () => request("/api/asset-hub/gallery-cache/cleanup", { method: "POST" }),
+  assetHubFetchGalleryImage: (values = {}, options = {}) => request("/api/asset-hub/gallery-cache/fetch", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+    ...options,
+  }),
+  assetHubCacheLibraryGallery: (values = {}) => request("/api/asset-hub/gallery-cache/library", {
+    method: "POST",
+    body: JSON.stringify(values || {}),
+  }),
+  assetHubDownloadSettings: () => request("/api/asset-hub/download-settings"),
+  saveAssetHubDownloadSettings: (values = {}) => request("/api/asset-hub/download-settings", {
+    method: "PUT",
+    body: JSON.stringify(values || {}),
+  }),
+  assetHubCreateInstallPlan: (downloadJobId, values = {}) => request("/api/asset-hub/install-plans", {
+    method: "POST",
+    body: JSON.stringify({ downloadJobId: String(downloadJobId || ""), ...values }),
+  }),
+  assetHubInstall: (planId, confirmed = false) => request("/api/asset-hub/install-jobs", {
+    method: "POST",
+    body: JSON.stringify({ planId: String(planId || ""), confirmed: Boolean(confirmed) }),
+  }),
+  assetHubOpenInstallFolder: (installId) => request(`/api/asset-hub/installed/${encodeURIComponent(installId)}/open-folder`, { method: "POST" }),
+  assetHubSelection: (purpose) => request(`/api/asset-hub/selections/${encodeURIComponent(purpose)}`),
+  saveAssetHubSelection: (purpose, values) => request(`/api/asset-hub/selections/${encodeURIComponent(purpose)}`, {
+    method: "PUT",
+    body: JSON.stringify(values || {}),
+  }),
+  clearAssetHubSelection: (purpose) => request(`/api/asset-hub/selections/${encodeURIComponent(purpose)}`, { method: "DELETE" }),
   defaultAssets: () => request("/api/default-assets"),
   saveDefaultAssets: (values) => request("/api/default-assets", {
     method: "PUT",

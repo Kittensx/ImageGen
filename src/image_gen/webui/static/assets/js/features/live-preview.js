@@ -192,10 +192,10 @@ function renderLiveCfgVisual() {
   panel.hidden = !enabled || !currentJob;
   if (panel.hidden) return;
 
-  const points = Array.isArray(state.livePreview.cfgPoints)
+  const rawPoints = Array.isArray(state.livePreview.cfgPoints)
     ? state.livePreview.cfgPoints.filter((point) => Number.isFinite(Number(point?.effective_cfg_scale)))
     : [];
-  if (!points.length) {
+  if (!rawPoints.length) {
     graph.textContent = "Waiting for per-step CFG telemetry.";
     stepLabel.textContent = "Waiting for CFG telemetry";
     summary.replaceChildren();
@@ -207,13 +207,52 @@ function renderLiveCfgVisual() {
     return;
   }
 
+  const series = currentJob?.live_cfg_step_series || {};
+  const currentPhaseIndex = Number(currentJob?.sampling_timing?.phase_index || 0);
+  const cfgPhaseIndex = Number(series.phase_index || rawPoints[rawPoints.length - 1]?.phase_index || 0);
+  const explicitCfgTotal = Number(series.total_steps || 0);
+  const activeTotal = Number(state.livePreview.totalSteps || 0);
+  const activeStep = Number(state.livePreview.step || 0);
+  const rawLatestStep = Number(rawPoints[rawPoints.length - 1]?.step_index || 0) + 1;
+  const phaseMismatch = cfgPhaseIndex > 0 && currentPhaseIndex > 0 && cfgPhaseIndex !== currentPhaseIndex;
+  const legacyPhaseMismatch = cfgPhaseIndex <= 0 && activeTotal > 0 && rawLatestStep > activeTotal;
+
+  // Pre-phase-aware persisted jobs can contain a base 1..20 series whose first
+  // N entries were overwritten by hires 1..N. If current progress proves that
+  // shape (for example hires 3/8 while the series still reaches step 20), the
+  // overwritten prefix is the recoverable current hires trajectory.
+  let recoveredLegacyCurrentPhase = false;
+  let points = rawPoints;
+  if (legacyPhaseMismatch && activeStep > 0 && activeStep <= activeTotal) {
+    const recovered = rawPoints.filter((point) => Number(point?.step_index) + 1 <= activeStep);
+    if (recovered.length === activeStep) {
+      points = recovered;
+      recoveredLegacyCurrentPhase = true;
+    }
+  }
+
   const latest = points[points.length - 1];
   renderCfgGraph(graph, points, {
     compact: true,
     currentStepIndex: Number(latest.step_index),
   });
   const stepNumber = Number(latest.step_index) + 1;
-  stepLabel.textContent = `Step ${stepNumber} / ${state.livePreview.totalSteps || points.length}`;
+  const inferredCfgTotal = Math.max(stepNumber, points.length);
+  const showingPreviousPhase = (phaseMismatch || legacyPhaseMismatch) && !recoveredLegacyCurrentPhase;
+  const cfgTotal = explicitCfgTotal > 0 && !recoveredLegacyCurrentPhase
+    ? explicitCfgTotal
+    : (showingPreviousPhase ? Math.max(rawLatestStep, rawPoints.length) : (activeTotal || inferredCfgTotal));
+  let phasePrefix = "";
+  if (showingPreviousPhase) {
+    phasePrefix = "Previous phase · ";
+  } else if (currentJob?.request?.hires_enabled && currentPhaseIndex === 2) {
+    phasePrefix = currentJob?.request?.hires_step_policy === "proportional_tail_v1"
+      ? "Hires tail · "
+      : "Hires pass · ";
+  } else if (currentJob?.request?.hires_enabled && currentPhaseIndex === 1) {
+    phasePrefix = "Base pass · ";
+  }
+  stepLabel.textContent = `${phasePrefix}Step ${stepNumber} / ${cfgTotal}`;
   const values = [
     `Requested: ${Number(latest.requested_cfg_scale).toFixed(2)}`,
     `Effective: ${Number(latest.effective_cfg_scale).toFixed(2)}`,
@@ -274,6 +313,17 @@ function renderHistory() {
   });
 }
 
+function activeSamplingPhaseLabel() {
+  const phaseIndex = Number(currentJob?.sampling_timing?.phase_index || 0);
+  if (currentJob?.request?.hires_enabled && phaseIndex === 2) {
+    return currentJob?.request?.hires_step_policy === "proportional_tail_v1"
+      ? "hires tail"
+      : "hires pass";
+  }
+  if (currentJob?.request?.hires_enabled && phaseIndex === 1) return "base pass";
+  return "";
+}
+
 function statusText(progress) {
   const status = state.livePreview.status;
   const saveStatus = currentJob?.output_save_status || {};
@@ -287,13 +337,15 @@ function statusText(progress) {
     return `Viewing preview step ${state.livePreview.selectedStep} · sampler ${progress.step || "?"} / ${progress.total || "?"}`;
   }
   if (status === "cancelled") {
+    const phaseLabel = activeSamplingPhaseLabel();
     return progress.step && progress.total
-      ? `Cancelled at step ${progress.step} / ${progress.total}`
+      ? `Cancelled${phaseLabel ? ` during ${phaseLabel}` : ""} at step ${progress.step} / ${progress.total}`
       : "Cancelled";
   }
   if (status === "failed") {
+    const phaseLabel = activeSamplingPhaseLabel();
     return progress.step && progress.total
-      ? `Failed at step ${progress.step} / ${progress.total}`
+      ? `Failed${phaseLabel ? ` during ${phaseLabel}` : ""} at step ${progress.step} / ${progress.total}`
       : "Failed";
   }
   if (status === "completed") return "Completed";

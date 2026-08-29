@@ -838,6 +838,12 @@ export function bindCheckpointWorkspace({
     renderCards();
     if (selectedDetails) renderDetails();
   });
+  window.addEventListener("image-gen-asset-installed", (event) => {
+    if (String(event.detail?.assetKind || "") !== "checkpoint") return;
+    void refreshCatalog({ announce: false }).catch((error) => {
+      console.warn("Unable to synchronize the checkpoint workspace after an Asset Hub install", error);
+    });
+  });
 
   const show = () => {
     workspace?.classList.remove("is-hidden");

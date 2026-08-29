@@ -11,7 +11,7 @@ import {
   workspaceComponent,
   workspaceLayoutSnapshot,
   workspacePage,
-} from "../workspace/registry.js?v=workspace-responsive2";
+} from "../workspace/registry.js?v=workspace-responsive4-overlay2";
 import {
   WORKSPACE_REPRESENTATIVE_WIDTHS,
   WORKSPACE_WIDTH_CLASSES,

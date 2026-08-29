@@ -24,6 +24,116 @@ function jsonValue(selector, fallback = {}) {
   }
 }
 
+function normalizeDirectoryToken(value) {
+  return String(value || "").trim().replace(/[\\/]+$/g, "");
+}
+
+function joinDirectory(base, leaf) {
+  const normalizedBase = normalizeDirectoryToken(base);
+  const normalizedLeaf = String(leaf || "").trim().replace(/^[\\/]+/g, "");
+  if (!normalizedBase) return normalizedLeaf;
+  if (!normalizedLeaf) return normalizedBase;
+  const separator = normalizedBase.includes("\\") && !normalizedBase.includes("/") ? "\\" : "/";
+  return `${normalizedBase}${separator}${normalizedLeaf}`;
+}
+
+function formatOutputDateFolder(now = new Date()) {
+  try {
+    const formatted = new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    const sanitized = formatted
+      .replace(/[./\\\u200e\u200f\s]+/g, "-")
+      .replace(/[^0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+    if (sanitized) return sanitized;
+  } catch {
+    // Fall through to a deterministic fallback if Intl formatting is unavailable.
+  }
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${month}-${day}-${year}`;
+}
+
+function looksLikeAutoDatedLeaf(value) {
+  return /^\d{1,4}-\d{1,2}-\d{1,4}$/.test(String(value || "").trim());
+}
+
+function splitDirectory(value) {
+  const normalized = normalizeDirectoryToken(value);
+  if (!normalized) return { parent: "", leaf: "" };
+  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  if (separatorIndex < 0) return { parent: "", leaf: normalized };
+  return {
+    parent: normalized.slice(0, separatorIndex),
+    leaf: normalized.slice(separatorIndex + 1),
+  };
+}
+
+function shouldAutoManageOutputDirectory(currentValue, outputRoot) {
+  const normalizedCurrent = normalizeDirectoryToken(currentValue);
+  const normalizedRoot = normalizeDirectoryToken(outputRoot);
+  if (!normalizedRoot) return false;
+  if (!normalizedCurrent) return true;
+  if (normalizedCurrent === normalizedRoot) return true;
+  const { parent, leaf } = splitDirectory(normalizedCurrent);
+  return parent === normalizedRoot && looksLikeAutoDatedLeaf(leaf);
+}
+
+function automaticOutputDirectory(outputRoot, now = new Date()) {
+  const normalizedRoot = normalizeDirectoryToken(outputRoot);
+  if (!normalizedRoot) return "";
+  return joinDirectory(normalizedRoot, formatOutputDateFolder(now));
+}
+
+function configureOutputDirectoryAutomation(values = {}) {
+  const input = $("#outputDir");
+  if (!input) return;
+
+  const explicitRoot = normalizeDirectoryToken(values._webui_output_root || input.dataset.outputRoot || "");
+  if (explicitRoot) {
+    input.dataset.outputRoot = explicitRoot;
+  }
+  const outputRoot = normalizeDirectoryToken(input.dataset.outputRoot || input.value || "");
+  if (!outputRoot) return;
+
+  const autoValue = automaticOutputDirectory(outputRoot);
+  const currentValue = normalizeDirectoryToken(input.value);
+  const autoManaged = shouldAutoManageOutputDirectory(currentValue, outputRoot);
+
+  input.dataset.outputAutoValue = autoValue;
+  input.dataset.outputAutoManaged = autoManaged ? "true" : "false";
+  if (autoManaged) input.value = autoValue;
+
+  if (input.dataset.outputAutomationBound === "true") return;
+  const syncMode = () => {
+    const nextAutoValue = automaticOutputDirectory(input.dataset.outputRoot || outputRoot);
+    input.dataset.outputAutoValue = nextAutoValue;
+    input.dataset.outputAutoManaged = shouldAutoManageOutputDirectory(input.value, input.dataset.outputRoot || outputRoot)
+      ? "true"
+      : "false";
+  };
+  input.addEventListener("input", syncMode);
+  input.addEventListener("change", syncMode);
+  input.dataset.outputAutomationBound = "true";
+}
+
+function refreshAutomaticOutputDirectory() {
+  const input = $("#outputDir");
+  if (!input) return;
+  const outputRoot = normalizeDirectoryToken(input.dataset.outputRoot || "");
+  if (!outputRoot) return;
+  const nextAutoValue = automaticOutputDirectory(outputRoot);
+  input.dataset.outputAutoValue = nextAutoValue;
+  if (input.dataset.outputAutoManaged === "true") {
+    input.value = nextAutoValue;
+  }
+}
+
 export function collectGenerationValues(selectionMetadata = {}) {
   const seedValues = collectSeedValues();
   const cfgLab = readCfgLabValues();
@@ -35,6 +145,7 @@ export function collectGenerationValues(selectionMetadata = {}) {
   if (cfgLocks.maximum !== null) samplerKwargs.cfg_effective_max_lock = cfgLocks.maximum;
   const hiresEnabled = Boolean($("#hiresEnabled")?.checked);
   const spatial = generationSpatialRequirements();
+  refreshAutomaticOutputDirectory();
   const hiresPlan = planHiresDimensions({
     baseWidth: numberValue($("#width"), 640),
     baseHeight: numberValue($("#height"), 960),
@@ -104,6 +215,10 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_lifecycle_state: jsonValue("#hiresLifecycleState"),
     hires_positive_prompt: $("#hiresPositivePrompt")?.value || "",
     hires_negative_prompt: $("#hiresNegativePrompt")?.value || "",
+    _webui_hires_prompt_inheritance: {
+      positive: String($("#hiresPositivePrompt")?.value || "").trim() === "",
+      negative: String($("#hiresNegativePrompt")?.value || "").trim() === "",
+    },
     hires_size_mode: hiresPlan.mode,
     hires_scale: hiresPlan.requested_scale,
     hires_width: hiresPlan.requested_width,
@@ -131,6 +246,8 @@ export function collectGenerationValues(selectionMetadata = {}) {
     hires_final_size_correction_filter: $("#hiresFinalSizeCorrectionFilter")?.value || "auto",
     hires_aspect_policy: $("#hiresAspectPolicy")?.value || "stretch",
     hires_padding_mode: $("#hiresPaddingMode")?.value || "reflect",
+    hires_blurred_edge_method: $("#hiresBlurredEdgeMethod")?.value || "box",
+    hires_blurred_edge_compare_diagnostics: Boolean($("#hiresBlurredEdgeCompareDiagnostics")?.checked),
     hires_correction_fingerprint_enabled: Boolean($("#hiresCorrectionFingerprintDiagnostics")?.checked),
     hires_save_upscaled_pre_denoise: Boolean($("#hiresSaveUpscaledPreDenoise")?.checked),
     hires_save_vae_roundtrip: Boolean($("#hiresSaveVaeRoundtrip")?.checked),
@@ -164,6 +281,8 @@ export function collectGenerationValues(selectionMetadata = {}) {
     outpaint_shape_save_base: Boolean($("#outpaintShapeSaveBase")?.checked),
     output_dir: $("#outputDir").value,
     output_prefix: $("#outputPrefix").value || "{index:05d}-{seed}",
+    output_image_format: $("#outputImageFormat")?.value || "png",
+    embedded_metadata_mode: $("#embeddedMetadataMode")?.value || "full_replay",
     save_images: true,
     save_txt: Boolean($("#saveTxt")?.checked),
     save_json: Boolean($("#saveJson")?.checked),
@@ -186,8 +305,24 @@ export function applyGenerationValues(values = {}) {
     hires_final_size_correction_filter: values.hires_final_size_correction_filter || values.hires_exact_resize_filter || "auto",
     hires_aspect_policy: values.hires_aspect_policy || "stretch",
     hires_padding_mode: values.hires_padding_mode || "reflect",
+    hires_blurred_edge_method: values.hires_blurred_edge_method || "box",
+    hires_blurred_edge_compare_diagnostics: Boolean(values.hires_blurred_edge_compare_diagnostics),
     hires_correction_fingerprint_enabled: Boolean(values.hires_correction_fingerprint_enabled),
   };
+  const promptInheritance = values._webui_hires_prompt_inheritance && typeof values._webui_hires_prompt_inheritance === "object"
+    ? values._webui_hires_prompt_inheritance
+    : null;
+  const normalizeInheritedPrompt = (fieldName, baseFieldName, role) => {
+    if (!Object.prototype.hasOwnProperty.call(normalizedValues, fieldName)) return;
+    const raw = String(normalizedValues[fieldName] ?? "");
+    const base = String(normalizedValues[baseFieldName] ?? "");
+    const inherited = promptInheritance
+      ? promptInheritance[role] === true
+      : raw !== "" && raw === base;
+    if (inherited) normalizedValues[fieldName] = "";
+  };
+  normalizeInheritedPrompt("hires_positive_prompt", "positive_prompt", "positive");
+  normalizeInheritedPrompt("hires_negative_prompt", "negative_prompt", "negative");
   const mapping = {
     positive_prompt: "#positivePrompt",
     negative_prompt: "#negativePrompt",
@@ -235,6 +370,7 @@ export function applyGenerationValues(values = {}) {
     hires_final_size_correction_filter: "#hiresFinalSizeCorrectionFilter",
     hires_aspect_policy: "#hiresAspectPolicy",
     hires_padding_mode: "#hiresPaddingMode",
+    hires_blurred_edge_method: "#hiresBlurredEdgeMethod",
     outpaint_source_image: "#outpaintSourceImage",
     outpaint_anchor: "#outpaintAnchor",
     outpaint_feather_px: "#outpaintFeatherPx",
@@ -256,6 +392,8 @@ export function applyGenerationValues(values = {}) {
     outpaint_shape_denoising_strength: "#outpaintShapeDenoisingStrength",
     output_dir: "#outputDir",
     output_prefix: "#outputPrefix",
+    output_image_format: "#outputImageFormat",
+    embedded_metadata_mode: "#embeddedMetadataMode",
   };
 
   Object.entries(mapping).forEach(([name, selector]) => {
@@ -305,6 +443,7 @@ export function applyGenerationValues(values = {}) {
   }
   if ($("#hiresAutoResolutionRecord")) $("#hiresAutoResolutionRecord").value = JSON.stringify(values.hires_auto_resolution_record || {});
   if ($("#hiresLifecycleState")) $("#hiresLifecycleState").value = JSON.stringify(values.hires_lifecycle_state || {});
+  if ($("#hiresBlurredEdgeCompareDiagnostics")) $("#hiresBlurredEdgeCompareDiagnostics").checked = Boolean(values.hires_blurred_edge_compare_diagnostics);
   if ($("#hiresSaveLowres")) $("#hiresSaveLowres").checked = Boolean(values.hires_save_lowres);
   if ($("#hiresCorrectionFingerprintDiagnostics")) $("#hiresCorrectionFingerprintDiagnostics").checked = Boolean(values.hires_correction_fingerprint_enabled);
   if ($("#hiresSaveUpscaledPreDenoise")) $("#hiresSaveUpscaledPreDenoise").checked = Boolean(values.hires_save_upscaled_pre_denoise);
@@ -329,5 +468,6 @@ export function applyGenerationValues(values = {}) {
   if ($("#hiresPromptParserKwargs")) $("#hiresPromptParserKwargs").value = JSON.stringify(values.hires_prompt_parser_kwargs || values.prompt_parser_kwargs || {});
   if ($("#hiresShortcutProfileSnapshot")) $("#hiresShortcutProfileSnapshot").value = JSON.stringify(values.hires_shortcut_profile_snapshot || {});
   applyCfgLabValues(values);
+  configureOutputDirectoryAutomation(normalizedValues);
   window.dispatchEvent(new CustomEvent("image-gen-generation-values-applied", { detail: { values } }));
 }

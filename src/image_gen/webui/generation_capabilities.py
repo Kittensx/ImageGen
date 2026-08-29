@@ -292,7 +292,31 @@ class GenerationCapabilityService:
     def model_context_for_request(self, request: Mapping[str, Any] | None = None) -> dict[str, Any]:
         normalized = dict(request or {})
         if not bool(normalized.get("advanced_models_enabled")):
-            return dict(self._model_selection.current_payload() or {})
+            current = dict(self._model_selection.current_payload() or {})
+            requested_path = str(normalized.get("model_path") or "").strip()
+            if not requested_path:
+                return current
+
+            requested_token = requested_path.replace("\\", "/").casefold()
+            current_paths = {
+                str(current.get("resolved_path") or "").strip().replace("\\", "/").casefold(),
+                str(current.get("requested_path") or "").strip().replace("\\", "/").casefold(),
+            }
+            if requested_token and requested_token in current_paths:
+                return current
+
+            # A remembered checkpoint can be selected before the resident runtime has
+            # reactivated it after a backend restart. Capability resolution must not
+            # depend on GPU residency: authorize/inspect the requested checkpoint
+            # without mutating the active-model selection or loading the model.
+            try:
+                authorized = self._model_selection.authorize(
+                    requested_path,
+                    source="generation_capability_request",
+                )
+                return dict(authorized.to_dict())
+            except (OSError, ValueError, RuntimeError):
+                return current
         if self._component_selection is None:
             return self._unresolved_advanced_context(
                 "Advanced Models capability resolution is unavailable because no component-selection service is bound."

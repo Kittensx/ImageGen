@@ -63,6 +63,20 @@ class JobWatchdogMixin:
             finalizing_timeout = max(60.0, float(settings.get("queue_watchdog_finalizing_stall_timeout_seconds", 600) or 600.0))
         except (TypeError, ValueError):
             finalizing_timeout = 600.0
+        default_gap_threshold = max(30.0, interval * 3.0)
+        try:
+            suspension_gap_threshold = max(
+                interval * 2.0,
+                float(
+                    settings.get(
+                        "queue_watchdog_suspension_gap_threshold_seconds",
+                        default_gap_threshold,
+                    )
+                    or default_gap_threshold
+                ),
+            )
+        except (TypeError, ValueError):
+            suspension_gap_threshold = default_gap_threshold
         self._watchdog_report.update(
             {
                 "enabled": enabled,
@@ -72,6 +86,7 @@ class JobWatchdogMixin:
                 "model_transition_stall_timeout_seconds": model_transition_timeout,
                 "advanced_model_transition_stall_timeout_seconds": advanced_model_transition_timeout,
                 "finalizing_stall_timeout_seconds": finalizing_timeout,
+                "suspension_gap_threshold_seconds": suspension_gap_threshold,
             }
         )
         return {
@@ -82,6 +97,7 @@ class JobWatchdogMixin:
             "model_transition_stall_timeout_seconds": model_transition_timeout,
             "advanced_model_transition_stall_timeout_seconds": advanced_model_transition_timeout,
             "finalizing_stall_timeout_seconds": finalizing_timeout,
+            "suspension_gap_threshold_seconds": suspension_gap_threshold,
         }
 
     def _job_last_activity_timestamp(self, job: GenerationJob) -> float:
@@ -112,7 +128,14 @@ class JobWatchdogMixin:
             timeout = float(settings.get("finalizing_stall_timeout_seconds"))
         else:
             timeout = float(settings.get("transition_stall_timeout_seconds"))
-        stale_for = now_timestamp - self._job_last_activity_timestamp(job)
+        last_activity_timestamp = self._job_last_activity_timestamp(job)
+        observation_floor = getattr(self, "_watchdog_observation_floor_timestamp", None)
+        if observation_floor is not None:
+            try:
+                last_activity_timestamp = max(last_activity_timestamp, float(observation_floor))
+            except (TypeError, ValueError):
+                pass
+        stale_for = max(0.0, now_timestamp - last_activity_timestamp)
         if job.execution_mode == "resident_model":
             worker_job_id = str((runtime_status or {}).get("current_job_id") or "").strip()
             worker_stage = str((runtime_status or {}).get("stage") or "idle").strip().lower()
@@ -290,12 +313,44 @@ class JobWatchdogMixin:
                 await self._recover_terminal_job(job, reason=reason, source="watchdog")
                 break
 
+    def _record_watchdog_observation_gap(
+        self,
+        *,
+        observed_gap: float,
+        resumed_timestamp: float,
+        threshold: float,
+    ) -> bool:
+        gap_seconds = max(0.0, float(observed_gap))
+        if gap_seconds < max(0.0, float(threshold)):
+            return False
+        self._watchdog_observation_floor_timestamp = float(resumed_timestamp)
+        self._watchdog_report["observation_gap_count"] = int(
+            self._watchdog_report.get("observation_gap_count", 0) or 0
+        ) + 1
+        self._watchdog_report["last_observation_gap_seconds"] = round(gap_seconds, 3)
+        self._watchdog_report["last_observation_resumed_at"] = datetime.fromtimestamp(
+            float(resumed_timestamp), timezone.utc
+        ).isoformat()
+        return True
+
     async def _watchdog_loop(self) -> None:
         while not self._stopping:
             settings = self._watchdog_settings()
             self._watchdog_report["running"] = True
             try:
+                sleep_started_timestamp = datetime.now(timezone.utc).timestamp()
                 await asyncio.sleep(float(settings["interval_seconds"]))
+                resumed_timestamp = datetime.now(timezone.utc).timestamp()
+                observed_gap = max(0.0, resumed_timestamp - sleep_started_timestamp)
+                gap_threshold = float(settings.get("suspension_gap_threshold_seconds") or 30.0)
+                # We cannot call time spent while this loop was suspended worker
+                # inactivity. Restart observation from resume and require a fresh
+                # full stall window before recovery.
+                self._record_watchdog_observation_gap(
+                    observed_gap=observed_gap,
+                    resumed_timestamp=resumed_timestamp,
+                    threshold=gap_threshold,
+                )
                 await self._run_watchdog_check()
             except asyncio.CancelledError:
                 raise

@@ -329,6 +329,22 @@ export function updateHiresSizeControls({ source = "" } = {}) {
   updateHiresPairStatus();
 }
 
+function normalizedHiresPromptOverride(current = {}, role = "positive") {
+  const fieldName = role === "negative" ? "hires_negative_prompt" : "hires_positive_prompt";
+  const baseFieldName = role === "negative" ? "negative_prompt" : "positive_prompt";
+  const raw = String(current[fieldName] ?? "");
+  const inheritance = current._webui_hires_prompt_inheritance && typeof current._webui_hires_prompt_inheritance === "object"
+    ? current._webui_hires_prompt_inheritance
+    : null;
+  if (inheritance?.[role] === true) return "";
+  if (inheritance?.[role] === false) return raw;
+  // Legacy sessions/replays could contain a materialized copy of the base
+  // prompt even though the user left the hires field blank. Treat equality as
+  // inheritance when no explicit semantic marker exists.
+  const base = String(current[baseFieldName] ?? "");
+  return raw !== "" && raw === base ? "" : raw;
+}
+
 export function initializeHiresPrompt(current = {}) {
   if ($("#hiresEnabled")) $("#hiresEnabled").checked = Boolean(current.hires_enabled);
   if ($("#hiresPromptParserMode")) $("#hiresPromptParserMode").value = current.hires_prompt_parser_mode || "same_as_base";
@@ -337,8 +353,8 @@ export function initializeHiresPrompt(current = {}) {
   if ($("#hiresShortcutProfileMode")) $("#hiresShortcutProfileMode").value = current.hires_shortcut_profile_mode || "same_as_base";
   populateHiresProfiles(current.hires_shortcut_profile_name || current.prompt_shortcut_profile_name || "");
   if ($("#hiresShortcutProfileSnapshot")) $("#hiresShortcutProfileSnapshot").value = JSON.stringify(current.hires_shortcut_profile_snapshot || {});
-  if ($("#hiresPositivePrompt")) $("#hiresPositivePrompt").value = current.hires_positive_prompt || "";
-  if ($("#hiresNegativePrompt")) $("#hiresNegativePrompt").value = current.hires_negative_prompt || "";
+  if ($("#hiresPositivePrompt")) $("#hiresPositivePrompt").value = normalizedHiresPromptOverride(current, "positive");
+  if ($("#hiresNegativePrompt")) $("#hiresNegativePrompt").value = normalizedHiresPromptOverride(current, "negative");
   if ($("#hiresSizeMode")) {
     $("#hiresSizeMode").value = normalizedHiresSizeMode(current.hires_size_mode, Boolean(current.hires_enabled));
   }

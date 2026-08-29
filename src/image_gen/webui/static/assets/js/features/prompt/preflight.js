@@ -161,14 +161,69 @@ export function canonicalTypeLabel(value) {
     attention_group: "attention group",
     deep_sequence: "deep sequence",
     sequence: "sequence",
+    group: "group",
+    prompt: "structured prompt",
+    relation: "relation",
+    owner_sequence: "owner sequence",
+    weighted: "weighted node",
+    literal: "literal",
+    scheduled: "scheduled node",
+    alternate: "alternate node",
     extension: "extension operator",
   };
   const token = String(value || "node");
   return labels[token] || token.replaceAll("_", " ");
 }
 
+export function canonicalSemanticNodes(structure = {}) {
+  const root = structure?.semantic_ir?.root;
+  if (!root || typeof root !== "object" || Array.isArray(root)) {
+    return Array.isArray(structure.nodes) ? structure.nodes : [];
+  }
+  const nodes = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    if (typeof value.type === "string") nodes.push(value);
+    Object.entries(value).forEach(([key, child]) => {
+      if (["source_text", "value", "type"].includes(key)) return;
+      visit(child);
+    });
+  };
+  visit(root);
+  return nodes;
+}
+
+export function canonicalNumericLabels(structure = {}) {
+  const semantics = Array.isArray(structure?.semantic_ir?.numeric_semantics)
+    ? structure.semantic_ir.numeric_semantics
+    : [];
+  return semantics.map((item) => {
+    const value = item?.value;
+    const scope = String(item?.scope || "");
+    const context = String(item?.context || "");
+    let label = String(item?.type || "number").replaceAll("_", " ");
+    if (item?.type === "weight") {
+      if (scope === "group_member") label = "Group member weight";
+      else if (scope === "and_branch") label = "AND branch weight";
+      else if (scope === "sequence_local") label = "Legacy sequence weight";
+      else if (scope === "sequence_outer") label = "Legacy sequence outer weight";
+      else if (scope === "structured_outer") label = "Structured outer weight";
+      else label = "Weight";
+    } else if (item?.type === "absolute_step") {
+      label = item?.inferred ? "Legacy inferred step" : "Absolute step";
+    } else if (item?.type === "fraction_boundary") label = "Fraction boundary";
+    else if (item?.type === "percent_boundary") label = "Percent boundary";
+    else if (item?.type === "quantity") label = "Quantity";
+    const suffix = item?.type === "percent_boundary" ? "%" : "";
+    const inference = item?.inferred && context ? ` · ${context}` : "";
+    const invalid = item?.valid === false ? ` · INVALID${item?.message ? `: ${item.message}` : ""}` : "";
+    return `${label}: ${value}${suffix}${inference}${invalid}`;
+  });
+}
+
 export function canonicalStructureSummary(structure = {}) {
-  const nodes = Array.isArray(structure.nodes) ? structure.nodes : [];
+  const nodes = canonicalSemanticNodes(structure);
   const counts = new Map();
   nodes.forEach((node) => {
     const label = canonicalTypeLabel(node?.type);
@@ -179,6 +234,7 @@ export function canonicalStructureSummary(structure = {}) {
     parserNamespace: String(structure.parser_namespace || "unknown"),
     nodeCount: nodes.length,
     nodeLabels: [...counts.entries()].map(([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`),
+    numericLabels: canonicalNumericLabels(structure),
   };
 }
 
@@ -360,6 +416,7 @@ export function promptCanonicalStructureRow(roleData = {}, inspectorTarget = "")
     `Parser namespace: ${summary.parserNamespace}`,
     `${summary.nodeCount} canonical node${summary.nodeCount === 1 ? "" : "s"}`,
     ...summary.nodeLabels,
+    ...summary.numericLabels,
   ].forEach((value) => {
     const item = document.createElement("li");
     item.textContent = value;
@@ -447,6 +504,7 @@ export function canonicalStructureSignature(value) {
   return JSON.stringify({
     contract: structure.contract || "",
     parser_namespace: structure.parser_namespace || "",
+    semantic_ir: structure.semantic_ir || {},
     nodes: Array.isArray(structure.nodes) ? structure.nodes : [],
   });
 }
@@ -664,6 +722,59 @@ export function formatCanonicalForDisplay(role = {}) {
   return promptStageText(role, "canonical");
 }
 
+export function formatSemanticInspection(role = {}) {
+  const inspection = role?.semantic_inspection && typeof role.semantic_inspection === "object"
+    ? role.semantic_inspection
+    : {};
+  if (!Object.keys(inspection).length) return "No semantic inspection data.";
+  const lines = [];
+  lines.push(`Contract: ${inspection.contract_version || "unknown"}`);
+  lines.push(`Root: ${inspection.root_type || "text"}`);
+  if (inspection.semantic_digest?.digest) lines.push(`Semantic digest: ${inspection.semantic_digest.digest}`);
+  const groups = Array.isArray(inspection.groups) ? inspection.groups : [];
+  groups.forEach((group, index) => {
+    lines.push(`Group ${index + 1} · ${group.member_count || 0} members${group.fallback_used ? " · FALLBACK" : ""}`);
+    (group.members || []).forEach((member) => {
+      const pct = Number.isFinite(Number(member.normalized_weight))
+        ? `${(Number(member.normalized_weight) * 100).toFixed(2)}%`
+        : "n/a";
+      lines.push(`  - ${member.source || "<empty>"} · local ${pct}${member.explicit_weight ? ` · raw weight ${member.raw_weight}` : ""}`);
+    });
+    if (group.fallback_reason) lines.push(`  Fallback: ${group.fallback_reason}`);
+  });
+  const relations = Array.isArray(inspection.relationships) ? inspection.relationships : [];
+  relations.forEach((relation, index) => {
+    lines.push(`Relationship ${index + 1} · ${relation.syntax_origin || "structured"}`);
+    if (relation.owner) lines.push(`  Owner: ${relation.owner}`);
+    if (relation.parent_scope) lines.push(`  Parent scope: ${relation.parent_scope}`);
+    if (relation.owner_composition) lines.push(`  Owner composition: ${relation.owner_composition}`);
+    (relation.relations || []).forEach((item, itemIndex) => {
+      const weights = relation.normalized_weights || [];
+      const pct = Number.isFinite(Number(weights[itemIndex])) ? `${(Number(weights[itemIndex]) * 100).toFixed(2)}%` : "";
+      lines.push(`  - ${item}${pct ? ` · ${pct}` : ""}`);
+    });
+  });
+  const schedules = Array.isArray(inspection.schedules) ? inspection.schedules : [];
+  schedules.forEach((schedule) => {
+    lines.push(`Schedule: ${schedule.source || schedule.encoder_text || ""}${schedule.active_until_step ? ` · through step ${schedule.active_until_step}` : ""}`);
+  });
+  const fallbacks = Array.isArray(inspection.fallbacks) ? inspection.fallbacks : [];
+  lines.push(`Fallbacks: ${fallbacks.length ? fallbacks.join(" | ") : "none"}`);
+  const warnings = Array.isArray(inspection.warnings) ? inspection.warnings : [];
+  warnings.forEach((warning) => lines.push(`Warning [${warning.category || "parser"}]: ${warning.message || ""}`));
+  const branches = Array.isArray(inspection.encoder_text_preview) ? inspection.encoder_text_preview : [];
+  if (branches.length) {
+    lines.push("Encoder text preview:");
+    branches.forEach((branch) => {
+      const effective = branch.effective_weight_dynamic
+        ? "dynamic by step"
+        : (Number.isFinite(Number(branch.effective_final_weight)) ? `${(Number(branch.effective_final_weight) * 100).toFixed(2)}% final` : "n/a");
+      lines.push(`  ${branch.index}: ${branch.encoder_text || "<empty>"} · outer=${branch.outer_weight} · group=${branch.group_local_weight} · sequence=${branch.sequence_local_weight} · ${effective}`);
+    });
+  }
+  return lines.join("\n");
+}
+
 export function renderTranslation(data, { revealPreview = false } = {}) {
   state.promptConfiguration.translationPreview = data;
   const set = (selector, value) => { const node = $(selector); if (node) node.textContent = value ?? ""; };
@@ -672,15 +783,19 @@ export function renderTranslation(data, { revealPreview = false } = {}) {
   set("#promptTranslationPositiveRaw", base.positive?.raw_prompt);
   set("#promptTranslationPositiveExpanded", base.positive?.parser_input);
   set("#promptTranslationPositiveCanonical", formatCanonicalForDisplay(base.positive || {}));
+  set("#promptTranslationPositiveSemantics", formatSemanticInspection(base.positive || {}));
   set("#promptTranslationNegativeRaw", base.negative?.raw_prompt);
   set("#promptTranslationNegativeExpanded", base.negative?.parser_input);
   set("#promptTranslationNegativeCanonical", formatCanonicalForDisplay(base.negative || {}));
+  set("#promptTranslationNegativeSemantics", formatSemanticInspection(base.negative || {}));
   set("#promptTranslationHiresPositiveRaw", hires.positive?.raw_prompt);
   set("#promptTranslationHiresPositiveExpanded", hires.positive?.parser_input);
   set("#promptTranslationHiresPositiveCanonical", formatCanonicalForDisplay(hires.positive || {}));
+  set("#promptTranslationHiresPositiveSemantics", formatSemanticInspection(hires.positive || {}));
   set("#promptTranslationHiresNegativeRaw", hires.negative?.raw_prompt);
   set("#promptTranslationHiresNegativeExpanded", hires.negative?.parser_input);
   set("#promptTranslationHiresNegativeCanonical", formatCanonicalForDisplay(hires.negative || {}));
+  set("#promptTranslationHiresNegativeSemantics", formatSemanticInspection(hires.negative || {}));
   const renderSlots = (passData) => JSON.stringify({
     scope: passData?.prompt_expansion_scope || passData?.expansion_scope || "per_batch",
     positive: passData?.expanded_prompts_by_slot?.positive || [],

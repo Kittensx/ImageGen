@@ -71,8 +71,16 @@ class JobQueueControlMixin:
             resume_event = self._job_resume_events.get(job.job_id)
             if resume_event is not None:
                 resume_event.set()
-            if was_paused and job.scheduler_suspended:
+            paused_without_live_worker = was_paused and (
+                job.scheduler_suspended or job.queue_paused_from_status == "queued"
+            )
+            if paused_without_live_worker:
+                # Individually paused queued jobs and interrupted jobs recovered after
+                # restart have no live worker coroutine waiting on their resume event.
+                # Cancellation must therefore become terminal here instead of waiting
+                # for an execution path that no longer exists.
                 job.scheduler_suspended = False
+                job.queue_paused_from_status = None
                 self._transition_job(job, status="cancelled", worker_stage="cancelled")
                 job.return_code = 130
                 self._job_resume_events.pop(job.job_id, None)
