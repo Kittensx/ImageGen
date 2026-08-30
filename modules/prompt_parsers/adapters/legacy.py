@@ -103,7 +103,11 @@ class LegacyPromptParserAdapter:
         )
         try:
             schedules = learned.get_learned_cond([raw_prompt], int(steps), hires_steps)
-            semantic_ir = parse_prompt_ir(raw_prompt, parser_namespace=self.descriptor.parser_id)
+            semantic_ir = parse_prompt_ir(
+                raw_prompt,
+                parser_namespace=self.descriptor.parser_id,
+                semantic_modes=dict((parser_options or {}).get("_prompt_style_semantic_modes") or {}),
+            )
             conditioning_plan = compile_conditioning_plan(semantic_ir)
             parser = PromptParserClass(
                 shared_state=state,
@@ -112,6 +116,7 @@ class LegacyPromptParserAdapter:
                 model=SimpleNamespace(),
                 hires_steps=hires_steps,
                 conditioning_plans=[conditioning_plan],
+                semantic_modes=dict((parser_options or {}).get("_prompt_style_semantic_modes") or {}),
             )
             branches, flat, _ = parser.get_multicond_prompt_list()
         except Exception as exc:
@@ -177,6 +182,7 @@ class LegacyPromptParserAdapter:
                 model=request.model_context,
                 hires_steps=request.hires_steps,
                 conditioning_plans=[conditioning_plan],
+                semantic_modes=dict((request.parser_options or {}).get("_prompt_style_semantic_modes") or {}),
             )()
         except Exception as exc:
             raise PromptParserError(

@@ -7,6 +7,8 @@ import warnings
 import torch
 
 from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
+from modules.adapters.a1111_clip_conditioning import A1111PromptCapabilities, encode_a1111_clip_batch
+from modules.prompt_parsers.a1111_semantics import a1111_plain_text
 import torch.nn.functional as F
 
 
@@ -405,6 +407,129 @@ class SD3ConditioningRuntime:
             "pooled": result.pooled_projections,
         }
 
+    def encode_a1111_conditioning(self, texts: Iterable[str], *, forced_segments_by_prompt=None) -> dict[str, torch.Tensor]:
+        prompts = self._normalize_prompts(texts)
+        forced = list(forced_segments_by_prompt or [None] * len(prompts))
+        if len(forced) != len(prompts):
+            raise ValueError("forced_segments_by_prompt must match the SD3 prompt batch length.")
+        hidden_l = encode_a1111_clip_batch(
+            tokenizer=self.tokenizer, text_encoder=self.text_encoder, prompts=prompts,
+            hidden_state_index=-2, forced_segments_by_prompt=forced,
+        )
+        hidden_g = encode_a1111_clip_batch(
+            tokenizer=self.tokenizer_2, text_encoder=self.text_encoder_2, prompts=prompts,
+            hidden_state_index=-2, forced_segments_by_prompt=forced,
+        )
+        target_tokens = max(int(hidden_l.shape[1]), int(hidden_g.shape[1]))
+
+        def pad_stream(value: torch.Tensor, *, tokenizer, text_encoder) -> torch.Tensor:
+            missing = target_tokens - int(value.shape[1])
+            if missing <= 0:
+                return value
+            if missing % self.CONTEXT_LENGTH:
+                raise RuntimeError("SD3 A1111 CLIP streams are not aligned to 77-token chunks.")
+            empty = encode_a1111_clip_batch(
+                tokenizer=tokenizer, text_encoder=text_encoder, prompts=[""] * len(prompts),
+                hidden_state_index=-2,
+            )
+            return torch.cat([value, empty.repeat(1, missing // self.CONTEXT_LENGTH, 1)], dim=1)
+
+        hidden_l = pad_stream(hidden_l, tokenizer=self.tokenizer, text_encoder=self.text_encoder)
+        hidden_g = pad_stream(hidden_g, tokenizer=self.tokenizer_2, text_encoder=self.text_encoder_2)
+        target_device = hidden_g.device
+        target_dtype = self._dtype(self.text_encoder)
+        hidden_l = hidden_l.to(device=target_device, dtype=target_dtype)
+        hidden_g = hidden_g.to(device=target_device, dtype=target_dtype)
+        clip_hidden = torch.cat([hidden_l, hidden_g], dim=-1)
+        clip_hidden = F.pad(clip_hidden, (0, self.joint_attention_dim - self.CLIP_COMBINED_WIDTH))
+
+        whole_prompts = []
+        for prompt, segments in zip(prompts, forced):
+            source = " ".join(str(item or "") for item in segments) if segments is not None else prompt
+            whole_prompts.append(a1111_plain_text(source))
+        whole = self.encode_batch_result(whole_prompts)
+        t5_sequence = (
+            whole.t5_hidden if whole.t5_hidden is not None else whole.zero_t5_hidden
+        ).to(device=target_device, dtype=target_dtype)
+        cross_attention = torch.cat([clip_hidden, t5_sequence], dim=1)
+        pooled = whole.pooled_projections.to(device=target_device, dtype=target_dtype)
+        if not torch.isfinite(cross_attention).all() or not torch.isfinite(pooled).all():
+            raise RuntimeError("SD3 A1111 conditioning contains NaN or Inf values.")
+        return {"cross_attention": cross_attention, "pooled": pooled}
+
+    def a1111_prompt_capabilities(self) -> A1111PromptCapabilities:
+        t5_enabled = self.text_encoder_3 is not None and self.tokenizer_3 is not None
+        return A1111PromptCapabilities(
+            architecture="sd3.x", attention=True, composable_and=True, schedules=True, alternation=True,
+            chunk_break=True, long_clip_chunking=True, clip_streams=("clip_l", "clip_g"),
+            non_clip_policy=("t5_whole_lowered_prompt_once" if t5_enabled else "zero_t5_sequence_once"),
+            pooled_policy="whole_lowered_prompt_once",
+        )
+
+    def encode_chunk_break_conditioning(
+        self,
+        segments: Iterable[str],
+        *,
+        full_prompt: str,
+    ) -> dict[str, torch.Tensor]:
+        """Encode a forced BREAK without projecting CLIP chunk rules onto T5.
+
+        CLIP-L and CLIP-G are the fixed-context streams, so each BREAK segment
+        receives its own native 77-position CLIP encoding and the resulting
+        joint-width CLIP chunks are concatenated. T5, when enabled, is encoded
+        once from the complete lowered branch; when disabled, exactly one native
+        zero-T5 replacement sequence is appended. The pooled CLIP-L/G projection
+        likewise comes from one complete lowered-branch encode rather than from
+        averaging segment pooled vectors.
+        """
+
+        texts = self._normalize_prompts(segments)
+        if len(texts) < 2:
+            raise ValueError("SD3 BREAK conditioning requires at least two non-empty segments.")
+        whole_text = str(full_prompt or "").strip()
+        if not whole_text:
+            raise ValueError("SD3 BREAK conditioning requires non-empty full_prompt text.")
+
+        segment_result = self.encode_batch_result(texts)
+        whole_result = self.encode_batch_result([whole_text])
+
+        clip_hidden = torch.cat(
+            [segment_result.clip_l_hidden, segment_result.clip_g_hidden],
+            dim=-1,
+        )
+        clip_hidden = F.pad(
+            clip_hidden,
+            (0, self.joint_attention_dim - self.CLIP_COMBINED_WIDTH),
+        )
+        forced_clip = torch.cat(
+            [clip_hidden[index] for index in range(len(texts))],
+            dim=0,
+        )
+        t5_sequence = (
+            whole_result.t5_hidden[0]
+            if whole_result.t5_hidden is not None
+            else whole_result.zero_t5_hidden[0]
+        )
+        cross_attention = torch.cat([forced_clip, t5_sequence], dim=0)
+        pooled = whole_result.pooled_projections[0]
+
+        expected_sequence = len(texts) * self.CONTEXT_LENGTH + self.t5_sequence_length
+        self._validate_shape(
+            cross_attention,
+            (expected_sequence, self.joint_attention_dim),
+            label="SD3 BREAK encoder hidden states",
+        )
+        self._validate_shape(
+            pooled,
+            (self.POOLED_DIM,),
+            label="SD3 BREAK pooled projections",
+        )
+        if not torch.isfinite(cross_attention).all():
+            raise RuntimeError("SD3 BREAK encoder hidden states contain NaN or Inf values.")
+        if not torch.isfinite(pooled).all():
+            raise RuntimeError("SD3 BREAK pooled projections contain NaN or Inf values.")
+        return {"cross_attention": cross_attention, "pooled": pooled}
+
     def get_learned_conditioning(self, texts: Iterable[str]) -> dict[str, torch.Tensor]:
         return self.encode_batch(texts)
 
@@ -428,6 +553,7 @@ class SD3ConditioningRuntime:
         return {
             "architecture": "sd3.x",
             "encoder_mode": "clip_l_clip_g_t5xxl" if t5_enabled else "clip_l_clip_g_no_t5",
+            "a1111_prompt_capabilities": self.a1111_prompt_capabilities().to_dict(),
             "clip_context_length": self.CONTEXT_LENGTH,
             "clip_l_hidden_size": self.CLIP_L_HIDDEN_SIZE,
             "clip_g_hidden_size": self.CLIP_G_HIDDEN_SIZE,
@@ -438,5 +564,12 @@ class SD3ConditioningRuntime:
             "t5_sequence_length": self.t5_sequence_length,
             "final_sequence_length": self.CONTEXT_LENGTH + self.t5_sequence_length,
             "pooled_projection_dim": self.POOLED_DIM,
+            "chunk_break_policy": {
+                "algorithm": "encoder_chunk_break_v1",
+                "clip_streams": "forced_77_position_segments",
+                "t5_stream": "whole_lowered_prompt_once",
+                "pooled": "whole_lowered_prompt_once",
+                "cfg_unequal_context": "sequential_branch_evaluation",
+            },
             "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
         }

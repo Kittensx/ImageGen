@@ -115,6 +115,27 @@ pooled            # combined CLIP-L/G pooled projection
 
 When T5 is disabled, its zero replacement sequence remains zero after semantic composition. When T5 is enabled, each branch uses the same branch text and the same PPSR weight as the CLIP channels.
 
+## Structured BREAK contract
+
+Structured runtimes must opt into forced `BREAK` through an explicit
+`encode_chunk_break_conditioning(segments, full_prompt=...)` model-family hook.
+The generic parser does not infer pooled-vector reduction.
+
+For SDXL, each BREAK segment becomes a native 77-position CLIP chunk in the
+cross-attention sequence, while `pooled` is encoded once from the complete
+lowered branch.
+
+For SD3/SD3.5, BREAK is applied to the CLIP-L/G fixed-context contribution only.
+T5, when enabled, is encoded once from the complete lowered branch; when disabled,
+only one zero-T5 replacement sequence is appended. `pooled` is also encoded once
+from the complete lowered branch. This keeps CLIP chunk semantics from being
+projected onto T5.
+
+Because SD3 BREAK can make positive and unconditional sequence lengths differ,
+ordinary SD3 CFG uses sequential U/P transformer evaluations when the sequence
+lengths differ, while retaining the existing concatenated fast path when they
+match.
+
 ## Structured payload validation
 
 If a runtime returns a dict, every `required_field` must be present. A structured field not declared in either `composable_fields` or `unsupported_structured_fields` is rejected rather than silently dropped. This forces new model-family conditioning fields to receive an explicit composition policy.

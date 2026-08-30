@@ -17,6 +17,8 @@ from modules.prompt_parsers.ir import (
     Group,
     IRNode,
     Literal,
+    LiteralTextScope,
+    SemanticScope,
     OwnerSequence,
     Prompt,
     Relation,
@@ -95,6 +97,10 @@ def group_combo_limit() -> int:
 def contains_group(node: IRNode) -> bool:
     if isinstance(node, Group):
         return True
+    if isinstance(node, SemanticScope):
+        return contains_group(node.node)
+    if isinstance(node, LiteralTextScope):
+        return False
     if isinstance(node, Prompt):
         return any(contains_group(item) for item in node.parts)
     if isinstance(node, Relation):
@@ -217,6 +223,10 @@ class _ExpansionBuilder:
     def expand(self, node: IRNode, *, path: tuple[int, ...] = ()) -> list[GroupVariant]:
         if isinstance(node, Group):
             return self._group(node, path)
+        if isinstance(node, LiteralTextScope):
+            return [GroupVariant(text=str(node.value), member_path=path)]
+        if isinstance(node, SemanticScope):
+            return self.expand(node.node, path=path)
         if isinstance(node, (Text, Literal)):
             # Preserve Prompt-part whitespace so outer context survives exactly;
             # compiler.py trims only the final complete encoder text.

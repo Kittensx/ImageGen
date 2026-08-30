@@ -141,14 +141,55 @@ class ComponentStore:
         source_quick_fingerprint: str | None = None,
         metadata_extra: dict[str, Any] | None = None,
     ) -> list[ComponentSnapshotRecord]:
-        """Persist deterministic component-content snapshots in asset_registry.db.
+        """Persist a complete deterministic component snapshot set.
 
-        Component roles are descriptive metadata only. Exact identity is established
-        by ``component_sha256`` over normalized tensor keys, shapes, dtypes, and raw
-        payload bytes.
+        This public signature is intentionally stable. CNRR-08 incremental
+        read-through discovery uses ``merge_component_snapshots`` so existing
+        registry callers continue to receive replacement semantics.
         """
+        return self._store_component_snapshots_impl(
+            asset_id,
+            snapshots,
+            source_file_sha256=source_file_sha256,
+            source_quick_fingerprint=source_quick_fingerprint,
+            metadata_extra=metadata_extra,
+            replace_snapshot_version=True,
+        )
+
+    def merge_component_snapshots(
+        self,
+        asset_id: int,
+        snapshots: dict[str, ComponentSnapshot],
+        *,
+        source_file_sha256: str | None = None,
+        source_quick_fingerprint: str | None = None,
+        metadata_extra: dict[str, Any] | None = None,
+    ) -> list[ComponentSnapshotRecord]:
+        """Transactionally add/update only the supplied component roles.
+
+        Existing current-version roles remain untouched. This is safe only when
+        caller freshness checks have already proven those existing rows current.
+        """
+        return self._store_component_snapshots_impl(
+            asset_id,
+            snapshots,
+            source_file_sha256=source_file_sha256,
+            source_quick_fingerprint=source_quick_fingerprint,
+            metadata_extra=metadata_extra,
+            replace_snapshot_version=False,
+        )
+
+    def _store_component_snapshots_impl(
+        self,
+        asset_id: int,
+        snapshots: dict[str, ComponentSnapshot],
+        *,
+        source_file_sha256: str | None,
+        source_quick_fingerprint: str | None,
+        metadata_extra: dict[str, Any] | None,
+        replace_snapshot_version: bool,
+    ) -> list[ComponentSnapshotRecord]:
         now = datetime.now(timezone.utc).isoformat()
-        records: list[ComponentSnapshotRecord] = []
         with self._connect() as conn:
             asset_row = conn.execute(
                 "SELECT asset_type, architecture, exists_on_disk FROM assets WHERE id = ?",
@@ -157,15 +198,16 @@ class ComponentStore:
             if asset_row is None:
                 raise ValueError(f"Cannot store component snapshots for unknown asset_id={asset_id}.")
             snapshot_versions = {snapshot.snapshot_version for snapshot in snapshots.values()}
-            for version in snapshot_versions:
-                conn.execute(
-                    "DELETE FROM asset_components WHERE asset_id = ? AND snapshot_version = ?",
-                    (int(asset_id), version),
-                )
-                conn.execute(
-                    "DELETE FROM component_sources WHERE asset_id = ? AND snapshot_version = ?",
-                    (int(asset_id), version),
-                )
+            if replace_snapshot_version:
+                for version in snapshot_versions:
+                    conn.execute(
+                        "DELETE FROM asset_components WHERE asset_id = ? AND snapshot_version = ?",
+                        (int(asset_id), version),
+                    )
+                    conn.execute(
+                        "DELETE FROM component_sources WHERE asset_id = ? AND snapshot_version = ?",
+                        (int(asset_id), version),
+                    )
             for role, snapshot in sorted(snapshots.items()):
                 metadata = {
                     "source_file_sha256": str(source_file_sha256 or ""),

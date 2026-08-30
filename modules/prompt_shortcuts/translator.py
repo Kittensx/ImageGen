@@ -8,6 +8,7 @@ from modules.prompt_shortcuts.contracts import (
     CANONICAL_OPERATOR_TOKENS,
     PROMPT_SHORTCUT_CONTRACT_VERSION,
     PromptShortcutError,
+    ordered_profile_alias_entries,
     PromptShortcutProfileDescriptor,
     PromptTranslationResult,
 )
@@ -58,11 +59,7 @@ class PromptShortcutTranslator:
             if parser == "combined"
             else dict(profile.parser_emitters.get(parser) or {})
         )
-        alias_entries: list[tuple[str, str]] = []
-        for operator, aliases in profile.aliases.items():
-            for alias in aliases:
-                alias_entries.append((alias, operator))
-        alias_entries.sort(key=lambda item: (-len(item[0]), item[0]))
+        alias_entries = ordered_profile_alias_entries(profile.aliases)
 
         raw = str(raw_prompt or "")
         parser_parts: list[str] = []
@@ -73,6 +70,17 @@ class PromptShortcutTranslator:
         while index < len(raw):
             if escape and raw.startswith(escape, index) and index + len(escape) < len(raw):
                 escaped_start = index + len(escape)
+                if (
+                    profile.semantic_mode("attention_algorithm") == "a1111_attention_v1"
+                    and raw[escaped_start] in "()[]\\"
+                ):
+                    # A1111 attention owns these escapes. Preserve the backslash
+                    # through shortcut translation so the attention/schedule
+                    # compilers can distinguish literal punctuation from syntax.
+                    parser_parts.append(raw[index : escaped_start + 1])
+                    canonical_parts.append(raw[index : escaped_start + 1])
+                    index = escaped_start + 1
+                    continue
                 matched_escaped = None
                 for alias, operator in alias_entries:
                     if raw.startswith(alias, escaped_start) and _word_boundary_ok(raw, escaped_start, escaped_start + len(alias), alias):
@@ -126,6 +134,8 @@ class PromptShortcutTranslator:
                 "source": alias,
                 "canonical_operator": operator,
                 "canonical_token": canonical_token,
+                "semantic_operator_id": profile.semantic_operator_id(operator),
+                "semantic_algorithm": profile.semantic_algorithm(operator),
                 "parser_emission": emitted,
                 "start": index,
                 "end": index + len(alias),
@@ -139,7 +149,12 @@ class PromptShortcutTranslator:
             "contract": PROMPT_SHORTCUT_CONTRACT_VERSION,
             "profile_id": profile.profile_id,
             "profile_version": profile.version,
+            "profile_schema_version": profile.profile_schema_version,
             "mapping_hash": profile.mapping_hash,
+            "semantic_modes": dict(profile.semantic_modes),
+            "preprocessing": dict(profile.preprocessing),
+            "precedence": list(profile.precedence),
+            "reserved_syntax": list(profile.reserved_syntax),
             "parser_id": parser,
             "prompt_role": prompt_role,
             "lossless_raw_source": raw,
@@ -159,7 +174,21 @@ class PromptShortcutTranslator:
                 "translation_duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
                 "profile_id": profile.profile_id,
                 "profile_version": profile.version,
+                "profile_schema_version": profile.profile_schema_version,
                 "mapping_hash": profile.mapping_hash,
+                "semantic_modes": dict(profile.semantic_modes),
+                "preprocessing": dict(profile.preprocessing),
+                "precedence": list(profile.precedence),
+                "reserved_syntax": list(profile.reserved_syntax),
+                "semantic_operators": [
+                    {
+                        "source": item.get("source", ""),
+                        "canonical_operator": item.get("canonical_operator", ""),
+                        "semantic_operator_id": item.get("semantic_operator_id", ""),
+                        "semantic_algorithm": item.get("semantic_algorithm", ""),
+                    }
+                    for item in substitutions
+                ],
                 "parser_id": parser,
                 "prompt_role": prompt_role,
                 "raw_length": len(raw),

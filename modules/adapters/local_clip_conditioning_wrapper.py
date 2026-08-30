@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
+from modules.adapters.a1111_clip_conditioning import A1111PromptCapabilities, encode_a1111_clip_batch
 
 
 class LocalCLIPConditioningWrapper:
@@ -37,6 +38,27 @@ class LocalCLIPConditioningWrapper:
     def get_learned_conditioning(self, texts):
         return self.encode(texts)
 
+    def encode_a1111_conditioning(self, texts, *, forced_segments_by_prompt=None):
+        return encode_a1111_clip_batch(
+            tokenizer=self.tokenizer,
+            text_encoder=self.text_encoder,
+            prompts=list(texts),
+            hidden_state_index=None,
+            forced_segments_by_prompt=forced_segments_by_prompt,
+        )
+
+    def a1111_prompt_capabilities(self) -> A1111PromptCapabilities:
+        return A1111PromptCapabilities(
+            architecture="sd1.x",
+            attention=True,
+            composable_and=True,
+            schedules=True,
+            alternation=True,
+            chunk_break=True,
+            long_clip_chunking=True,
+            clip_streams=("clip",),
+        )
+
     def semantic_conditioning_capabilities(self) -> SemanticConditioningCapabilities:
         return SemanticConditioningCapabilities(
             architecture="sd1.x",
@@ -49,5 +71,6 @@ class LocalCLIPConditioningWrapper:
     def contract_metadata(self) -> dict:
         return {
             "architecture": "sd1.x",
+            "a1111_prompt_capabilities": self.a1111_prompt_capabilities().to_dict(),
             "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
         }

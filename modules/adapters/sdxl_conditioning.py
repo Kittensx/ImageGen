@@ -6,6 +6,8 @@ from typing import Any, Iterable
 import torch
 
 from image_gen.contracts.model_conditioning import SemanticConditioningCapabilities
+from modules.adapters.a1111_clip_conditioning import A1111PromptCapabilities, encode_a1111_clip_batch
+from modules.prompt_parsers.a1111_semantics import a1111_plain_text
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,95 @@ class SDXLConditioningRuntime:
             "pooled": result.pooled,
         }
 
+    def encode_a1111_conditioning(self, texts: Iterable[str], *, forced_segments_by_prompt=None) -> dict[str, torch.Tensor]:
+        prompts = [str(value or "") for value in texts]
+        if not prompts:
+            raise ValueError("SDXL A1111 conditioning requires at least one prompt.")
+        forced = list(forced_segments_by_prompt or [None] * len(prompts))
+        if len(forced) != len(prompts):
+            raise ValueError("forced_segments_by_prompt must match the SDXL prompt batch length.")
+        hidden_1 = encode_a1111_clip_batch(
+            tokenizer=self.tokenizer, text_encoder=self.text_encoder, prompts=prompts,
+            hidden_state_index=-2, forced_segments_by_prompt=forced,
+        )
+        hidden_2 = encode_a1111_clip_batch(
+            tokenizer=self.tokenizer_2, text_encoder=self.text_encoder_2, prompts=prompts,
+            hidden_state_index=-2, forced_segments_by_prompt=forced,
+        )
+
+        target_tokens = max(int(hidden_1.shape[1]), int(hidden_2.shape[1]))
+        def pad_stream(value: torch.Tensor, *, tokenizer, text_encoder) -> torch.Tensor:
+            missing = target_tokens - int(value.shape[1])
+            if missing <= 0:
+                return value
+            if missing % self.CONTEXT_LENGTH:
+                raise RuntimeError("SDXL A1111 CLIP streams are not aligned to 77-token chunks.")
+            empty = encode_a1111_clip_batch(
+                tokenizer=tokenizer, text_encoder=text_encoder, prompts=[""] * len(prompts),
+                hidden_state_index=-2,
+            )
+            repeats = missing // self.CONTEXT_LENGTH
+            return torch.cat([value, empty.repeat(1, repeats, 1)], dim=1)
+
+        hidden_1 = pad_stream(hidden_1, tokenizer=self.tokenizer, text_encoder=self.text_encoder)
+        hidden_2 = pad_stream(hidden_2, tokenizer=self.tokenizer_2, text_encoder=self.text_encoder_2)
+        hidden_1 = hidden_1.to(device=hidden_2.device, dtype=hidden_2.dtype)
+        cross_attention = torch.cat([hidden_1, hidden_2], dim=-1)
+
+        pooled_prompts = []
+        for prompt, segments in zip(prompts, forced):
+            source = " ".join(str(item or "") for item in segments) if segments is not None else prompt
+            pooled_prompts.append(a1111_plain_text(source))
+        pooled = self.encode_batch_result(pooled_prompts).pooled.to(
+            device=hidden_2.device, dtype=hidden_2.dtype
+        )
+        if not torch.isfinite(cross_attention).all() or not torch.isfinite(pooled).all():
+            raise RuntimeError("SDXL A1111 conditioning contains NaN or Inf values.")
+        return {"cross_attention": cross_attention, "pooled": pooled}
+
+    def a1111_prompt_capabilities(self) -> A1111PromptCapabilities:
+        return A1111PromptCapabilities(
+            architecture="sdxl", attention=True, composable_and=True, schedules=True, alternation=True,
+            chunk_break=True, long_clip_chunking=True, clip_streams=("clip_l", "openclip_g"),
+            pooled_policy="whole_lowered_prompt_once",
+        )
+
+    def encode_chunk_break_conditioning(
+        self,
+        segments: Iterable[str],
+        *,
+        full_prompt: str,
+    ) -> dict[str, torch.Tensor]:
+        """Encode a forced BREAK using SDXL's native dual-CLIP contract.
+
+        BREAK applies to the token/cross-attention streams: every segment is
+        encoded as an independent 77-position CLIP chunk and those chunks are
+        concatenated in sequence order. The pooled/global projection is *not*
+        averaged from segment pooled vectors. It is encoded once from the
+        already-lowered prompt with BREAK removed, preserving one native pooled
+        vector for the semantic branch.
+        """
+
+        texts = [str(value or "") for value in segments]
+        if len(texts) < 2 or not all(value.strip() for value in texts):
+            raise ValueError("SDXL BREAK conditioning requires at least two non-empty segments.")
+        whole_text = str(full_prompt or "").strip()
+        if not whole_text:
+            raise ValueError("SDXL BREAK conditioning requires non-empty full_prompt text.")
+
+        segment_result = self.encode_batch_result(texts)
+        whole_result = self.encode_batch_result([whole_text])
+        cross_attention = torch.cat(
+            [segment_result.cross_attention[index] for index in range(len(texts))],
+            dim=0,
+        )
+        pooled = whole_result.pooled[0]
+        if not torch.isfinite(cross_attention).all():
+            raise RuntimeError("SDXL BREAK cross-attention conditioning contains NaN or Inf values.")
+        if not torch.isfinite(pooled).all():
+            raise RuntimeError("SDXL BREAK pooled conditioning contains NaN or Inf values.")
+        return {"cross_attention": cross_attention, "pooled": pooled}
+
     def get_learned_conditioning(self, texts: Iterable[str]) -> dict[str, torch.Tensor]:
         return self.encode_batch(texts)
 
@@ -251,5 +342,11 @@ class SDXLConditioningRuntime:
         return {
             "architecture": "sdxl",
             "encoder_mode": "clip_l_openclip_g",
+            "a1111_prompt_capabilities": self.a1111_prompt_capabilities().to_dict(),
+            "chunk_break_policy": {
+                "algorithm": "encoder_chunk_break_v1",
+                "clip_streams": "forced_77_position_segments",
+                "pooled": "whole_lowered_prompt_once",
+            },
             "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
         }

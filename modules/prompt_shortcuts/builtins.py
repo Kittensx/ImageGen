@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.prompt_shortcuts.contracts import PromptShortcutProfileDescriptor
+from modules.prompt_shortcuts.contracts import (
+    DEFAULT_LEGACY_SEMANTIC_MODES,
+    PromptShortcutProfileDescriptor,
+)
 
 _COMMON_PALETTE: tuple[dict[str, Any], ...] = (
     {"id": "attention", "label": "( )", "operator": "ATTENTION", "kind": "wrap", "prefix": "(", "suffix": ")", "placeholder": "subject", "description": "Increase attention using parentheses.", "example": "(subject)"},
@@ -89,6 +92,36 @@ def _emitters() -> dict[str, dict[str, str]]:
     }
 
 
+def _legacy_break_emitter(emitters: dict[str, dict[str, str]]) -> dict[str, str]:
+    """Extend the production Legacy profile with typed BREAK emission only."""
+
+    return {
+        **emitters["legacy"],
+        "BREAK": "BREAK",
+    }
+
+
+def _ppsr09e_legacy_emitter(emitters: dict[str, dict[str, str]]) -> dict[str, str]:
+    """Extend Legacy emission only for provisional PPSR-09E profiles.
+
+    Existing built-in profiles must retain their Phase-04 mapping hashes for
+    replay/profile-snapshot compatibility, so the experimental tokens are not
+    added to the shared emitter table above.
+    """
+
+    return {
+        **emitters["legacy"],
+        "AVERAGE_SET": "||",
+        "BREAK": "BREAK",
+    }
+
+
+def _semantic_modes(**overrides: str) -> dict[str, str]:
+    modes = dict(DEFAULT_LEGACY_SEMANTIC_MODES)
+    modes.update({str(key): str(value) for key, value in overrides.items()})
+    return modes
+
+
 def builtin_prompt_shortcut_profiles() -> tuple[PromptShortcutProfileDescriptor, ...]:
     emitters = _emitters()
     return (
@@ -121,9 +154,10 @@ def builtin_prompt_shortcut_profiles() -> tuple[PromptShortcutProfileDescriptor,
         PromptShortcutProfileDescriptor(
             profile_id="legacy_default",
             label="Legacy Default",
-            version="2",
+            version="3",
             aliases={
                 "AND": ("AND",),
+                "BREAK": ("BREAK",),
                 "GROUP_OPEN": ("{",),
                 "GROUP_CLOSE": ("}",),
                 "SEQUENCE": ("::",),
@@ -131,9 +165,13 @@ def builtin_prompt_shortcut_profiles() -> tuple[PromptShortcutProfileDescriptor,
                 "CLOSE": ("!",),
                 "TOP_CLOSE": ("!!",),
             },
-            parser_emitters={"legacy": emitters["legacy"]},
+            parser_emitters={"legacy": _legacy_break_emitter(emitters)},
             compatible_parsers=("legacy",),
-            description="Preserves the IMAGE_GEN legacy prompt syntax modeled from the customized A1111 parser.",
+            semantic_modes=_semantic_modes(break_mode="encoder_chunk_break_v1"),
+            description=(
+                "Preserves IMAGE_GEN legacy prompt syntax while using the corrected typed "
+                "BREAK chunk-boundary runtime across supported model families."
+            ),
             palette=tuple(item for item in _COMMON_PALETTE if not item.get("parsers") or "legacy" in item.get("parsers", [])),
         ),
         PromptShortcutProfileDescriptor(
@@ -212,6 +250,131 @@ def builtin_prompt_shortcut_profiles() -> tuple[PromptShortcutProfileDescriptor,
             description="Native SuperHybrid operators.",
             palette=_COMMON_PALETTE,
         ),
+        PromptShortcutProfileDescriptor(
+            profile_id="imagegen_next",
+            label="ImageGen Next (PPSR-09E Experimental)",
+            version="09e-1",
+            aliases={
+                "AND": ("AND",),
+                "AVERAGE_SET": ("||",),
+                "BREAK": ("BREAK",),
+                "GROUP_OPEN": ("{",),
+                "GROUP_CLOSE": ("}",),
+                "SEQUENCE": ("::",),
+                "DEEP_SEQUENCE": (":::" ,),
+                "CLOSE": ("!",),
+                "TOP_CLOSE": ("!!",),
+            },
+            parser_emitters={"legacy": _ppsr09e_legacy_emitter(emitters)},
+            compatible_parsers=("legacy",),
+            semantic_modes=_semantic_modes(
+                average_surface="double_pipe_v1",
+                average_composition="branch_average_v1",
+                and_composition="a1111_composable_guidance_v1",
+                break_mode="encoder_chunk_break_v1",
+                double_quote_scope="literal_text_scope_v1",
+                single_quote_scope="semantic_scope_v1",
+            ),
+            description=(
+                "Experimental PPSR-09E profile. Keeps ordinary braces on historical "
+                "branch averaging while qualifying ||, composable AND, and BREAK."
+            ),
+            palette=_COMMON_PALETTE,
+        ),
+        PromptShortcutProfileDescriptor(
+            profile_id="a1111_compatible",
+            label="A1111 Compatible",
+            version="10b-1",
+            aliases={
+                "AND": ("AND",),
+                "BREAK": ("BREAK",),
+            },
+            parser_emitters={
+                "legacy": {
+                    "AND": "AND",
+                    "BREAK": "BREAK",
+                }
+            },
+            compatible_parsers=("legacy",),
+            semantic_modes=_semantic_modes(
+                attention_algorithm="a1111_attention_v1",
+                and_composition="a1111_composable_guidance_v1",
+                group_composition="literal",
+                relation_mode="literal",
+                break_mode="encoder_chunk_break_v1",
+                schedule_algorithm="a1111_schedule_v1",
+                alternate_algorithm="a1111_alternate_v1",
+                clip_chunking="a1111_clip_chunk_v1",
+            ),
+            preprocessing={
+                "pipeline": "a1111_compat_preprocess_v1",
+                "style_template": "a1111_prompt_placeholder_v1",
+                "extra_networks": "imagegen_runtime_asset_adapter",
+                "prompt_matrix": "queue_expansion_followup",
+                "comments": "preserve",
+            },
+            description=(
+                "PPSR-10B A1111-compatible prompt style: A1111 attention, schedules, "
+                "alternation, composable AND, BREAK and long-CLIP chunking. Prompt matrix "
+                "remains a separate queue-expansion feature."
+            ),
+            palette=tuple(
+                item for item in _COMMON_PALETTE
+                if item.get("id") in {"attention", "deemphasis", "weight", "alternate", "schedule", "and"}
+            ) + (
+                {
+                    "id": "break",
+                    "operator": "BREAK",
+                    "kind": "insert",
+                    "insert": " BREAK ",
+                    "description": "Force the current A1111 CLIP chunk to flush before continuing.",
+                    "example": "foreground BREAK background",
+                },
+            ),
+        ),
+        PromptShortcutProfileDescriptor(
+            profile_id="a1111_compatible_test",
+            label="A1111 Compatible (PPSR-09E Test)",
+            version="09e-1",
+            aliases={
+                "AND": ("AND",),
+                "BREAK": ("BREAK",),
+                "AVERAGE_SET": ("||",),
+            },
+            parser_emitters={"legacy": _ppsr09e_legacy_emitter(emitters)},
+            compatible_parsers=("legacy",),
+            semantic_modes=_semantic_modes(
+                average_surface="double_pipe_v1",
+                and_composition="a1111_composable_guidance_v1",
+                break_mode="encoder_chunk_break_v1",
+            ),
+            description="Experimental A1111 parity snapshot used by PPSR-09E qualification.",
+            palette=_COMMON_PALETTE,
+        ),
+        PromptShortcutProfileDescriptor(
+            profile_id="comfyui_compatible_test",
+            label="ComfyUI Compatible (PPSR-09E Test)",
+            version="09e-1",
+            aliases={
+                "AVERAGE_SET": ("||",),
+            },
+            parser_emitters={"legacy": _ppsr09e_legacy_emitter(emitters)},
+            compatible_parsers=("legacy",),
+            semantic_modes=_semantic_modes(
+                average_surface="double_pipe_v1",
+                and_composition="literal",
+                break_mode="literal",
+                dynamic_choice="comfy_frontend_random_v1",
+            ),
+            preprocessing={
+                "pipeline": "comfy_frontend_dynamic_prompt_v1",
+                "dynamic_choice": "enabled",
+                "comments": "strip",
+            },
+            reserved_syntax=("{", "}"),
+            description="Experimental ComfyUI compatibility snapshot; not a production preset.",
+            palette=_COMMON_PALETTE,
+        ),
     )
 
 
@@ -266,6 +429,42 @@ BUILTIN_PARSER_PRESETS: tuple[dict[str, object], ...] = (
         "name": "SuperHybrid Native",
         "prompt_parser_name": "superhybrid",
         "shortcut_profile_name": "superhybrid_native",
+        "prompt_parser_kwargs": {},
+        "fallback_policy": "fail",
+        "hires_inheritance": "same_as_base",
+    },
+    {
+        "preset_id": "imagegen_next",
+        "name": "ImageGen Next (PPSR-09E Experimental)",
+        "prompt_parser_name": "legacy",
+        "shortcut_profile_name": "imagegen_next",
+        "prompt_parser_kwargs": {},
+        "fallback_policy": "fail",
+        "hires_inheritance": "same_as_base",
+    },
+    {
+        "preset_id": "a1111_compatible",
+        "name": "A1111 Compatible",
+        "prompt_parser_name": "legacy",
+        "shortcut_profile_name": "a1111_compatible",
+        "prompt_parser_kwargs": {},
+        "fallback_policy": "fail",
+        "hires_inheritance": "same_as_base",
+    },
+    {
+        "preset_id": "a1111_compatible_test",
+        "name": "A1111 Compatible (PPSR-09E Test)",
+        "prompt_parser_name": "legacy",
+        "shortcut_profile_name": "a1111_compatible_test",
+        "prompt_parser_kwargs": {},
+        "fallback_policy": "fail",
+        "hires_inheritance": "same_as_base",
+    },
+    {
+        "preset_id": "comfyui_compatible_test",
+        "name": "ComfyUI Compatible (PPSR-09E Test)",
+        "prompt_parser_name": "legacy",
+        "shortcut_profile_name": "comfyui_compatible_test",
         "prompt_parser_kwargs": {},
         "fallback_policy": "fail",
         "hires_inheritance": "same_as_base",

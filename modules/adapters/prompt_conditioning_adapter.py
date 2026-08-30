@@ -57,6 +57,7 @@ from modules.adapters.local_clip_conditioning_wrapper import LocalCLIPConditioni
 from modules.adapters.sd2_openclip_conditioning import SD2OpenCLIPConditioningRuntime
 from modules.adapters.sdxl_conditioning import SDXLConditioningRuntime
 from modules.adapters.sd3_conditioning import SD3ConditioningRuntime
+from modules.prompt_shortcuts.preprocessing import preprocess_prompt_for_profile
 from image_gen.contracts.model_conditioning import (
     SemanticConditioningCapabilities,
     semantic_conditioning_capabilities_for_runtime,
@@ -89,6 +90,110 @@ class StepConditioningResolver:
     negative_multicond: MulticondLearnedConditioning
     total_steps: int
     semantic_capabilities: SemanticConditioningCapabilities | None = None
+
+    def has_composable_guidance(self) -> bool:
+        for batch_items in self.positive_multicond.batch:
+            for item in batch_items:
+                if str(getattr(item, "composition_mode", "") or "").startswith("a1111_composable"):
+                    return True
+        return False
+
+    def _composable_branch_indexes(self) -> tuple[int, ...]:
+        indexes: set[int] = set()
+        for batch_items in self.positive_multicond.batch:
+            for item in batch_items:
+                if not str(getattr(item, "composition_mode", "") or "").startswith("a1111_composable"):
+                    continue
+                branch_index = getattr(item, "composition_branch_index", None)
+                if branch_index is None:
+                    raise ValueError("Composable AND branch is missing composition_branch_index metadata.")
+                indexes.add(int(branch_index))
+        return tuple(sorted(indexes))
+
+    def resolve_composable(self, step_index: int, *, value_key: str | None = "cross_attention") -> dict[str, Any] | None:
+        """Resolve independent A1111 composable branches without averaging them.
+
+        Local group/sequence semantics inside each AND branch are allowed to
+        collapse normally. The top-level AND branches themselves remain
+        separate tensors until the denoiser combines model predictions.
+        """
+
+        branch_indexes = self._composable_branch_indexes()
+        if not branch_indexes:
+            return None
+
+        operation_ids = {
+            str(getattr(item, "composition_operation_id", "") or "")
+            for batch_items in self.positive_multicond.batch
+            for item in batch_items
+            if str(getattr(item, "composition_mode", "") or "").startswith("a1111_composable")
+        }
+        algorithms = {
+            str(getattr(item, "composition_algorithm", "") or "")
+            for batch_items in self.positive_multicond.batch
+            for item in batch_items
+            if str(getattr(item, "composition_mode", "") or "").startswith("a1111_composable")
+        }
+        if len(operation_ids) != 1 or len(algorithms) != 1:
+            raise ValueError("Composable AND metadata must use one operation ID and algorithm per prompt batch.")
+
+        resolved_branches: list[Any] = []
+        branch_weights: list[float] = []
+        for branch_index in branch_indexes:
+            filtered_batches = []
+            weights_for_branch: list[float] = []
+            for batch_items in self.positive_multicond.batch:
+                selected = [
+                    item
+                    for item in batch_items
+                    if int(getattr(item, "composition_branch_index", -1)) == branch_index
+                ]
+                if not selected:
+                    raise ValueError(
+                        f"Composable AND branch {branch_index} is missing from one batch slot."
+                    )
+                selected_weights = {float(getattr(item, "weight", 1.0)) for item in selected}
+                if len(selected_weights) != 1:
+                    raise ValueError(
+                        f"Composable AND branch {branch_index} has inconsistent branch weights."
+                    )
+                weights_for_branch.append(next(iter(selected_weights)))
+                # Strip the top-level composition weight before local
+                # group/sequence collapse so it cannot participate in a
+                # normalized embedding average.
+                local_items = []
+                for item in selected:
+                    clone = SimpleNamespace(**item.__dict__)
+                    clone.weight = 1.0
+                    local_items.append(clone)
+                filtered_batches.append(local_items)
+            if any(abs(value - weights_for_branch[0]) > 1e-8 for value in weights_for_branch[1:]):
+                raise ValueError(
+                    f"Composable AND branch {branch_index} weights differ across batch slots."
+                )
+            branch_multicond = MulticondLearnedConditioning(
+                shape=self.positive_multicond.shape,
+                batch=filtered_batches,
+            )
+            resolved_branches.append(
+                self._resolve_multicond_for_step(branch_multicond, step_index, value_key=value_key)
+            )
+            branch_weights.append(float(weights_for_branch[0]))
+
+        uncond = self._resolve_multicond_for_step(
+            self.negative_multicond,
+            step_index,
+            value_key=value_key,
+        )
+        return {
+            "operation_id": next(iter(operation_ids)),
+            "mode": "a1111_composable_guidance",
+            "algorithm": next(iter(algorithms)),
+            "branches": tuple(resolved_branches),
+            "weights": tuple(branch_weights),
+            "branch_indexes": branch_indexes,
+            "uncond": uncond,
+        }
 
     def _select_schedule_cond(
         self,
@@ -231,6 +336,9 @@ class StepConditioningResolver:
                         "outer_weight": base_outer_weight,
                         "group_operation_id": getattr(item, "group_operation_id", None),
                         "group_local_weight": float(getattr(item, "group_local_weight", 1.0)),
+                        "average_operation_id": getattr(item, "average_operation_id", None),
+                        "average_local_weight": float(getattr(item, "average_local_weight", 1.0)),
+                        "average_branch_index": getattr(item, "average_branch_index", None),
                         "sequence_operation_id": getattr(item, "sequence_operation_id", None),
                         "sequence_local_weight": float(getattr(item, "sequence_local_weight", 1.0)),
                         "sequence_item_index": getattr(item, "sequence_item_index", None),
@@ -257,6 +365,9 @@ class StepConditioningResolver:
                 reference_sequence = ensure_consistent(members, "sequence_operation_id", "Group", group_id)
                 reference_sequence_weight = ensure_consistent(members, "sequence_local_weight", "Group", group_id)
                 reference_sequence_index = ensure_consistent(members, "sequence_item_index", "Group", group_id)
+                reference_average = ensure_consistent(members, "average_operation_id", "Group", group_id)
+                reference_average_weight = ensure_consistent(members, "average_local_weight", "Group", group_id)
+                reference_average_index = ensure_consistent(members, "average_branch_index", "Group", group_id)
                 active_members = [item for item in members if item["active"]]
                 if not active_members:
                     continue
@@ -271,6 +382,9 @@ class StepConditioningResolver:
                         "outer_weight": reference_outer,
                         "group_operation_id": None,
                         "group_local_weight": 1.0,
+                        "average_operation_id": reference_average,
+                        "average_local_weight": reference_average_weight,
+                        "average_branch_index": reference_average_index,
                         "sequence_operation_id": reference_sequence,
                         "sequence_local_weight": reference_sequence_weight,
                         "sequence_item_index": reference_sequence_index,
@@ -279,19 +393,30 @@ class StepConditioningResolver:
 
             # Then collapse relation/owner sequences. Only active members are
             # averaged; their local weights are renormalized at this step.
-            components = []
+            components: list[dict[str, Any]] = []
             consumed_sequences = set()
             for entry in group_collapsed:
                 sequence_id = entry["sequence_operation_id"]
                 if not sequence_id:
                     if entry["active"]:
-                        components.append((entry["tensor"], entry["outer_weight"]))
+                        components.append(
+                            {
+                                "tensor": entry["tensor"],
+                                "outer_weight": entry["outer_weight"],
+                                "average_operation_id": entry["average_operation_id"],
+                                "average_local_weight": entry["average_local_weight"],
+                                "average_branch_index": entry["average_branch_index"],
+                            }
+                        )
                     continue
                 if sequence_id in consumed_sequences:
                     continue
                 consumed_sequences.add(sequence_id)
                 members = [item for item in group_collapsed if item["sequence_operation_id"] == sequence_id]
                 reference_outer = ensure_consistent(members, "outer_weight", "Sequence", sequence_id)
+                reference_average = ensure_consistent(members, "average_operation_id", "Sequence", sequence_id)
+                reference_average_weight = ensure_consistent(members, "average_local_weight", "Sequence", sequence_id)
+                reference_average_index = ensure_consistent(members, "average_branch_index", "Sequence", sequence_id)
                 active_members = [item for item in members if item["active"]]
                 if not active_members:
                     continue
@@ -299,20 +424,92 @@ class StepConditioningResolver:
                     [item["tensor"] for item in active_members],
                     [float(item["sequence_local_weight"]) for item in active_members],
                 )
-                components.append((sequence_tensor, reference_outer))
+                components.append(
+                    {
+                        "tensor": sequence_tensor,
+                        "outer_weight": reference_outer,
+                        "average_operation_id": reference_average,
+                        "average_local_weight": reference_average_weight,
+                        "average_branch_index": reference_average_index,
+                    }
+                )
 
             if not components:
                 raise ValueError("No active conditioning components found for this sampling step.")
 
+            # PPSR-09E AverageSet is the next outer semantic scope. Each ``||``
+            # branch is first completed locally (including group/relationship
+            # components), then the completed branch tensors are normalized by
+            # the AverageSet's own local weights. This preserves the historical
+            # brace-average math without making branch complexity affect weight.
+            average_collapsed: list[dict[str, Any]] = []
+            consumed_averages: set[str] = set()
+            for entry in components:
+                average_id = entry["average_operation_id"]
+                if not average_id:
+                    average_collapsed.append(entry)
+                    continue
+                if average_id in consumed_averages:
+                    continue
+                consumed_averages.add(str(average_id))
+                average_members = [
+                    item for item in components if item["average_operation_id"] == average_id
+                ]
+                branch_indexes = sorted(
+                    {
+                        int(item["average_branch_index"])
+                        for item in average_members
+                        if item["average_branch_index"] is not None
+                    }
+                )
+                if not branch_indexes:
+                    raise ValueError(f"AverageSet operation {average_id!r} has no branch indexes.")
+                branch_tensors: list[torch.Tensor] = []
+                branch_local_weights: list[float] = []
+                for branch_index in branch_indexes:
+                    branch_members = [
+                        item
+                        for item in average_members
+                        if int(item["average_branch_index"]) == branch_index
+                    ]
+                    local_weight = ensure_consistent(
+                        branch_members,
+                        "average_local_weight",
+                        "AverageSet branch",
+                        f"{average_id}:{branch_index}",
+                    )
+                    branch_tensors.append(
+                        weighted_average(
+                            [item["tensor"] for item in branch_members],
+                            [float(item["outer_weight"]) for item in branch_members],
+                        )
+                    )
+                    branch_local_weights.append(float(local_weight))
+                average_collapsed.append(
+                    {
+                        "tensor": weighted_average(branch_tensors, branch_local_weights),
+                        "outer_weight": 1.0,
+                        "average_operation_id": None,
+                        "average_local_weight": 1.0,
+                        "average_branch_index": None,
+                    }
+                )
+
             combined = weighted_average(
-                [item[0] for item in components],
-                [float(item[1]) for item in components],
+                [item["tensor"] for item in average_collapsed],
+                [float(item["outer_weight"]) for item in average_collapsed],
             )
             batch_outputs.append(combined)
 
         return torch.stack(batch_outputs, dim=0)
 
     def resolve(self, step_index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        composable = self.resolve_composable(step_index, value_key="cross_attention")
+        if composable is not None:
+            # Static ConditioningOutput fields exist for pipeline compatibility,
+            # but the sampler must use the dedicated composable payload. Never
+            # pre-average top-level AND branches here.
+            return composable["branches"][0], composable["uncond"]
         cond = self._resolve_multicond_for_step(
             self.positive_multicond, step_index, value_key="cross_attention"
         )
@@ -322,6 +519,9 @@ class StepConditioningResolver:
         return cond, uncond
 
     def resolve_pooled(self, step_index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        composable = self.resolve_composable(step_index, value_key="pooled")
+        if composable is not None:
+            return composable["branches"][0], composable["uncond"]
         cond = self._resolve_multicond_for_step(
             self.positive_multicond, step_index, value_key="pooled"
         )
@@ -462,10 +662,17 @@ class PromptConditioningAdapter(PromptAdapter):
     def _shortcut_profile(self, request: Any, *, parser_id: str) -> PromptShortcutProfileDescriptor:
         snapshot = dict(getattr(request, "prompt_shortcut_profile_snapshot", {}) or {})
         if snapshot:
-            profile = PromptShortcutProfileDescriptor.from_dict(
-                snapshot,
-                builtin=bool(snapshot.get("builtin", False)),
-            )
+            try:
+                profile = PromptShortcutProfileDescriptor.from_snapshot(
+                    snapshot,
+                    builtin=bool(snapshot.get("builtin", False)),
+                )
+            except ValueError as exc:
+                raise PromptShortcutError(
+                    "Embedded prompt shortcut profile snapshot failed integrity validation.",
+                    error_kind="invalid_shortcut_profile_snapshot",
+                    diagnostics={"reason": str(exc)},
+                ) from exc
             validation = validate_prompt_shortcut_profile(profile)
             if not validation.valid:
                 raise PromptShortcutError(
@@ -708,6 +915,12 @@ class PromptConditioningAdapter(PromptAdapter):
         request.base_prompt_parser_name = descriptor.parser_id
         shortcut_profile = self._shortcut_profile(request, parser_id=descriptor.parser_id)
         request.base_shortcut_profile_name = shortcut_profile.profile_id
+        parser_options = {
+            **dict(parser_options or {}),
+            "_prompt_style_profile_id": shortcut_profile.profile_id,
+            "_prompt_style_semantic_modes": dict(shortcut_profile.semantic_modes),
+            "_prompt_style_preprocessing": dict(shortcut_profile.preprocessing),
+        }
         pass_name = "hires" if bool(getattr(request, "_is_hires_request", False)) else "base"
         expansion_record: dict[str, Any] = {}
         expanded_positive_prompt = str(request.positive_prompt or "")
@@ -887,24 +1100,39 @@ class PromptConditioningAdapter(PromptAdapter):
             ) from exc
         expanded_positive_prompt = expanded_positive_slots[0]
 
+        style_template = str(parser_options.get("a1111_style_template") or "")
+        positive_preprocessing = [
+            preprocess_prompt_for_profile(prompt, profile=shortcut_profile, style_template=style_template)
+            for prompt in expanded_positive_slots
+        ]
+        negative_preprocessing = [
+            preprocess_prompt_for_profile(prompt, profile=shortcut_profile, style_template=style_template)
+            for prompt in expanded_negative_slots
+        ]
         positive_translations = [
             self.shortcut_translator.translate(
-                prompt,
+                item.resolved_prompt,
                 profile=shortcut_profile,
                 parser_id=descriptor.parser_id,
                 prompt_role="positive",
             )
-            for prompt in expanded_positive_slots
+            for item in positive_preprocessing
         ]
         negative_translations = [
             self.shortcut_translator.translate(
-                prompt,
+                item.resolved_prompt,
                 profile=shortcut_profile,
                 parser_id=descriptor.parser_id,
                 prompt_role="negative",
             )
-            for prompt in expanded_negative_slots
+            for item in negative_preprocessing
         ]
+        for translation, preprocessing in zip(positive_translations, positive_preprocessing):
+            translation.canonical_structure["preprocessing_result"] = preprocessing.to_dict()
+            translation.diagnostics["preprocessing_result"] = preprocessing.to_dict()
+        for translation, preprocessing in zip(negative_translations, negative_preprocessing):
+            translation.canonical_structure["preprocessing_result"] = preprocessing.to_dict()
+            translation.diagnostics["preprocessing_result"] = preprocessing.to_dict()
         positive_translation = positive_translations[0]
         negative_translation = negative_translations[0]
         if state is not None and hasattr(state, "p"):
@@ -1448,15 +1676,13 @@ class PromptConditioningAdapter(PromptAdapter):
             state.p.cond = cond0
             state.p.uncond = uncond0
             state.p.prompt_schedules = prompt_schedules
-            
-       
-            cond = state.p.cond
-            uncond = state.p.uncond
-            diff = (cond - uncond).abs().mean().item()
-            
-            
-           
-        
+
+        # Do not assume positive and negative conditioning have identical token
+        # sequence lengths.  A typed BREAK can intentionally produce (for
+        # example) a 154-position positive CLIP context while the unconditional
+        # prompt remains 77 positions.  Guidance evaluates those branches
+        # independently, so an eager diagnostic subtraction here is both unused
+        # and invalid for qualified long-prompt conditioning.
         return ConditioningOutput(
             cond=cond0,
             uncond=uncond0,

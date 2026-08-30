@@ -287,6 +287,13 @@ def _minimal_model_provenance(manifest: GenerationManifest) -> dict[str, Any]:
         "conditioning_dimension": source.get("conditioning_dimension"),
         "checkpoint_kind": source.get("checkpoint_kind"),
         "dtype": source.get("dtype"),
+        "composition_sha256": source.get("composition_sha256"),
+        "composition_identity_version": source.get("composition_identity_version"),
+        "composition_contract": source.get("composition_contract"),
+        "component_sources": source.get("component_sources"),
+        "composition_projection": source.get("composition_projection"),
+        "advanced_model_composition_sha256": source.get("advanced_model_composition_sha256"),
+        "runtime_checkpoint_identity": source.get("runtime_checkpoint_identity"),
     }
     return _drop_empty(output)
 

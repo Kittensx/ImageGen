@@ -14,6 +14,7 @@ from modules.contracts import SamplerCapabilities, SamplerOutput
 
 from modules.pipeline.conditioning_utils import (
     call_with_optional_model_conditioning,
+    resolve_step_composable_conditioning,
     resolve_step_conditioning,
     resolve_step_model_conditioning,
 )
@@ -130,19 +131,30 @@ class SimpleEulerSampler(SamplerTraceMixin):
 
             latent_before = x.detach()
 
-            # 🔑 Stepwise conditioning
-            cond, uncond = resolve_step_conditioning(
-                conditioning=conditioning,
-                step_index=i,
-                latents=x,
-                state=state,
-            )
-            model_conditioning = resolve_step_model_conditioning(
-                conditioning=conditioning,
-                step_index=i,
+            composable = resolve_step_composable_conditioning(
+                conditioning,
+                i,
                 latents=x,
                 request=request,
             )
+            if composable is None:
+                # 🔑 Stepwise conditioning
+                cond, uncond = resolve_step_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=x,
+                    state=state,
+                )
+                model_conditioning = resolve_step_model_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=x,
+                    request=request,
+                )
+            else:
+                cond = composable["branches"][0]
+                uncond = composable["uncond"]
+                model_conditioning = None
 
             if i == 0:
                 resolver = getattr(conditioning, "extra", {}).get("resolver", None)
@@ -188,11 +200,35 @@ class SimpleEulerSampler(SamplerTraceMixin):
                 else []
             )
 
+            if composable is not None and active_regions:
+                raise ValueError(
+                    "PPSR-09E composable AND and REGION guidance are not qualified together."
+                )
+
             regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
 
             # Pipeline-owned CFG remains canonical; REGION replaces only the
             # conditional model output before CFG is applied.
-            if active_regions:
+            if composable is not None:
+                composable_guided = getattr(
+                    guided_model_fn, "predict_composable_guided_noise", None
+                )
+                if not callable(composable_guided):
+                    raise TypeError(
+                        "Simple Euler requires predict_composable_guided_noise for PPSR-09E AND."
+                    )
+                noise = composable_guided(
+                    x,
+                    sigma,
+                    timestep,
+                    composable["branches"],
+                    composable["weights"],
+                    composable["uncond"],
+                    step_effective_cfg_scale,
+                    composable["branch_model_conditioning"],
+                    composable["uncond_model_conditioning"],
+                )
+            elif active_regions:
                 regional_guided = getattr(guided_model_fn, "predict_regional_guided_noise", None)
                 if not callable(regional_guided):
                     raise TypeError("The denoising system does not provide native regional guidance.")
@@ -246,6 +282,17 @@ class SimpleEulerSampler(SamplerTraceMixin):
                     "integration_mode": self.SAMPLER_NAME,
                     "regional_guidance_active": bool(active_regions),
                     "regional_active_count": len(active_regions),
+                    "composition_mode": (
+                        str(composable.get("mode") or "") if composable is not None else "standard"
+                    ),
+                    "composition_branch_count": (
+                        len(composable.get("branches") or ()) if composable is not None else 1
+                    ),
+                    "logical_model_evaluations": (
+                        len(composable.get("branches") or ()) + 1
+                        if composable is not None
+                        else 2
+                    ),
                 },
             )
             self._emit_live_preview(

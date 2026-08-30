@@ -113,6 +113,18 @@ Standard schedule/alternate forms are also compiled before text encoding:
 
 Integer, fractional, percentage, weight, and quantity values are typed by their grammar location rather than by an integer-versus-decimal guess.
 
+### Legacy BREAK
+
+The Legacy Default profile now treats uppercase `BREAK` as a real encoder chunk boundary rather than ordinary prompt text. The same typed BREAK runtime is used across supported SD1, SDXL, and SD3/SD3.5 conditioning families. Other Legacy semantics are unchanged: Legacy `AND` still uses its historical normalized composition behavior, and `||` plus the new quote scopes are not enabled by this change.
+
+For example:
+
+```text
+portrait BREAK city
+```
+
+encodes the two text segments independently for the fixed-context CLIP stream and joins them according to the active model-family BREAK contract.
+
 ## Semantic Structure inspector
 
 Prompt Inspector now includes a **Semantic Structure** card for base and hires positive/negative prompts. It shows:

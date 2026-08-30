@@ -13,6 +13,7 @@ from image_gen.systems.guidance import (
 
 from modules.pipeline.conditioning_utils import (
     call_with_optional_model_conditioning,
+    resolve_step_composable_conditioning,
     resolve_step_conditioning,
     resolve_step_model_conditioning,
 )
@@ -439,18 +440,29 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
 
             latent_before = x.detach()
             model_x = x.to(dtype=model_input_dtype)
-            cond, uncond = resolve_step_conditioning(
-                conditioning=conditioning,
-                step_index=i,
-                latents=model_x,
-                state=state,
-            )
-            model_conditioning = resolve_step_model_conditioning(
-                conditioning=conditioning,
-                step_index=i,
+            composable = resolve_step_composable_conditioning(
+                conditioning,
+                i,
                 latents=model_x,
                 request=request,
             )
+            if composable is None:
+                cond, uncond = resolve_step_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=model_x,
+                    state=state,
+                )
+                model_conditioning = resolve_step_model_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=model_x,
+                    request=request,
+                )
+            else:
+                cond = composable["branches"][0]
+                uncond = composable["uncond"]
+                model_conditioning = None
 
             if i == 0:
                 conditioning_extra = getattr(conditioning, "extra", {}) or {}
@@ -496,10 +508,18 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 if regional_resolver is not None
                 else []
             )
+            if composable is not None and active_regions:
+                raise ValueError(
+                    "PPSR-09E composable AND and REGION guidance are not qualified together."
+                )
             regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
             denoising_contract = self._denoising_contract(guided_model_fn)
             if prediction_mode == "canonical_predicted_x0":
-                if active_regions:
+                if composable is not None:
+                    predict_denoised = getattr(
+                        guided_model_fn, "predict_composable_denoised", None
+                    )
+                elif active_regions:
                     predict_denoised = getattr(guided_model_fn, "predict_regional_denoised", None)
                 else:
                     predict_denoised = getattr(guided_model_fn, "predict_denoised", None)
@@ -507,7 +527,19 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                     raise TypeError(
                         "DPM++ 2M requires the Phase 8C canonical predict_denoised callback."
                     )
-                if active_regions:
+                if composable is not None:
+                    denoised = predict_denoised(
+                        x,
+                        sigma,
+                        timestep,
+                        composable["branches"],
+                        composable["weights"],
+                        composable["uncond"],
+                        step_effective_cfg_scale,
+                        composable["branch_model_conditioning"],
+                        composable["uncond_model_conditioning"],
+                    )
+                elif active_regions:
                     denoised = call_with_optional_model_conditioning(
                         predict_denoised,
                         x,
@@ -536,7 +568,26 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                         "The canonical denoiser must return predicted x0 in torch.float32."
                     )
             else:
-                if active_regions:
+                if composable is not None:
+                    composable_guided = getattr(
+                        guided_model_fn, "predict_composable_guided_noise", None
+                    )
+                    if not callable(composable_guided):
+                        raise TypeError(
+                            "DPM++ 2M requires predict_composable_guided_noise for PPSR-09E AND."
+                        )
+                    guided_epsilon = composable_guided(
+                        x,
+                        sigma,
+                        timestep,
+                        composable["branches"],
+                        composable["weights"],
+                        composable["uncond"],
+                        step_effective_cfg_scale,
+                        composable["branch_model_conditioning"],
+                        composable["uncond_model_conditioning"],
+                    )
+                elif active_regions:
                     regional_guided = getattr(guided_model_fn, "predict_regional_guided_noise", None)
                     if not callable(regional_guided):
                         raise TypeError("The denoising system does not provide native regional guidance.")
@@ -614,6 +665,17 @@ class DPMPlusPlus2MSampler(SamplerTraceMixin):
                 "integration_mode": self.SAMPLER_NAME,
                 "regional_guidance_active": bool(active_regions),
                 "regional_active_count": len(active_regions),
+                "composition_mode": (
+                    str(composable.get("mode") or "") if composable is not None else "standard"
+                ),
+                "composition_branch_count": (
+                    len(composable.get("branches") or ()) if composable is not None else 1
+                ),
+                "logical_model_evaluations": (
+                    len(composable.get("branches") or ()) + 1
+                    if composable is not None
+                    else 2
+                ),
                 "history_policy": history_policy,
                 "prediction_mode": prediction_mode,
                 "used_old_denoised": bool(history["history_accepted"]),

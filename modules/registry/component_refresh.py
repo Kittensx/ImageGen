@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 import json
+import threading
+import time
 
 from modules.checkpoint_inspector import CheckpointInspector, CheckpointReport
 from modules.project_context import ProjectContext
@@ -25,8 +27,57 @@ from .models import (
 )
 
 
-REGISTRY_REFRESH_POLICY_VERSION = "component-registry-refresh-v3"
+REGISTRY_REFRESH_POLICY_VERSION = "component-registry-refresh-v4-cnrr08"
 _SUPPORTED_COMPONENT_KINDS = {"checkpoint", "vae", "text_encoder"}
+
+
+@dataclass
+class _DiscoveryFlight:
+    event: threading.Event
+    error: BaseException | None = None
+
+
+_DISCOVERY_LOCK = threading.Lock()
+_DISCOVERY_INFLIGHT: dict[tuple[str, str, str, str, str], _DiscoveryFlight] = {}
+
+
+def _run_discovery_once(
+    key: tuple[str, str, str, str, str],
+    operation,
+):
+    """Serialize expensive component discovery for one exact source version.
+
+    The registry remains the authority; this is only an in-process duplicate-work
+    guard.  Waiters never consume another thread's in-memory snapshots.  They wait
+    for the leader's transaction to finish and then read the committed registry
+    rows normally.
+    """
+    with _DISCOVERY_LOCK:
+        flight = _DISCOVERY_INFLIGHT.get(key)
+        if flight is None:
+            flight = _DiscoveryFlight(event=threading.Event())
+            _DISCOVERY_INFLIGHT[key] = flight
+            leader = True
+        else:
+            leader = False
+
+    if not leader:
+        started = time.perf_counter()
+        flight.event.wait()
+        if flight.error is not None:
+            raise RuntimeError("Concurrent component discovery failed before commit.") from flight.error
+        return False, None, round((time.perf_counter() - started) * 1000.0, 3)
+
+    try:
+        result = operation()
+        return True, result, 0.0
+    except BaseException as exc:
+        flight.error = exc
+        raise
+    finally:
+        with _DISCOVERY_LOCK:
+            _DISCOVERY_INFLIGHT.pop(key, None)
+            flight.event.set()
 
 
 @dataclass(frozen=True)
@@ -404,6 +455,23 @@ class ComponentRegistryRefresher:
 
         before = self.registry.get_component_snapshots(asset.id)
         assessment = self.assess(asset, asset_kind=kind, report=report, force=force)
+
+        def _metrics(**updates: Any) -> dict[str, Any]:
+            payload = {
+                "registry_lookup_hit": bool(before),
+                "component_hash_required": False,
+                "bytes_hashed": 0,
+                "roles_hashed": [],
+                "hash_reused_from_registry": bool(before),
+                "source_occurrence_upserted_count": 0,
+                "duplicate_discovery_avoided": False,
+                "duplicate_discovery_wait_ms": 0.0,
+                "extra_disk_pass_required": False,
+                "hash_scope": "lookup_only" if before else "none",
+            }
+            payload.update(updates)
+            return payload
+
         if dry_run or not assessment.refresh_required:
             payload = {
                 "path": str(resolved),
@@ -416,6 +484,10 @@ class ComponentRegistryRefresher:
                 "after": self._snapshot_summary(before),
                 "policy_version": REGISTRY_REFRESH_POLICY_VERSION,
                 "strength": requested_strength,
+                "discovery_metrics": _metrics(
+                    component_hash_required=bool(dry_run and assessment.refresh_required),
+                    hash_reused_from_registry=bool(before and not assessment.refresh_required),
+                ),
             }
             if kind == "checkpoint" and report is not None:
                 payload["checkpoint_snapshot_eligibility"] = self.checkpoint_snapshot_eligibility(
@@ -452,91 +524,180 @@ class ComponentRegistryRefresher:
                 "policy_version": REGISTRY_REFRESH_POLICY_VERSION,
                 "strength": requested_strength,
                 "whole_file_sha256": refreshed_asset.sha256,
+                "discovery_metrics": _metrics(hash_scope="quick_refresh_only"),
             }
 
-        if kind == "checkpoint":
-            assert report is not None
-            snapshots = self.snapshotter.snapshot_checkpoint(
-                resolved,
-                architecture=report.architecture,
-                include_extras=True,
+        reason_set = set(assessment.reasons)
+        missing_roles = tuple(sorted(set(assessment.expected_roles) - set(assessment.stored_roles)))
+        targeted_missing_only = bool(
+            kind == "checkpoint"
+            and before
+            and missing_roles
+            and reason_set
+            and all(reason.startswith("missing_expected_roles:") for reason in reason_set)
+        )
+        roles_to_hash = missing_roles if targeted_missing_only else assessment.expected_roles
+        discovery_key = (
+            str(Path(self.registry.db_path).resolve()),
+            str(resolved),
+            str(asset.quick_fingerprint or "").strip().lower(),
+            COMPONENT_SNAPSHOT_VERSION,
+            kind,
+        )
+
+        def _perform_discovery() -> dict[str, Any]:
+            if kind == "checkpoint":
+                assert report is not None
+                snapshots = self.snapshotter.snapshot_checkpoint(
+                    resolved,
+                    architecture=report.architecture,
+                    include_extras=not targeted_missing_only,
+                    include_roles=set(roles_to_hash) if targeted_missing_only else None,
+                )
+            elif kind == "vae":
+                snapshots = {
+                    "vae": self.snapshotter.snapshot_standalone_component(
+                        resolved,
+                        component_role="vae",
+                    )
+                }
+            else:
+                role = assessment.expected_roles[0]
+                snapshots = {
+                    role: self.snapshotter.snapshot_standalone_component(
+                        resolved,
+                        component_role=role,
+                    )
+                }
+
+            standalone_evidence = self._standalone_component_evidence(resolved, kind)
+            metadata_extra = {
+                "registry_refresh_policy_version": REGISTRY_REFRESH_POLICY_VERSION,
+                "registry_refresh_source": str(source),
+                "requested_strength": requested_strength,
+                "expected_component_roles": list(assessment.expected_roles),
+                "cnrr08_discovery_scope": "missing_roles_only" if targeted_missing_only else "full_required_roles",
+            }
+            if standalone_evidence is not None:
+                metadata_extra["standalone_component_evidence"] = standalone_evidence.to_metadata()
+                metadata_extra["provider_family_evidence"] = list(standalone_evidence.provider_family_evidence)
+                standalone_snapshot = next(iter(snapshots.values()))
+                metadata_extra["standalone_component_identity"] = {
+                    "component_sha256": standalone_snapshot.component_sha256,
+                    "structure_sha256": standalone_snapshot.structure_sha256,
+                    "identity_basis": "fingerprinted_tensor_content_and_structure",
+                }
+
+            store_snapshots = (
+                self.registry.merge_component_snapshots
+                if targeted_missing_only
+                else self.registry.store_component_snapshots
             )
-        elif kind == "vae":
-            snapshots = {
-                "vae": self.snapshotter.snapshot_standalone_component(
-                    resolved,
-                    component_role="vae",
+            stored = store_snapshots(
+                asset.id,
+                snapshots,
+                source_file_sha256=asset.sha256,
+                source_quick_fingerprint=asset.quick_fingerprint,
+                metadata_extra=metadata_extra,
+            )
+            self._store_refresh_inspection(
+                asset_id=asset.id,
+                asset_kind=kind,
+                path=resolved,
+                report=report,
+                expected_roles=assessment.expected_roles,
+                stored_roles=tuple(sorted(item.component_role for item in stored if item.component_role != "extras")),
+                source=source,
+            )
+            refreshed_asset = self.registry.get_asset_by_id(asset.id) or asset
+            after_assessment = self.assess(
+                refreshed_asset,
+                asset_kind=kind,
+                report=report,
+                force=False,
+            )
+            if after_assessment.refresh_required:
+                raise RuntimeError(
+                    "Targeted component refresh completed but the registry is still incomplete: "
+                    + "; ".join(after_assessment.reasons)
                 )
-            }
-        else:
-            role = assessment.expected_roles[0]
-            snapshots = {
-                role: self.snapshotter.snapshot_standalone_component(
-                    resolved,
-                    component_role=role,
-                )
+            bytes_hashed = sum(int(snapshot.total_bytes) for snapshot in snapshots.values())
+            hashed_roles = sorted(str(role) for role in snapshots if role != "extras")
+            return {
+                "path": str(resolved),
+                "asset_id": int(asset.id),
+                "asset_kind": kind,
+                "status": self._refresh_status(assessment),
+                "changed": True,
+                "assessment": assessment.to_dict(),
+                "after_assessment": after_assessment.to_dict(),
+                "before": self._snapshot_summary(before),
+                "after": self._snapshot_summary(stored),
+                "policy_version": REGISTRY_REFRESH_POLICY_VERSION,
+                "strength": requested_strength,
+                "whole_file_sha256": refreshed_asset.sha256,
+                "discovery_metrics": _metrics(
+                    component_hash_required=True,
+                    bytes_hashed=bytes_hashed,
+                    roles_hashed=hashed_roles,
+                    hash_reused_from_registry=False,
+                    source_occurrence_upserted_count=len(hashed_roles),
+                    extra_disk_pass_required=True,
+                    hash_scope="missing_roles_only" if targeted_missing_only else "full_required_roles",
+                ),
+                **(
+                    {
+                        "checkpoint_snapshot_eligibility": self.checkpoint_snapshot_eligibility(
+                            resolved,
+                            report=report,
+                        )
+                    }
+                    if kind == "checkpoint" and report is not None
+                    else {}
+                ),
             }
 
-        standalone_evidence = self._standalone_component_evidence(resolved, kind)
-        metadata_extra = {
-            "registry_refresh_policy_version": REGISTRY_REFRESH_POLICY_VERSION,
-            "registry_refresh_source": str(source),
-            "requested_strength": requested_strength,
-            "expected_component_roles": list(assessment.expected_roles),
-        }
-        if standalone_evidence is not None:
-            metadata_extra["standalone_component_evidence"] = standalone_evidence.to_metadata()
-            metadata_extra["provider_family_evidence"] = list(standalone_evidence.provider_family_evidence)
-            standalone_snapshot = next(iter(snapshots.values()))
-            metadata_extra["standalone_component_identity"] = {
-                "component_sha256": standalone_snapshot.component_sha256,
-                "structure_sha256": standalone_snapshot.structure_sha256,
-                "identity_basis": "fingerprinted_tensor_content_and_structure",
-            }
+        leader, result, wait_ms = _run_discovery_once(discovery_key, _perform_discovery)
+        if leader:
+            assert result is not None
+            return result
 
-        stored = self.registry.store_component_snapshots(
-            asset.id,
-            snapshots,
-            source_file_sha256=asset.sha256,
-            source_quick_fingerprint=asset.quick_fingerprint,
-            metadata_extra=metadata_extra,
-        )
-        self._store_refresh_inspection(
-            asset_id=asset.id,
-            asset_kind=kind,
-            path=resolved,
-            report=report,
-            expected_roles=assessment.expected_roles,
-            stored_roles=tuple(sorted(item.component_role for item in stored if item.component_role != "extras")),
-            source=source,
-        )
-        refreshed_asset = self.registry.get_asset_by_id(asset.id) or asset
-        final_report = report
+        # Another request performed the expensive discovery. Read the authoritative
+        # committed rows instead of sharing in-memory snapshots between loaders.
+        refreshed_asset = self.registry.get_asset_by_path(str(resolved)) or asset
+        current = self.registry.get_component_snapshots(refreshed_asset.id)
         after_assessment = self.assess(
             refreshed_asset,
             asset_kind=kind,
-            report=final_report,
+            report=report,
             force=False,
         )
         if after_assessment.refresh_required:
             raise RuntimeError(
-                "Targeted component refresh completed but the registry is still incomplete: "
+                "Concurrent component discovery completed without satisfying the requested registry evidence: "
                 + "; ".join(after_assessment.reasons)
             )
-
         return {
             "path": str(resolved),
-            "asset_id": int(asset.id),
+            "asset_id": int(refreshed_asset.id),
             "asset_kind": kind,
-            "status": self._refresh_status(assessment),
-            "changed": True,
+            "status": "cached_after_concurrent_discovery",
+            "changed": False,
             "assessment": assessment.to_dict(),
             "after_assessment": after_assessment.to_dict(),
             "before": self._snapshot_summary(before),
-            "after": self._snapshot_summary(stored),
+            "after": self._snapshot_summary(current),
             "policy_version": REGISTRY_REFRESH_POLICY_VERSION,
             "strength": requested_strength,
             "whole_file_sha256": refreshed_asset.sha256,
+            "discovery_metrics": _metrics(
+                registry_lookup_hit=True,
+                component_hash_required=False,
+                hash_reused_from_registry=True,
+                duplicate_discovery_avoided=True,
+                duplicate_discovery_wait_ms=wait_ms,
+                hash_scope="concurrent_lookup_after_wait",
+            ),
             **(
                 {
                     "checkpoint_snapshot_eligibility": self.checkpoint_snapshot_eligibility(

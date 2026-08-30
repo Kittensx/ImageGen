@@ -62,6 +62,7 @@ class ProgressReporter:
         unit: str = "step",
         machine_readable: bool = False,
         single_line: bool = True,
+        first_step_callback: Any | None = None,
     ):
         self.total = int(total or 0)
         self.enabled = bool(enabled)
@@ -70,12 +71,14 @@ class ProgressReporter:
         self.current = 0
         self.machine_readable = bool(machine_readable)
         self.single_line = bool(single_line)
+        self.first_step_callback = first_step_callback
         self.phase_index = 0
         self._bar = None
         self._sampling_started_monotonic: float | None = None
         self._last_update_monotonic: float | None = None
         self._step_durations_ms: list[float] = []
         self._latest_step_duration_ms: float | None = None
+        self._first_step_reported = False
         self._memory_summary: dict[str, int] = {}
         self._last_plain_width = 0
 
@@ -283,6 +286,7 @@ class ProgressReporter:
         self._last_update_monotonic = self._sampling_started_monotonic
         self._step_durations_ms = []
         self._latest_step_duration_ms = None
+        self._first_step_reported = False
         self._last_plain_width = 0
         if self.enabled:
             if not self.single_line and tqdm is not None:
@@ -313,6 +317,28 @@ class ProgressReporter:
             self._step_durations_ms.extend([per_step_ms] * increment)
             step_duration_ms = per_step_ms
             self._latest_step_duration_ms = per_step_ms
+        if (
+            increment > 0
+            and not self._first_step_reported
+            and self._sampling_started_monotonic is not None
+        ):
+            self._first_step_reported = True
+            callback = self.first_step_callback
+            if callable(callback):
+                try:
+                    callback(
+                        {
+                            "first_step_latency_ms": round(
+                                max(0.0, (now - self._sampling_started_monotonic) * 1000.0),
+                                3,
+                            ),
+                            "phase_index": int(self.phase_index),
+                            "description": str(self.desc),
+                        }
+                    )
+                except Exception:
+                    # Timing telemetry is observational and must never break sampling.
+                    pass
         self._last_update_monotonic = now
         self.current += increment
         if self.enabled:

@@ -44,6 +44,8 @@ class ComponentLoadResult:
     missing_keys: list[str] = field(default_factory=list)
     unexpected_keys: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    reused: bool = False
+    reuse_reason: str = ""
 
     @property
     def success(self) -> bool:
@@ -68,6 +70,8 @@ class ComponentLoadResult:
             "missing_key_samples": self.missing_keys[:25],
             "unexpected_key_samples": self.unexpected_keys[:25],
             "error": self.error,
+            "reused": bool(self.reused),
+            "reuse_reason": self.reuse_reason,
         }
 
 
@@ -129,10 +133,12 @@ class ComponentBuilder:
         dtype: torch.dtype | None = None,
         *,
         defer_attention_configuration: bool = False,
+        preserve_reused_component_placement: bool = False,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.defer_attention_configuration = bool(defer_attention_configuration)
+        self.preserve_reused_component_placement = bool(preserve_reused_component_placement)
         self.converter = StateDictConverter()
         self.sd3_converter = SD3StateDictConverter()
         self.deriver = ConfigDeriver()
@@ -159,27 +165,38 @@ class ComponentBuilder:
         self,
         configs: ResolvedConfigs,
         mapped_state: MappedStateDict,
+        reusable_components: dict[str, Any] | None = None,
     ) -> BuiltComponents:
+        reusable = dict(reusable_components or {})
         if self._is_sd3_architecture(configs.architecture):
-            return self._build_sd3_components(configs=configs, mapped_state=mapped_state)
+            return self._build_sd3_components(
+                configs=configs,
+                mapped_state=mapped_state,
+                reusable_components=reusable,
+            )
 
         unet_config = self._load_json(configs.unet_config_path)
         converted = self.converter.convert_all(
-            unet_state=mapped_state.unet,
-            vae_state=mapped_state.vae,
-            text_state=mapped_state.text_encoder,
-            text_state_2=mapped_state.text_encoder_2,
+            unet_state={} if reusable.get("unet") is not None else mapped_state.unet,
+            vae_state={} if reusable.get("vae") is not None else mapped_state.vae,
+            text_state={} if reusable.get("text_encoder") is not None else mapped_state.text_encoder,
+            text_state_2={} if reusable.get("text_encoder_2") is not None else mapped_state.text_encoder_2,
             architecture=configs.architecture,
             unet_config=unet_config,
         )
 
-        unet = UNet2DConditionModel.from_config(unet_config)
-
-        unet_result = self._load_component_state(
-            component=unet,
-            state_dict=converted.unet,
-            name="unet",
-        )
+        unet = reusable.get("unet")
+        if unet is None:
+            unet = UNet2DConditionModel.from_config(unet_config)
+            unet_result = self._load_component_state(
+                component=unet,
+                state_dict=converted.unet,
+                name="unet",
+            )
+        else:
+            unet_result = ComponentLoadResult(
+                name="unet", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
         self._release_state_payloads(converted.unet, mapped_state.unet)
 
         # SDXL Phase 08 supports CPU-first hydration so an 8 GB card never has
@@ -187,13 +204,22 @@ class ComponentBuilder:
         # is being constructed. Attention backend qualification must observe the
         # UNet on its actual execution device, so CPU-first builds defer backend
         # activation until the memory manager leases the UNet for sampling.
-        unet_placement = self._move_component(unet, name="unet")
-        model_attention_signature = build_model_attention_signature(unet)
-        install_attention_layout_capture(
-            unet,
-            model_signature=model_attention_signature,
+        unet_placement = (
+            self._preserved_component_report(unet, name="unet")
+            if unet_result.reused and self.preserve_reused_component_placement
+            else self._move_component(unet, name="unet")
         )
-        if self.defer_attention_configuration:
+        model_attention_signature = build_model_attention_signature(unet)
+        if not unet_result.reused:
+            install_attention_layout_capture(
+                unet,
+                model_signature=model_attention_signature,
+            )
+        if unet_result.reused:
+            attention_report = dict(getattr(unet, "_image_gen_attention_backend_report", {}) or attention_backend_report(unet))
+            attention_report["component_reused"] = True
+            attention_report["reuse_reason"] = "exact_component_sha256"
+        elif self.defer_attention_configuration:
             attention_report = attention_backend_report(unet)
             attention_report.update({
                 "deferred": True,
@@ -248,24 +274,47 @@ class ComponentBuilder:
         vae_config = self._load_json(configs.vae_config_path)
         vae_force_upcast = bool(is_sdxl and vae_config.get("force_upcast", False))
         vae_dtype = torch.float32 if vae_force_upcast else self.dtype
-        vae_builder = LDMVAEBuilder(device=self.device, dtype=vae_dtype)
-        vae_result = vae_builder.build_and_load(mapped_state.vae)
+        vae = reusable.get("vae")
+        if vae is None:
+            vae_builder = LDMVAEBuilder(device=self.device, dtype=vae_dtype)
+            vae_result = vae_builder.build_and_load(mapped_state.vae)
+            vae = vae_result.model
+        else:
+            vae_result = ComponentLoadResult(
+                name="vae", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
+            if not self.preserve_reused_component_placement:
+                place_component(
+                    vae,
+                    device=self.device,
+                    dtype=vae_dtype,
+                    owner="ComponentBuilder.reused",
+                    component_name="vae",
+                )
         self._release_state_payloads(converted.vae, mapped_state.vae)
-        vae = vae_result.model
         setattr(vae, "_image_gen_vae_force_upcast", vae_force_upcast)
         setattr(vae, "_image_gen_vae_execution_dtype", str(vae_dtype or "model_dtype"))
 
-        text_encoder = self._build_text_encoder(configs.text_encoder_config_path)
-        setattr(text_encoder, "_image_gen_architecture", str(configs.architecture or ""))
-
-        text_encoder_result = self._load_component_state(
-            component=text_encoder,
-            state_dict=converted.text_encoder,
-            name="text_encoder",
-        )
+        text_encoder = reusable.get("text_encoder")
+        if text_encoder is None:
+            text_encoder = self._build_text_encoder(configs.text_encoder_config_path)
+            setattr(text_encoder, "_image_gen_architecture", str(configs.architecture or ""))
+            text_encoder_result = self._load_component_state(
+                component=text_encoder,
+                state_dict=converted.text_encoder,
+                name="text_encoder",
+            )
+        else:
+            text_encoder_result = ComponentLoadResult(
+                name="text_encoder", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
         self._release_state_payloads(converted.text_encoder, mapped_state.text_encoder)
 
-        text_encoder_placement = self._move_component(text_encoder, name="text_encoder")
+        text_encoder_placement = (
+            self._preserved_component_report(text_encoder, name="text_encoder")
+            if text_encoder_result.reused and self.preserve_reused_component_placement
+            else self._move_component(text_encoder, name="text_encoder")
+        )
 
         text_encoder_2 = None
         text_encoder_2_result = None
@@ -277,17 +326,25 @@ class ComponentBuilder:
                 raise FileNotFoundError(
                     "SDXL requires text_encoder_2_config_path from the canonical SDXL runtime assets."
                 )
-            text_encoder_2 = self._build_text_encoder_2(configs.text_encoder_2_config_path)
-            setattr(text_encoder_2, "_image_gen_architecture", str(configs.architecture or ""))
-            setattr(text_encoder_2, "_image_gen_text_encoder_role", "text_encoder_2")
-            text_encoder_2_result = self._load_component_state(
-                component=text_encoder_2,
-                state_dict=converted.text_encoder_2,
-                name="text_encoder_2",
-            )
+            text_encoder_2 = reusable.get("text_encoder_2")
+            if text_encoder_2 is None:
+                text_encoder_2 = self._build_text_encoder_2(configs.text_encoder_2_config_path)
+                setattr(text_encoder_2, "_image_gen_architecture", str(configs.architecture or ""))
+                setattr(text_encoder_2, "_image_gen_text_encoder_role", "text_encoder_2")
+                text_encoder_2_result = self._load_component_state(
+                    component=text_encoder_2,
+                    state_dict=converted.text_encoder_2,
+                    name="text_encoder_2",
+                )
+            else:
+                text_encoder_2_result = ComponentLoadResult(
+                    name="text_encoder_2", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+                )
             self._release_state_payloads(converted.text_encoder_2, mapped_state.text_encoder_2)
-            text_encoder_2_placement = self._move_component(
-                text_encoder_2, name="text_encoder_2"
+            text_encoder_2_placement = (
+                self._preserved_component_report(text_encoder_2, name="text_encoder_2")
+                if text_encoder_2_result.reused and self.preserve_reused_component_placement
+                else self._move_component(text_encoder_2, name="text_encoder_2")
             )
             if not configs.tokenizer_dir or not configs.tokenizer_2_dir:
                 raise FileNotFoundError(
@@ -341,7 +398,9 @@ class ComponentBuilder:
         *,
         configs: ResolvedConfigs,
         mapped_state: MappedStateDict,
+        reusable_components: dict[str, Any] | None = None,
     ) -> BuiltComponents:
+        reusable = dict(reusable_components or {})
         if not configs.transformer_config_path:
             raise FileNotFoundError("SD3 requires transformer_config_path from local runtime assets.")
         if not configs.text_encoder_2_config_path:
@@ -352,18 +411,31 @@ class ComponentBuilder:
         clip_l_config = self._load_json(configs.text_encoder_config_path)
         clip_g_config = self._load_json(configs.text_encoder_2_config_path)
 
-        converted_transformer = self.sd3_converter.convert_transformer(
-            mapped_state.transformer,
-            transformer_config,
+        transformer = reusable.get("transformer")
+        if transformer is None:
+            converted_transformer = self.sd3_converter.convert_transformer(
+                mapped_state.transformer,
+                transformer_config,
+            )
+            transformer = SD3Transformer2DModel.from_config(transformer_config)
+            transformer_result = self._load_component_state(
+                component=transformer,
+                state_dict=converted_transformer.state_dict,
+                name="transformer",
+            )
+            transformer_conversion_report = converted_transformer.report.to_dict()
+            self._release_state_payloads(converted_transformer.state_dict, mapped_state.transformer)
+        else:
+            transformer_result = ComponentLoadResult(
+                name="transformer", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
+            transformer_conversion_report = {"component_reused": True, "reuse_reason": "exact_component_sha256"}
+            self._release_state_payloads(mapped_state.transformer)
+        transformer_placement = (
+            self._preserved_component_report(transformer, name="denoiser")
+            if transformer_result.reused and self.preserve_reused_component_placement
+            else self._move_component(transformer, name="denoiser")
         )
-        transformer = SD3Transformer2DModel.from_config(transformer_config)
-        transformer_result = self._load_component_state(
-            component=transformer,
-            state_dict=converted_transformer.state_dict,
-            name="transformer",
-        )
-        self._release_state_payloads(converted_transformer.state_dict, mapped_state.transformer)
-        transformer_placement = self._move_component(transformer, name="denoiser")
         setattr(transformer, "_image_gen_denoiser_kind", "transformer")
         setattr(transformer, "_image_gen_attention_configuration_deferred", True)
 
@@ -379,49 +451,88 @@ class ComponentBuilder:
         }
         setattr(transformer, "_image_gen_attention_backend_report", dict(attention_report))
 
-        vae = AutoencoderKL.from_config(vae_config)
-        converted_vae = self.sd3_converter.convert_vae(mapped_state.vae, vae.config)
-        vae_result = self._load_component_state(
-            component=vae,
-            state_dict=converted_vae.state_dict,
-            name="vae",
-        )
-        self._release_state_payloads(converted_vae.state_dict, mapped_state.vae)
+        vae = reusable.get("vae")
+        if vae is None:
+            vae = AutoencoderKL.from_config(vae_config)
+            converted_vae = self.sd3_converter.convert_vae(mapped_state.vae, vae.config)
+            vae_result = self._load_component_state(
+                component=vae,
+                state_dict=converted_vae.state_dict,
+                name="vae",
+            )
+            vae_conversion_report = converted_vae.report.to_dict()
+            self._release_state_payloads(converted_vae.state_dict, mapped_state.vae)
+        else:
+            vae_result = ComponentLoadResult(
+                name="vae", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
+            vae_conversion_report = {"component_reused": True, "reuse_reason": "exact_component_sha256"}
+            self._release_state_payloads(mapped_state.vae)
         vae_force_upcast = bool(vae_config.get("force_upcast", False))
         vae_dtype = torch.float32 if vae_force_upcast else self.dtype
-        vae_placement = place_component(
-            vae,
-            device=self.device,
-            dtype=vae_dtype,
-            owner="ComponentBuilder",
-            component_name="vae",
-        ).to_dict()
+        vae_placement = (
+            self._preserved_component_report(vae, name="vae")
+            if vae_result.reused and self.preserve_reused_component_placement
+            else place_component(
+                vae,
+                device=self.device,
+                dtype=vae_dtype,
+                owner="ComponentBuilder",
+                component_name="vae",
+            ).to_dict()
+        )
         setattr(vae, "_image_gen_vae_force_upcast", vae_force_upcast)
         setattr(vae, "_image_gen_vae_execution_dtype", str(vae_dtype or "model_dtype"))
 
-        clip_l = self._build_sd3_clip(configs.text_encoder_config_path)
-        setattr(clip_l, "_image_gen_architecture", str(configs.architecture or ""))
-        setattr(clip_l, "_image_gen_text_encoder_role", "clip_l")
-        converted_clip_l = self.sd3_converter.convert_clip_l(mapped_state.text_encoder, clip_l_config)
-        clip_l_result = self._load_component_state(
-            component=clip_l,
-            state_dict=converted_clip_l.state_dict,
-            name="clip_l",
+        clip_l = reusable.get("text_encoder")
+        if clip_l is None:
+            clip_l = self._build_sd3_clip(configs.text_encoder_config_path)
+            setattr(clip_l, "_image_gen_architecture", str(configs.architecture or ""))
+            setattr(clip_l, "_image_gen_text_encoder_role", "clip_l")
+            converted_clip_l = self.sd3_converter.convert_clip_l(mapped_state.text_encoder, clip_l_config)
+            clip_l_result = self._load_component_state(
+                component=clip_l,
+                state_dict=converted_clip_l.state_dict,
+                name="clip_l",
+            )
+            clip_l_conversion_report = converted_clip_l.report.to_dict()
+            self._release_state_payloads(converted_clip_l.state_dict, mapped_state.text_encoder)
+        else:
+            clip_l_result = ComponentLoadResult(
+                name="clip_l", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
+            clip_l_conversion_report = {"component_reused": True, "reuse_reason": "exact_component_sha256"}
+            self._release_state_payloads(mapped_state.text_encoder)
+        clip_l_placement = (
+            self._preserved_component_report(clip_l, name="text_encoder")
+            if clip_l_result.reused and self.preserve_reused_component_placement
+            else self._move_component(clip_l, name="text_encoder")
         )
-        self._release_state_payloads(converted_clip_l.state_dict, mapped_state.text_encoder)
-        clip_l_placement = self._move_component(clip_l, name="text_encoder")
 
-        clip_g = self._build_sd3_clip(configs.text_encoder_2_config_path)
-        setattr(clip_g, "_image_gen_architecture", str(configs.architecture or ""))
-        setattr(clip_g, "_image_gen_text_encoder_role", "clip_g")
-        converted_clip_g = self.sd3_converter.convert_clip_g(mapped_state.text_encoder_2)
-        clip_g_result = self._load_component_state(
-            component=clip_g,
-            state_dict=converted_clip_g.state_dict,
-            name="clip_g",
+        clip_g = reusable.get("text_encoder_2")
+        if clip_g is None:
+            clip_g = self._build_sd3_clip(configs.text_encoder_2_config_path)
+            setattr(clip_g, "_image_gen_architecture", str(configs.architecture or ""))
+            setattr(clip_g, "_image_gen_text_encoder_role", "clip_g")
+            converted_clip_g = self.sd3_converter.convert_clip_g(mapped_state.text_encoder_2)
+            clip_g_result = self._load_component_state(
+                component=clip_g,
+                state_dict=converted_clip_g.state_dict,
+                name="clip_g",
+            )
+            clip_g_conversion_report = converted_clip_g.report.to_dict()
+            self._release_state_payloads(converted_clip_g.state_dict, mapped_state.text_encoder_2)
+        else:
+            clip_g_result = ComponentLoadResult(
+                name="clip_g", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+            )
+            clip_g_conversion_report = {"component_reused": True, "reuse_reason": "exact_component_sha256"}
+            self._release_state_payloads(mapped_state.text_encoder_2)
+        clip_g_placement = (
+            self._preserved_component_report(clip_g, name="text_encoder_2")
+            if clip_g_result.reused and self.preserve_reused_component_placement
+            else self._move_component(clip_g, name="text_encoder_2")
         )
-        self._release_state_payloads(converted_clip_g.state_dict, mapped_state.text_encoder_2)
-        clip_g_placement = self._move_component(clip_g, name="text_encoder_2")
 
         tokenizer = self._build_tokenizer(configs.tokenizer_dir) if configs.tokenizer_dir else None
         tokenizer_2 = self._build_tokenizer(configs.tokenizer_2_dir) if configs.tokenizer_2_dir else None
@@ -430,26 +541,32 @@ class ComponentBuilder:
         text_encoder_3_result = None
         tokenizer_3 = None
         text_encoder_3_placement = None
-        if mapped_state.text_encoder_3:
+        if mapped_state.text_encoder_3 or reusable.get("text_encoder_3") is not None:
             if not configs.text_encoder_3_config_path:
                 raise FileNotFoundError("SD3 T5 selection requires text_encoder_3_config_path from local runtime assets.")
             if not configs.tokenizer_3_dir:
                 raise FileNotFoundError("SD3 T5 selection requires tokenizer_3_dir from local runtime assets.")
-            t5_config = T5Config.from_dict(self._load_json(configs.text_encoder_3_config_path))
-            previous_default_dtype = torch.get_default_dtype()
-            torch.set_default_dtype(torch.bfloat16)
-            try:
-                text_encoder_3 = T5EncoderModel(t5_config).eval()
-            finally:
-                torch.set_default_dtype(previous_default_dtype)
-            text_encoder_3 = text_encoder_3.to(device="cpu", dtype=torch.bfloat16)
-            setattr(text_encoder_3, "_image_gen_architecture", str(configs.architecture or ""))
-            setattr(text_encoder_3, "_image_gen_text_encoder_role", "t5xxl")
-            text_encoder_3_result = self._load_component_state(
-                component=text_encoder_3,
-                state_dict=mapped_state.text_encoder_3,
-                name="t5xxl",
-            )
+            text_encoder_3 = reusable.get("text_encoder_3")
+            if text_encoder_3 is None:
+                t5_config = T5Config.from_dict(self._load_json(configs.text_encoder_3_config_path))
+                previous_default_dtype = torch.get_default_dtype()
+                torch.set_default_dtype(torch.bfloat16)
+                try:
+                    text_encoder_3 = T5EncoderModel(t5_config).eval()
+                finally:
+                    torch.set_default_dtype(previous_default_dtype)
+                text_encoder_3 = text_encoder_3.to(device="cpu", dtype=torch.bfloat16)
+                setattr(text_encoder_3, "_image_gen_architecture", str(configs.architecture or ""))
+                setattr(text_encoder_3, "_image_gen_text_encoder_role", "t5xxl")
+                text_encoder_3_result = self._load_component_state(
+                    component=text_encoder_3,
+                    state_dict=mapped_state.text_encoder_3,
+                    name="t5xxl",
+                )
+            else:
+                text_encoder_3_result = ComponentLoadResult(
+                    name="t5xxl", loaded_keys=0, reused=True, reuse_reason="exact_component_sha256"
+                )
             self._release_state_payloads(mapped_state.text_encoder_3)
             text_encoder_3_placement = place_component(
                 text_encoder_3,
@@ -476,10 +593,10 @@ class ComponentBuilder:
             placement_reports["text_encoder_3"] = text_encoder_3_placement
 
         conversion_reports = {
-            "transformer": converted_transformer.report.to_dict(),
-            "vae": converted_vae.report.to_dict(),
-            "clip_l": converted_clip_l.report.to_dict(),
-            "clip_g": converted_clip_g.report.to_dict(),
+            "transformer": transformer_conversion_report,
+            "vae": vae_conversion_report,
+            "clip_l": clip_l_conversion_report,
+            "clip_g": clip_g_conversion_report,
         }
 
         return BuiltComponents(
@@ -578,6 +695,25 @@ class ComponentBuilder:
                 matched_keys=len(matched),
                 error=str(e),
             )
+
+    @staticmethod
+    def _preserved_component_report(component: torch.nn.Module, *, name: str) -> dict[str, Any]:
+        try:
+            parameter = next(component.parameters())
+            device = str(parameter.device)
+            dtype = str(parameter.dtype)
+        except (StopIteration, AttributeError, TypeError):
+            device = str(getattr(component, "device", "unknown"))
+            dtype = str(getattr(component, "dtype", "unknown"))
+        report = dict(getattr(component, "_image_gen_placement_report", {}) or {})
+        report.update({
+            "component_name": str(name),
+            "device": device,
+            "dtype": dtype,
+            "placement_preserved": True,
+            "reason": "background_warm_reused_component_must_not_move",
+        })
+        return report
 
     def _move_component(
         self,

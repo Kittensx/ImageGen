@@ -10,6 +10,7 @@ from image_gen.contracts.model_conditioning import SemanticConditioningCapabilit
 from safetensors import safe_open
 
 from modules.sd2_openclip_reference_converter import SD2OpenCLIPReferenceConverter
+from modules.adapters.a1111_clip_conditioning import A1111PromptCapabilities, encode_a1111_clip_batch
 
 
 _KNOWN_REFERENCE_BUFFER_KEYS = (
@@ -195,6 +196,27 @@ class SD2OpenCLIPConditioningRuntime:
     def get_learned_conditioning(self, texts):
         return self.encode_batch(list(texts))
 
+    def encode_a1111_conditioning(self, texts, *, forced_segments_by_prompt=None):
+        return encode_a1111_clip_batch(
+            tokenizer=self.tokenizer,
+            text_encoder=self.text_encoder,
+            prompts=list(texts),
+            hidden_state_index=-2,
+            forced_segments_by_prompt=forced_segments_by_prompt,
+        )
+
+    def a1111_prompt_capabilities(self) -> A1111PromptCapabilities:
+        return A1111PromptCapabilities(
+            architecture="sd2.x",
+            attention=True,
+            composable_and=True,
+            schedules=True,
+            alternation=True,
+            chunk_break=True,
+            long_clip_chunking=True,
+            clip_streams=("openclip_h",),
+        )
+
     def encode(self, prompt: str) -> SD2ConditioningResult:
         max_length = int(getattr(self.tokenizer, "model_max_length", 77) or 77)
         if max_length <= 0 or max_length > 4096:
@@ -243,6 +265,7 @@ class SD2OpenCLIPConditioningRuntime:
         return {
             "architecture": "sd2.x",
             "encoder_mode": "openclip_h_14",
+            "a1111_prompt_capabilities": self.a1111_prompt_capabilities().to_dict(),
             "semantic_conditioning_capabilities": self.semantic_conditioning_capabilities().to_dict(),
         }
 

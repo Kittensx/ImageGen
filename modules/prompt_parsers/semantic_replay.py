@@ -494,7 +494,14 @@ def resolve_request_prompt_ir(
             "recorded_semantic_digest": dict(record.get("semantic_digest") or {}),
             "recorded_structure_digest": dict(record.get("structure_digest") or {}),
         }
-    return parse_prompt_ir(str(source or ""), parser_namespace=parser_namespace), {
+    semantic_modes = dict(
+        (getattr(request, "parser_options", {}) or {}).get("_prompt_style_semantic_modes") or {}
+    )
+    return parse_prompt_ir(
+        str(source or ""),
+        parser_namespace=parser_namespace,
+        semantic_modes=semantic_modes,
+    ), {
         "mode": mode,
         "source": "reconstruct",
         "migration_path": "none",

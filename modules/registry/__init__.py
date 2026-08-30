@@ -86,6 +86,13 @@ from .component_selection import (
     ComponentSelectionService,
     canonical_model_family,
 )
+from .composition_projection import (
+    PROJECTION_COMPLETE,
+    PROJECTION_INCOMPLETE,
+    PROJECTION_UNAVAILABLE,
+    RuntimeCompositionProjection,
+    project_runtime_composition,
+)
 from .service import ComponentRegistryService, REGISTRY_SERVICE_VERSION
 
 __all__ = [
@@ -131,6 +138,11 @@ __all__ = [
     "ComponentSourceRecord",
     "ComponentTensorSnapshot",
     "CompositionIdentity",
+    "PROJECTION_COMPLETE",
+    "PROJECTION_INCOMPLETE",
+    "PROJECTION_UNAVAILABLE",
+    "RuntimeCompositionProjection",
+    "project_runtime_composition",
     "DEFAULT_FAMILY_PROVIDER_REGISTRY",
     "FAMILY_ROLE_SPECS",
     "ExactOverlapService",

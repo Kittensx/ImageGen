@@ -40,6 +40,8 @@ from modules.prompt_parsers.ir import (
     SequenceItemIR,
     Text,
     Literal,
+    LiteralTextScope,
+    SemanticScope,
     Weighted,
 )
 
@@ -83,6 +85,10 @@ def binding_phrase(node: BoundConcept) -> str:
 def contains_binding(node: IRNode) -> bool:
     if isinstance(node, BoundConcept):
         return True
+    if isinstance(node, SemanticScope):
+        return contains_binding(node.node)
+    if isinstance(node, LiteralTextScope):
+        return False
     if isinstance(node, (Group, ExperimentalGroup)):
         return any(contains_binding(item) for item in node.items)
     if isinstance(node, Prompt):
@@ -166,6 +172,10 @@ def apply_inherited_bindings(node: IRNode, inherited: tuple[str, ...] = ()) -> I
     ``^``/``*`` bindings remain barriers and therefore are never prefixed by an
     inherited modifier.
     """
+    if isinstance(node, LiteralTextScope):
+        return node
+    if isinstance(node, SemanticScope):
+        return replace(node, node=apply_inherited_bindings(node.node, inherited))
     if isinstance(node, (Text, Literal)):
         return replace(node, value=inherited_text(str(node.value or ""), inherited))
     if isinstance(node, BoundConcept):
@@ -222,6 +232,11 @@ def apply_inherited_bindings(node: IRNode, inherited: tuple[str, ...] = ()) -> I
 def iter_bindings(node: IRNode) -> Iterable[BoundConcept]:
     if isinstance(node, BoundConcept):
         yield node
+        return
+    if isinstance(node, SemanticScope):
+        yield from iter_bindings(node.node)
+        return
+    if isinstance(node, LiteralTextScope):
         return
     if isinstance(node, (Group, ExperimentalGroup)):
         for item in node.items:

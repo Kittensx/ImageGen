@@ -23,6 +23,7 @@ from modules.ss_registry.samplers.sampler_config_loader import prepare_sampler_c
 
 from modules.pipeline.conditioning_utils import (
     call_with_optional_model_conditioning,
+    resolve_step_composable_conditioning,
     resolve_step_conditioning,
     resolve_step_model_conditioning,
     select_step_model_conditioning_branch,
@@ -371,6 +372,56 @@ class KESSampler(SamplerTraceMixin):
         regional_resolver = get_regional_conditioning_resolver(conditioning)
         regional_guidance_active_any = False
 
+        def evaluate_composable_noise(
+            sample: torch.Tensor,
+            sigma_value: torch.Tensor,
+            timestep_value: torch.Tensor,
+            payload: dict[str, Any],
+            *,
+            effective_scale: float,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            """Evaluate PPSR-09E composable CFG in KES' sampler-owned path."""
+
+            if canonical_cfg_rescale > 0.0:
+                raise ValueError(
+                    "PPSR-09E composable AND is not yet qualified with CFG rescale enabled."
+                )
+            branches = tuple(payload.get("branches") or ())
+            weights = tuple(float(value) for value in (payload.get("weights") or ()))
+            branch_kwargs = tuple(payload.get("branch_model_conditioning") or ())
+            if not branches or len(branches) != len(weights) or len(branches) != len(branch_kwargs):
+                raise ValueError(
+                    "PPSR-09E composable AND requires one weight/model-conditioning payload per branch."
+                )
+            noise_unconditional = call_with_optional_model_conditioning(
+                raw_model_fn,
+                sample,
+                sigma_value,
+                timestep_value,
+                payload["uncond"],
+                model_conditioning=payload.get("uncond_model_conditioning"),
+            )
+            branch_outputs: list[torch.Tensor] = []
+            for branch, branch_model_kwargs in zip(branches, branch_kwargs):
+                branch_outputs.append(
+                    call_with_optional_model_conditioning(
+                        raw_model_fn,
+                        sample,
+                        sigma_value,
+                        timestep_value,
+                        branch,
+                        model_conditioning=branch_model_kwargs,
+                    )
+                )
+            guided = noise_unconditional.clone()
+            for weight, branch_output in zip(weights, branch_outputs):
+                guided = guided + (branch_output - noise_unconditional) * (
+                    float(weight) * float(effective_scale)
+                )
+            if not torch.isfinite(guided).all():
+                raise ValueError("KES composable AND guidance produced non-finite noise output.")
+            return guided, noise_unconditional, branch_outputs[0]
+
         for i in range(sigmas.numel() - 1):
             sigma = sigmas[i]
             sigma_next = sigmas[i + 1]
@@ -430,36 +481,65 @@ class KESSampler(SamplerTraceMixin):
                 }
             )
 
-            cond, uncond = resolve_step_conditioning(
-                conditioning=conditioning,
-                step_index=i,
-                latents=x,
-                state=state,
-            )
-            model_conditioning = resolve_step_model_conditioning(
-                conditioning=conditioning,
-                step_index=i,
+            composable = resolve_step_composable_conditioning(
+                conditioning,
+                i,
                 latents=x,
                 request=request,
             )
-            cond_model_kwargs = select_step_model_conditioning_branch(
-                model_conditioning, "conditional"
-            )
-            uncond_model_kwargs = select_step_model_conditioning_branch(
-                model_conditioning, "unconditional"
-            )
+            if composable is None:
+                cond, uncond = resolve_step_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=x,
+                    state=state,
+                )
+                model_conditioning = resolve_step_model_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=x,
+                    request=request,
+                )
+                cond_model_kwargs = select_step_model_conditioning_branch(
+                    model_conditioning, "conditional"
+                )
+                uncond_model_kwargs = select_step_model_conditioning_branch(
+                    model_conditioning, "unconditional"
+                )
+            else:
+                cond = composable["branches"][0]
+                uncond = composable["uncond"]
+                cond_model_kwargs = None
+                uncond_model_kwargs = None
 
             active_regions = (
                 regional_resolver.resolve_regions(step_index=i, latents=x)
                 if regional_resolver is not None
                 else []
             )
+            if composable is not None and active_regions:
+                raise ValueError(
+                    "PPSR-09E composable AND and REGION guidance are not qualified together."
+                )
             regional_guidance_active_any = regional_guidance_active_any or bool(active_regions)
-            noise_uncond = call_with_optional_model_conditioning(
-                raw_model_fn, x, sigma, timestep, uncond,
-                model_conditioning=uncond_model_kwargs,
-            )
-            if active_regions:
+            if composable is not None:
+                composable_scale = float(
+                    guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale)
+                ) * float(legacy_guidance_multiplier)
+                noise, noise_uncond, noise_cond = evaluate_composable_noise(
+                    x,
+                    sigma,
+                    timestep,
+                    composable,
+                    effective_scale=composable_scale,
+                )
+                guidance_delta = noise - noise_uncond
+            else:
+                noise_uncond = call_with_optional_model_conditioning(
+                    raw_model_fn, x, sigma, timestep, uncond,
+                    model_conditioning=uncond_model_kwargs,
+                )
+            if composable is None and active_regions:
                 regional_conditional = getattr(raw_model_fn, "predict_regional_conditional_noise", None)
                 if not callable(regional_conditional):
                     raise TypeError("The denoising system does not provide native regional conditional noise.")
@@ -474,23 +554,24 @@ class KESSampler(SamplerTraceMixin):
                     model_conditioning=cond_model_kwargs,
                     uncond_noise=noise_uncond,
                 )
-            else:
+            elif composable is None:
                 noise_cond = call_with_optional_model_conditioning(
                     raw_model_fn, x, sigma, timestep, cond,
                     model_conditioning=cond_model_kwargs,
                 )
-            guidance_delta = noise_cond - noise_uncond
+            if composable is None:
+                guidance_delta = noise_cond - noise_uncond
 
-            guidance_result = combine_guidance_outputs(
-                noise_uncond,
-                noise_cond,
-                effective_cfg_scale=guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale),
-                semantics=guidance_semantics,
-            )
-            noise = guidance_result.guided
-            cfg_rescale_applied = cfg_rescale_applied or bool(
-                guidance_result.metadata.get("cfg_rescale_applied")
-            )
+                guidance_result = combine_guidance_outputs(
+                    noise_uncond,
+                    noise_cond,
+                    effective_cfg_scale=guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale),
+                    semantics=guidance_semantics,
+                )
+                noise = guidance_result.guided
+                cfg_rescale_applied = cfg_rescale_applied or bool(
+                    guidance_result.metadata.get("cfg_rescale_applied")
+                )
 
             denoised = x - sigma * noise
             dt = sigma_next - sigma
@@ -506,35 +587,66 @@ class KESSampler(SamplerTraceMixin):
                 x_pred = denoised + (sigma_next * noise)
 
                 # Corrector uses conditioning for the next step when available
-                cond_2, uncond_2 = resolve_step_conditioning(
-                    conditioning=conditioning,
-                    step_index=i + 1,
-                    latents=x_pred,
-                    state=state,
-                )
-                model_conditioning_2 = resolve_step_model_conditioning(
-                    conditioning=conditioning,
-                    step_index=i + 1,
+                composable_2 = resolve_step_composable_conditioning(
+                    conditioning,
+                    i + 1,
                     latents=x_pred,
                     request=request,
                 )
-                cond_model_kwargs_2 = select_step_model_conditioning_branch(
-                    model_conditioning_2, "conditional"
-                )
-                uncond_model_kwargs_2 = select_step_model_conditioning_branch(
-                    model_conditioning_2, "unconditional"
-                )
+                if composable_2 is None:
+                    cond_2, uncond_2 = resolve_step_conditioning(
+                        conditioning=conditioning,
+                        step_index=i + 1,
+                        latents=x_pred,
+                        state=state,
+                    )
+                    model_conditioning_2 = resolve_step_model_conditioning(
+                        conditioning=conditioning,
+                        step_index=i + 1,
+                        latents=x_pred,
+                        request=request,
+                    )
+                    cond_model_kwargs_2 = select_step_model_conditioning_branch(
+                        model_conditioning_2, "conditional"
+                    )
+                    uncond_model_kwargs_2 = select_step_model_conditioning_branch(
+                        model_conditioning_2, "unconditional"
+                    )
+                else:
+                    cond_2 = composable_2["branches"][0]
+                    uncond_2 = composable_2["uncond"]
+                    cond_model_kwargs_2 = None
+                    uncond_model_kwargs_2 = None
 
                 active_regions_2 = (
                     regional_resolver.resolve_regions(step_index=i + 1, latents=x_pred)
                     if regional_resolver is not None
                     else []
                 )
-                noise_uncond_2 = call_with_optional_model_conditioning(
-                    raw_model_fn, x_pred, sigma_next, timestep_next, uncond_2,
-                    model_conditioning=uncond_model_kwargs_2,
-                )
-                if active_regions_2:
+                if composable_2 is not None and active_regions_2:
+                    raise ValueError(
+                        "PPSR-09E composable AND and REGION guidance are not qualified together."
+                    )
+                if composable_2 is not None:
+                    noise_2, noise_uncond_2, noise_cond_2 = evaluate_composable_noise(
+                        x_pred,
+                        sigma_next,
+                        timestep_next,
+                        composable_2,
+                        effective_scale=float(
+                            guidance_step.get(
+                                "effective_cfg_scale_pre_rescale", step_effective_cfg_scale
+                            )
+                        )
+                        * float(legacy_guidance_multiplier),
+                    )
+                    guidance_delta_2 = noise_2 - noise_uncond_2
+                else:
+                    noise_uncond_2 = call_with_optional_model_conditioning(
+                        raw_model_fn, x_pred, sigma_next, timestep_next, uncond_2,
+                        model_conditioning=uncond_model_kwargs_2,
+                    )
+                if composable_2 is None and active_regions_2:
                     regional_conditional = getattr(raw_model_fn, "predict_regional_conditional_noise", None)
                     if not callable(regional_conditional):
                         raise TypeError("The denoising system does not provide native regional conditional noise.")
@@ -549,20 +661,21 @@ class KESSampler(SamplerTraceMixin):
                         model_conditioning=cond_model_kwargs_2,
                         uncond_noise=noise_uncond_2,
                     )
-                else:
+                elif composable_2 is None:
                     noise_cond_2 = call_with_optional_model_conditioning(
                         raw_model_fn, x_pred, sigma_next, timestep_next, cond_2,
                         model_conditioning=cond_model_kwargs_2,
                     )
-                guidance_delta_2 = noise_cond_2 - noise_uncond_2
+                if composable_2 is None:
+                    guidance_delta_2 = noise_cond_2 - noise_uncond_2
 
-                guidance_result_2 = combine_guidance_outputs(
-                    noise_uncond_2,
-                    noise_cond_2,
-                    effective_cfg_scale=guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale),
-                    semantics=guidance_semantics,
-                )
-                noise_2 = guidance_result_2.guided
+                    guidance_result_2 = combine_guidance_outputs(
+                        noise_uncond_2,
+                        noise_cond_2,
+                        effective_cfg_scale=guidance_step.get("effective_cfg_scale_pre_rescale", step_effective_cfg_scale),
+                        semantics=guidance_semantics,
+                    )
+                    noise_2 = guidance_result_2.guided
 
                 x = x + 0.5 * (noise + noise_2) * dt
                 heun_used = True
@@ -614,6 +727,17 @@ class KESSampler(SamplerTraceMixin):
                 "used_resolver": resolver is not None,
                 "regional_guidance_active": bool(active_regions),
                 "regional_active_count": len(active_regions),
+                "composition_mode": (
+                    str(composable.get("mode") or "") if composable is not None else "standard"
+                ),
+                "composition_branch_count": (
+                    len(composable.get("branches") or ()) if composable is not None else 1
+                ),
+                "logical_model_evaluations": (
+                    len(composable.get("branches") or ()) + 1
+                    if composable is not None
+                    else 2
+                ),
                 "cfg_rescale": canonical_cfg_rescale,
                 "cfg_rescale_applied": cfg_rescale_applied,
                 "legacy_clamp_guidance": legacy_clamp_guidance,

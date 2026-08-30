@@ -9,6 +9,7 @@ into strings.
 """
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Mapping
 
 from modules.prompt_parsers.numeric_semantics import (
@@ -53,6 +54,32 @@ class Literal(IRNode):
 
 
 @dataclass(frozen=True)
+class LiteralTextScope(IRNode):
+    """Double-quoted ImageGen literal-text scope.
+
+    Structural punctuation and prompt operators inside the scope are encoder
+    text, not grammar. The delimiting quote characters are parser syntax and
+    are not emitted to the encoder.
+    """
+
+    value: str = ""
+    delimiter: str = '"'
+
+
+@dataclass(frozen=True)
+class SemanticScope(IRNode):
+    """Single-quoted bounded semantic scope.
+
+    The scope boundary protects internal commas/punctuation from the outer
+    grammar while its child is parsed recursively using the active ImageGen
+    semantic profile.
+    """
+
+    node: IRNode = field(default_factory=Text)
+    delimiter: str = "'"
+
+
+@dataclass(frozen=True)
 class Group(IRNode):
     items: tuple[IRNode, ...] = field(default_factory=tuple)
 
@@ -66,6 +93,27 @@ class ExperimentalGroup(IRNode):
 
     items: tuple[IRNode, ...] = field(default_factory=tuple)
     algorithm: str = "shared_context_focus_v1"
+
+
+@dataclass(frozen=True)
+class AverageSet(IRNode):
+    """PPSR-09E normalized independent-conditioning average.
+
+    ``||`` is intentionally represented as its own IR node rather than being
+    rewritten to historical braces or ``AND``.  The runtime algorithm remains
+    the qualified PPSR-03 ``branch_average_v1`` behavior.
+    """
+
+    branches: tuple[IRNode, ...] = field(default_factory=tuple)
+    local_weights: tuple[float, ...] = field(default_factory=tuple)
+    algorithm: str = "branch_average_v1"
+
+
+@dataclass(frozen=True)
+class ChunkBreak(IRNode):
+    """Typed encoder chunk boundary used by PPSR-09E ``BREAK`` semantics."""
+
+    algorithm: str = "encoder_chunk_break_v1"
 
 
 @dataclass(frozen=True)
@@ -142,6 +190,8 @@ class ConjunctionBranch:
 @dataclass(frozen=True)
 class Conjunction(IRNode):
     branches: tuple[ConjunctionBranch, ...] = field(default_factory=tuple)
+    composition_mode: str = "legacy_normalized_average_v1"
+    algorithm: str = "legacy_normalized_average_v1"
 
 
 @dataclass(frozen=True)
@@ -504,44 +554,741 @@ def _mixed_prompt_root(source: str) -> IRNode:
     return _text_node_to_ir(str(legacy.value or ""), source_text=source)
 
 
-def parse_prompt_ir(source: str, *, parser_namespace: str = "legacy") -> PromptIR:
+@dataclass(frozen=True)
+class _QuoteScopeSpec:
+    placeholder: str
+    kind: str
+    source_text: str
+    content: str
+    delimiter: str
+
+
+def _is_apostrophe(source: str, index: int) -> bool:
+    """Return True for an in-word apostrophe such as ``woman's``/``don't``."""
+
+    text = str(source or "")
+    if not (0 <= int(index) < len(text)) or text[index] != "'":
+        return False
+    before = text[index - 1] if index > 0 else ""
+    after = text[index + 1] if index + 1 < len(text) else ""
+    wordish = lambda value: bool(value) and (value.isalnum() or value == "_")
+    return wordish(before) and wordish(after)
+
+
+def _find_matching_quote(source: str, start: int, delimiter: str) -> int:
+    """Find a quote terminator without allowing punctuation inside to escape.
+
+    Single-quoted semantic scopes may contain double-quoted literal text.  An
+    in-word apostrophe never terminates a semantic scope.
+    """
+
+    text = str(source or "")
+    index = int(start) + 1
+    while index < len(text):
+        if text[index] == "\\" and not _is_escaped(text, index):
+            index += 2
+            continue
+        if delimiter == "'" and text[index] == '"' and not _is_escaped(text, index):
+            nested_end = _find_matching_quote(text, index, '"')
+            if nested_end >= 0:
+                index = nested_end + 1
+                continue
+        if text[index] == delimiter and not _is_escaped(text, index):
+            if delimiter == "'" and _is_apostrophe(text, index):
+                index += 1
+                continue
+            return index
+        index += 1
+    return -1
+
+
+def _protect_quote_scopes(
+    source: str,
+    *,
+    literal_enabled: bool,
+    semantic_enabled: bool,
+) -> tuple[str, dict[str, _QuoteScopeSpec]]:
+    """Replace active quote scopes with parser-opaque placeholders.
+
+    Protection occurs before Classic/group/average parsing, so commas, braces,
+    relation closes, pipes, AND, BREAK, and binding punctuation inside a quoted
+    scope cannot affect the *outer* grammar.
+    """
+
+    text = str(source or "")
+    if not literal_enabled and not semantic_enabled:
+        return text, {}
+    output: list[str] = []
+    specs: dict[str, _QuoteScopeSpec] = {}
+    cursor = 0
+    index = 0
+    counter = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and not _is_escaped(text, index):
+            index += 2
+            continue
+        kind = ""
+        if char == '"' and literal_enabled and not _is_escaped(text, index):
+            kind = "literal"
+        elif (
+            char == "'"
+            and semantic_enabled
+            and not _is_escaped(text, index)
+            and not _is_apostrophe(text, index)
+        ):
+            kind = "semantic"
+        if not kind:
+            index += 1
+            continue
+        close = _find_matching_quote(text, index, char)
+        if close < 0:
+            # Unmatched quotes remain ordinary user text. This keeps apostrophe-
+            # adjacent prose and partially typed prompts backward-compatible.
+            index += 1
+            continue
+        placeholder = f"__IGQS_{counter:04d}__"
+        counter += 1
+        output.append(text[cursor:index])
+        output.append(placeholder)
+        scope_source = text[index : close + 1]
+        specs[placeholder] = _QuoteScopeSpec(
+            placeholder=placeholder,
+            kind=kind,
+            source_text=scope_source,
+            content=scope_source[1:-1],
+            delimiter=char,
+        )
+        cursor = close + 1
+        index = close + 1
+    if not specs:
+        return text, {}
+    output.append(text[cursor:])
+    return "".join(output), specs
+
+
+def _restore_quote_source(value: str, specs: Mapping[str, _QuoteScopeSpec]) -> str:
+    text = str(value or "")
+    for placeholder, spec in specs.items():
+        text = text.replace(placeholder, spec.source_text)
+    return text
+
+
+def _unescape_quote_delimiter(value: str, delimiter: str) -> str:
+    return str(value or "").replace("\\" + str(delimiter), str(delimiter))
+
+
+def _scan_top_level_delimiter_positions(source: str, delimiter: str) -> list[int]:
+    """Return delimiters outside paired and Classic owner structures.
+
+    ``owner:::...!!`` is one semantic unit, so commas/``||`` inside its body do
+    not terminate an outer average operand. Paired groups/brackets/parentheses
+    receive the same protection.
+    """
+
+    text = str(source or "")
+    pairs = {"(": ")", "[": "]", "{": "}", "⦃": "⦄"}
+    closers = set(pairs.values())
+    stack: list[str] = []
+    owner_depth = 0
+    positions: list[int] = []
+    index = 0
+    while index < len(text):
+        if text[index] == "\\" and not _is_escaped(text, index):
+            index += 2
+            continue
+        if not stack and text.startswith(":::", index) and not _is_escaped(text, index):
+            owner_depth += 1
+            index += 3
+            continue
+        if owner_depth and text.startswith("!!", index) and not _is_escaped(text, index):
+            owner_depth = max(0, owner_depth - 1)
+            index += 2
+            continue
+        char = text[index]
+        if char in pairs and not _is_escaped(text, index):
+            stack.append(pairs[char])
+            index += 1
+            continue
+        if char in closers and stack and char == stack[-1] and not _is_escaped(text, index):
+            stack.pop()
+            index += 1
+            continue
+        if not stack and owner_depth == 0:
+            if delimiter == "||" and text.startswith("||", index) and not _is_escaped(text, index):
+                positions.append(index)
+                index += 2
+                continue
+            if delimiter == "," and char == "," and not _is_escaped(text, index):
+                positions.append(index)
+        index += 1
+    return positions
+
+
+def _split_top_level_double_pipe(source: str) -> list[str]:
+    text = str(source or "")
+    positions = _scan_top_level_delimiter_positions(text, "||")
+    if not positions:
+        return [text]
+    output: list[str] = []
+    start = 0
+    for position in positions:
+        output.append(text[start:position])
+        start = position + 2
+    output.append(text[start:])
+    return output
+
+
+def _split_top_level_commas(source: str) -> list[str]:
+    text = str(source or "")
+    positions = _scan_top_level_delimiter_positions(text, ",")
+    if not positions:
+        return [text]
+    output: list[str] = []
+    start = 0
+    for position in positions:
+        output.append(text[start:position])
+        start = position + 1
+    output.append(text[start:])
+    return output
+
+
+def _restore_quote_scopes_in_node(
+    node: IRNode,
+    specs: Mapping[str, _QuoteScopeSpec],
+    semantic_modes: Mapping[str, str],
+) -> IRNode:
+    """Rehydrate protected quotes after the surrounding grammar is parsed."""
+
+    def restore_text(value: str, source_text: str, escaped_literal: bool = False) -> IRNode:
+        text = str(value or "")
+        hits = [(text.find(key), key) for key in specs if key in text]
+        hits = [item for item in hits if item[0] >= 0]
+        if not hits:
+            if semantic_modes.get("double_quote_scope") == "literal_text_scope_v1":
+                text = text.replace(r'\"', '"')
+            if semantic_modes.get("single_quote_scope") == "semantic_scope_v1":
+                text = text.replace(r"\'", "'")
+            cls = Literal if escaped_literal else Text
+            return cls(source_text=source_text, value=text, escaped_literal=escaped_literal)
+        parts: list[IRNode] = []
+        cursor = 0
+        pattern = re.compile("(" + "|".join(re.escape(key) for key in specs) + ")")
+        for match in pattern.finditer(text):
+            if match.start() > cursor:
+                chunk = text[cursor : match.start()]
+                parts.append(
+                    Literal(source_text=chunk, value=chunk, escaped_literal=True)
+                    if escaped_literal
+                    else Text(source_text=chunk, value=chunk)
+                )
+            spec = specs[match.group(0)]
+            if spec.kind == "literal":
+                parts.append(
+                    LiteralTextScope(
+                        source_text=spec.source_text,
+                        value=_unescape_quote_delimiter(spec.content, spec.delimiter),
+                        delimiter=spec.delimiter,
+                    )
+                )
+            else:
+                content = _unescape_quote_delimiter(spec.content, spec.delimiter)
+                parts.append(
+                    SemanticScope(
+                        source_text=spec.source_text,
+                        node=_parse_profile_root(content, semantic_modes=semantic_modes),
+                        delimiter=spec.delimiter,
+                    )
+                )
+            cursor = match.end()
+        if cursor < len(text):
+            chunk = text[cursor:]
+            parts.append(
+                Literal(source_text=chunk, value=chunk, escaped_literal=True)
+                if escaped_literal
+                else Text(source_text=chunk, value=chunk)
+            )
+        if len(parts) == 1:
+            return parts[0]
+        return Prompt(source_text=_restore_quote_source(source_text, specs), parts=tuple(parts))
+
+    if isinstance(node, Literal):
+        return restore_text(node.value, node.source_text, True)
+    if isinstance(node, Text):
+        return restore_text(node.value, node.source_text, bool(node.escaped_literal))
+    if isinstance(node, Group):
+        return Group(
+            source_text=_restore_quote_source(node.source_text, specs),
+            items=tuple(_restore_quote_scopes_in_node(item, specs, semantic_modes) for item in node.items),
+        )
+    if isinstance(node, ExperimentalGroup):
+        return ExperimentalGroup(
+            source_text=_restore_quote_source(node.source_text, specs),
+            items=tuple(_restore_quote_scopes_in_node(item, specs, semantic_modes) for item in node.items),
+            algorithm=node.algorithm,
+        )
+    if isinstance(node, Prompt):
+        return Prompt(
+            source_text=_restore_quote_source(node.source_text, specs),
+            parts=tuple(_restore_quote_scopes_in_node(item, specs, semantic_modes) for item in node.parts),
+        )
+    if isinstance(node, Relation):
+        return Relation(
+            source_text=_restore_quote_source(node.source_text, specs),
+            parent=_restore_quote_scopes_in_node(node.parent, specs, semantic_modes),
+            child=_restore_quote_scopes_in_node(node.child, specs, semantic_modes),
+        )
+    if isinstance(node, Weighted):
+        return Weighted(
+            source_text=_restore_quote_source(node.source_text, specs),
+            node=_restore_quote_scopes_in_node(node.node, specs, semantic_modes),
+            weight=node.weight,
+        )
+    if isinstance(node, Quantity):
+        return Quantity(
+            source_text=_restore_quote_source(node.source_text, specs),
+            node=_restore_quote_scopes_in_node(node.node, specs, semantic_modes),
+            quantity=node.quantity,
+        )
+    if isinstance(node, Sequence):
+        return Sequence(
+            source_text=_restore_quote_source(node.source_text, specs),
+            items=tuple(
+                SequenceItemIR(
+                    node=_restore_quote_scopes_in_node(item.node, specs, semantic_modes),
+                    weight=item.weight,
+                    active_until_step=item.active_until_step,
+                    source_text=_restore_quote_source(item.source_text, specs),
+                    source_start=item.source_start,
+                    source_end=item.source_end,
+                    terminator=item.terminator,
+                )
+                for item in node.items
+            ),
+            weight=node.weight,
+            active_until_step=node.active_until_step,
+            syntax_origin=node.syntax_origin,
+        )
+    if isinstance(node, OwnerSequence):
+        return OwnerSequence(
+            source_text=_restore_quote_source(node.source_text, specs),
+            owner=_restore_quote_scopes_in_node(node.owner, specs, semantic_modes),
+            items=tuple(
+                SequenceItemIR(
+                    node=_restore_quote_scopes_in_node(item.node, specs, semantic_modes),
+                    weight=item.weight,
+                    active_until_step=item.active_until_step,
+                    source_text=_restore_quote_source(item.source_text, specs),
+                    source_start=item.source_start,
+                    source_end=item.source_end,
+                    terminator=item.terminator,
+                )
+                for item in node.items
+            ),
+            syntax_origin=node.syntax_origin,
+            top_terminator=node.top_terminator,
+        )
+    if isinstance(node, Conjunction):
+        return Conjunction(
+            source_text=_restore_quote_source(node.source_text, specs),
+            branches=tuple(
+                ConjunctionBranch(
+                    node=_restore_quote_scopes_in_node(branch.node, specs, semantic_modes),
+                    weight=branch.weight,
+                    source_text=_restore_quote_source(branch.source_text, specs),
+                )
+                for branch in node.branches
+            ),
+            composition_mode=node.composition_mode,
+            algorithm=node.algorithm,
+        )
+    return node
+
+
+def _parse_nonaverage_protected(
+    protected_source: str,
+    *,
+    specs: Mapping[str, _QuoteScopeSpec],
+    semantic_modes: Mapping[str, str],
+) -> IRNode:
+    composable_and = semantic_modes.get("and_composition") in {
+        "a1111_composable",
+        "a1111_composable_guidance",
+        "a1111_composable_guidance_v1",
+    }
+    literal_and = semantic_modes.get("and_composition") == "literal"
+    if composable_and and len([item for item in re.split(r"\bAND\b", protected_source) if item.strip()]) > 1:
+        node: IRNode = _build_conjunction(
+            protected_source,
+            composition_mode="a1111_composable_guidance_v1",
+            literal_structures=(
+                semantic_modes.get("group_composition") == "literal"
+                and semantic_modes.get("relation_mode") == "literal"
+            ),
+        )
+    elif not literal_and:
+        branches = split_top_level_and(protected_source)
+        clean_branches = [item for item in branches if item.strip()]
+        if len(clean_branches) > 1:
+            branch_weight_re = re.compile(
+                r"^((?:\s|.)*?)(?:\s*:\s*([-+]?(?:\d+\.?|\d*\.\d+)))?\s*$"
+            )
+            built: list[ConjunctionBranch] = []
+            for branch in clean_branches:
+                legacy_node = parse_legacy_node(branch)
+                branch_weight = 1.0
+                branch_source = branch
+                if isinstance(legacy_node, TextNode):
+                    match = branch_weight_re.search(branch)
+                    if match is not None and match.group(2) is not None:
+                        branch_source = match.group(1)
+                        branch_weight = float(match.group(2))
+                built.append(
+                    ConjunctionBranch(
+                        node=_mixed_prompt_root(branch_source),
+                        weight=branch_weight,
+                        source_text=branch,
+                    )
+                )
+            node = Conjunction(
+                source_text=protected_source,
+                branches=tuple(built),
+                composition_mode="legacy_normalized_average_v1",
+                algorithm="legacy_normalized_average_v1",
+            )
+        else:
+            if (
+                semantic_modes.get("group_composition") == "literal"
+                and semantic_modes.get("relation_mode") == "literal"
+            ):
+                node = Text(source_text=protected_source, value=protected_source)
+            else:
+                node = _mixed_prompt_root(protected_source)
+    else:
+        if (
+            semantic_modes.get("group_composition") == "literal"
+            and semantic_modes.get("relation_mode") == "literal"
+        ):
+            node = Text(source_text=protected_source, value=protected_source)
+        else:
+            node = _mixed_prompt_root(protected_source)
+    return _restore_quote_scopes_in_node(node, specs, semantic_modes)
+
+
+def _parse_average_segment(
+    segment: str,
+    *,
+    specs: Mapping[str, _QuoteScopeSpec],
+    semantic_modes: Mapping[str, str],
+) -> IRNode:
+    """Parse one top-level comma-delimited semantic segment."""
+
+    text = str(segment or "")
+    alternatives = _split_top_level_double_pipe(text)
+    leading = text[: len(text) - len(text.lstrip())]
+    trailing = text[len(text.rstrip()) :]
+    core = text.strip()
+    if len([item for item in alternatives if item.strip()]) <= 1:
+        core_node = _parse_nonaverage_protected(core, specs=specs, semantic_modes=semantic_modes)
+        parts: list[IRNode] = []
+        if leading:
+            parts.append(Text(source_text=leading, value=leading))
+        if core or not parts:
+            parts.append(core_node)
+        if trailing:
+            parts.append(Text(source_text=trailing, value=trailing))
+        if len(parts) == 1:
+            return parts[0]
+        return Prompt(source_text=_restore_quote_source(text, specs), parts=tuple(parts))
+
+    alternatives = _split_top_level_double_pipe(core)
+    branches = tuple(
+        _parse_nonaverage_protected(item.strip(), specs=specs, semantic_modes=semantic_modes)
+        for item in alternatives
+        if item.strip()
+    )
+    average = AverageSet(
+        source_text=_restore_quote_source(core, specs),
+        branches=branches,
+        local_weights=tuple(1.0 for _ in branches),
+        algorithm="branch_average_v1",
+    )
+    parts: list[IRNode] = []
+    if leading:
+        parts.append(Text(source_text=leading, value=leading))
+    parts.append(average)
+    if trailing:
+        parts.append(Text(source_text=trailing, value=trailing))
+    if len(parts) == 1:
+        return average
+    return Prompt(source_text=_restore_quote_source(text, specs), parts=tuple(parts))
+
+
+def _parse_profile_root(source: str, *, semantic_modes: Mapping[str, str]) -> IRNode:
+    """Parse PPSR-09E profile grammar with explicit quote-scope boundaries."""
+
+    text = str(source or "")
+    literal_quotes = semantic_modes.get("double_quote_scope") == "literal_text_scope_v1"
+    semantic_quotes = semantic_modes.get("single_quote_scope") == "semantic_scope_v1"
+    protected, specs = _protect_quote_scopes(
+        text,
+        literal_enabled=literal_quotes,
+        semantic_enabled=semantic_quotes,
+    )
+    average_enabled = semantic_modes.get("average_surface") == "double_pipe_v1"
+    if average_enabled and _scan_top_level_delimiter_positions(protected, "||"):
+        comma_segments = _split_top_level_commas(protected)
+        parsed_parts: list[IRNode] = []
+        for index, segment in enumerate(comma_segments):
+            parsed_segment = _parse_average_segment(
+                segment, specs=specs, semantic_modes=semantic_modes
+            )
+            _append_ir_part(parsed_parts, parsed_segment)
+            if index < len(comma_segments) - 1:
+                parsed_parts.append(Text(source_text=",", value=","))
+        if len(parsed_parts) == 1:
+            return parsed_parts[0]
+        return Prompt(source_text=text, parts=tuple(parsed_parts))
+    return _parse_nonaverage_protected(protected, specs=specs, semantic_modes=semantic_modes)
+
+def _split_unescaped_break(value: str) -> list[str | None]:
+    """Return text segments separated by typed BREAK markers.
+
+    ``None`` represents one canonical chunk break. Escaped ``\\BREAK`` remains
+    literal text and is handled by the normal literal/escape path.
+    """
+
+    import re
+
+    text = str(value or "")
+    pattern = re.compile(r"\bBREAK\b")
+    result: list[str | None] = []
+    start = 0
+    found = False
+    for match in pattern.finditer(text):
+        if _is_escaped(text, match.start()):
+            continue
+        result.append(text[start : match.start()])
+        result.append(None)
+        start = match.end()
+        found = True
+    if not found:
+        return [text]
+    result.append(text[start:])
+    return result
+
+
+def _inject_chunk_breaks(node: IRNode) -> IRNode:
+    """Recursively replace encoder-visible BREAK text with ``ChunkBreak`` IR."""
+
+    if isinstance(node, LiteralTextScope):
+        return node
+    if isinstance(node, SemanticScope):
+        return SemanticScope(
+            source_text=node.source_text,
+            node=_inject_chunk_breaks(node.node),
+            delimiter=node.delimiter,
+        )
+    if isinstance(node, Literal):
+        return node
+    if isinstance(node, Text):
+        pieces = _split_unescaped_break(node.value)
+        if len(pieces) == 1:
+            return node
+        parts: list[IRNode] = []
+        for piece in pieces:
+            if piece is None:
+                parts.append(ChunkBreak(source_text="BREAK"))
+            elif piece:
+                parts.append(_text_leaf(piece, source_text=piece))
+        return Prompt(source_text=node.source_text or node.value, parts=tuple(parts))
+    if isinstance(node, Group):
+        return Group(source_text=node.source_text, items=tuple(_inject_chunk_breaks(item) for item in node.items))
+    if isinstance(node, ExperimentalGroup):
+        return ExperimentalGroup(
+            source_text=node.source_text,
+            items=tuple(_inject_chunk_breaks(item) for item in node.items),
+            algorithm=node.algorithm,
+        )
+    if isinstance(node, AverageSet):
+        return AverageSet(
+            source_text=node.source_text,
+            branches=tuple(_inject_chunk_breaks(item) for item in node.branches),
+            local_weights=node.local_weights,
+            algorithm=node.algorithm,
+        )
+    if isinstance(node, Prompt):
+        return Prompt(source_text=node.source_text, parts=tuple(_inject_chunk_breaks(item) for item in node.parts))
+    if isinstance(node, Relation):
+        return Relation(
+            source_text=node.source_text,
+            parent=_inject_chunk_breaks(node.parent),
+            child=_inject_chunk_breaks(node.child),
+        )
+    if isinstance(node, Sequence):
+        return Sequence(
+            source_text=node.source_text,
+            items=tuple(
+                SequenceItemIR(
+                    node=_inject_chunk_breaks(item.node),
+                    weight=item.weight,
+                    active_until_step=item.active_until_step,
+                    source_text=item.source_text,
+                    source_start=item.source_start,
+                    source_end=item.source_end,
+                    terminator=item.terminator,
+                )
+                for item in node.items
+            ),
+            weight=node.weight,
+            active_until_step=node.active_until_step,
+            syntax_origin=node.syntax_origin,
+        )
+    if isinstance(node, OwnerSequence):
+        return OwnerSequence(
+            source_text=node.source_text,
+            owner=_inject_chunk_breaks(node.owner),
+            items=tuple(
+                SequenceItemIR(
+                    node=_inject_chunk_breaks(item.node),
+                    weight=item.weight,
+                    active_until_step=item.active_until_step,
+                    source_text=item.source_text,
+                    source_start=item.source_start,
+                    source_end=item.source_end,
+                    terminator=item.terminator,
+                )
+                for item in node.items
+            ),
+            syntax_origin=node.syntax_origin,
+            top_terminator=node.top_terminator,
+        )
+    if isinstance(node, Conjunction):
+        return Conjunction(
+            source_text=node.source_text,
+            branches=tuple(
+                ConjunctionBranch(
+                    node=_inject_chunk_breaks(branch.node),
+                    weight=branch.weight,
+                    source_text=branch.source_text,
+                )
+                for branch in node.branches
+            ),
+            composition_mode=node.composition_mode,
+            algorithm=node.algorithm,
+        )
+    if isinstance(node, Weighted):
+        return Weighted(source_text=node.source_text, node=_inject_chunk_breaks(node.node), weight=node.weight)
+    if isinstance(node, Quantity):
+        return Quantity(source_text=node.source_text, node=_inject_chunk_breaks(node.node), quantity=node.quantity)
+    return node
+
+
+def _build_conjunction(
+    source: str, *, composition_mode: str, literal_structures: bool = False
+) -> Conjunction:
+    """Build a conjunction using A1111-compatible raw uppercase-AND splitting."""
+
+    import re
+
+    raw_branches = re.split(r"\bAND\b", str(source or ""))
+    clean_branches = [item for item in raw_branches if item.strip()]
+    branch_weight_re = re.compile(
+        r"^((?:\s|.)*?)(?:\s*:\s*([-+]?(?:\d+\.?|\d*\.\d+)))?\s*$"
+    )
+    built: list[ConjunctionBranch] = []
+    for branch in clean_branches:
+        branch_weight = 1.0
+        branch_source = branch
+        match = branch_weight_re.search(branch)
+        if match is not None and match.group(2) is not None:
+            branch_source = match.group(1)
+            branch_weight = float(match.group(2))
+        branch_node = (
+            Text(source_text=branch_source, value=branch_source)
+            if literal_structures
+            else _mixed_prompt_root(branch_source)
+        )
+        built.append(
+            ConjunctionBranch(
+                node=branch_node,
+                weight=branch_weight,
+                source_text=branch,
+            )
+        )
+    return Conjunction(
+        source_text=str(source or ""),
+        branches=tuple(built),
+        composition_mode=composition_mode,
+        algorithm=composition_mode,
+    )
+
+
+def parse_prompt_ir(
+    source: str,
+    *,
+    parser_namespace: str = "legacy",
+    semantic_modes: Mapping[str, str] | None = None,
+) -> PromptIR:
     raw = str(source or "")
     normalized, warnings = normalize_legacy_structured_source(raw)
-    branches = split_top_level_and(normalized)
-    clean_branches = [item for item in branches if item.strip()]
+    modes = {str(key): str(value) for key, value in dict(semantic_modes or {}).items()}
+    break_enabled = modes.get("break_mode") == "encoder_chunk_break_v1"
 
-    if len(clean_branches) > 1:
-        # Preserve AND as a first-class composition relationship.  Branch
-        # weights remain a downstream Legacy compatibility concern unless the
-        # branch itself owns structured Classic syntax.
-        import re
-        branch_weight_re = re.compile(
-            r"^((?:\s|.)*?)(?:\s*:\s*([-+]?(?:\d+\.?|\d*\.\d+)))?\s*$"
-        )
-        built: list[ConjunctionBranch] = []
-        for branch in clean_branches:
-            legacy_node = parse_legacy_node(branch)
-            branch_weight = 1.0
-            branch_source = branch
-            # Preserve historical AND branch weights only when the branch does
-            # not already own a structured numeric meaning.
-            if isinstance(legacy_node, TextNode):
-                match = branch_weight_re.search(branch)
-                if match is not None and match.group(2) is not None:
-                    branch_source = match.group(1)
-                    branch_weight = float(match.group(2))
-                    legacy_node = parse_legacy_node(branch_source)
-            built.append(
-                ConjunctionBranch(
-                    node=_mixed_prompt_root(branch_source),
-                    weight=branch_weight,
-                    source_text=branch,
-                )
-            )
-        ir_branches = tuple(built)
-        root: IRNode = Conjunction(source_text=normalized, branches=ir_branches)
+    # Profiles that do not opt into PPSR-09E/new quote semantics keep the exact
+    # historical parsing path. This is a replay/production-default guardrail.
+    advanced_profile_surface = (
+        modes.get("average_surface") == "double_pipe_v1"
+        or modes.get("double_quote_scope") == "literal_text_scope_v1"
+        or modes.get("single_quote_scope") == "semantic_scope_v1"
+        or modes.get("and_composition") in {
+            "a1111_composable",
+            "a1111_composable_guidance",
+            "a1111_composable_guidance_v1",
+            "literal",
+        }
+    )
+
+    if advanced_profile_surface:
+        root: IRNode = _parse_profile_root(normalized, semantic_modes=modes)
     else:
-        root = _mixed_prompt_root(normalized)
+        branches = split_top_level_and(normalized)
+        clean_branches = [item for item in branches if item.strip()]
+        if len(clean_branches) > 1:
+            branch_weight_re = re.compile(
+                r"^((?:\s|.)*?)(?:\s*:\s*([-+]?(?:\d+\.?|\d*\.\d+)))?\s*$"
+            )
+            built: list[ConjunctionBranch] = []
+            for branch in clean_branches:
+                legacy_node = parse_legacy_node(branch)
+                branch_weight = 1.0
+                branch_source = branch
+                if isinstance(legacy_node, TextNode):
+                    match = branch_weight_re.search(branch)
+                    if match is not None and match.group(2) is not None:
+                        branch_source = match.group(1)
+                        branch_weight = float(match.group(2))
+                built.append(
+                    ConjunctionBranch(
+                        node=_mixed_prompt_root(branch_source),
+                        weight=branch_weight,
+                        source_text=branch,
+                    )
+                )
+            root = Conjunction(
+                source_text=normalized,
+                branches=tuple(built),
+                composition_mode="legacy_normalized_average_v1",
+                algorithm="legacy_normalized_average_v1",
+            )
+        else:
+            root = _mixed_prompt_root(normalized)
+
+    # BREAK is a semantic/runtime capability, not an advanced-surface-only
+    # feature. Profiles such as legacy_default may opt into typed chunk breaks
+    # while retaining their historical AND/group grammar.
+    if break_enabled:
+        root = _inject_chunk_breaks(root)
 
     numeric_semantics = collect_numeric_semantics(normalized)
     numeric_warnings = [item.message for item in numeric_semantics if item.message and (not item.valid or item.inferred)]
@@ -558,6 +1305,20 @@ def parse_prompt_ir(source: str, *, parser_namespace: str = "legacy") -> PromptI
 
 def node_to_dict(node: IRNode) -> dict[str, Any]:
     base: dict[str, Any] = {"source_text": node.source_text}
+    if isinstance(node, LiteralTextScope):
+        return {
+            **base,
+            "type": "literal_text_scope",
+            "value": node.value,
+            "delimiter": node.delimiter,
+        }
+    if isinstance(node, SemanticScope):
+        return {
+            **base,
+            "type": "semantic_scope",
+            "delimiter": node.delimiter,
+            "node": node_to_dict(node.node),
+        }
     if isinstance(node, Literal):
         return {**base, "type": "literal", "value": node.value, "escaped_literal": True}
     if isinstance(node, Text):
@@ -571,6 +1332,16 @@ def node_to_dict(node: IRNode) -> dict[str, Any]:
             "algorithm": node.algorithm,
             "items": [node_to_dict(item) for item in node.items],
         }
+    if isinstance(node, AverageSet):
+        return {
+            **base,
+            "type": "average_set",
+            "algorithm": node.algorithm,
+            "local_weights": [float(item) for item in node.local_weights],
+            "branches": [node_to_dict(item) for item in node.branches],
+        }
+    if isinstance(node, ChunkBreak):
+        return {**base, "type": "chunk_break", "algorithm": node.algorithm}
     if isinstance(node, BoundConcept):
         return {
             **base,
@@ -634,7 +1405,7 @@ def node_to_dict(node: IRNode) -> dict[str, Any]:
     if isinstance(node, Quantity):
         return {**base, "type": "quantity", "quantity": float(node.quantity), "node": node_to_dict(node.node)}
     if isinstance(node, Conjunction):
-        return {
+        payload = {
             **base,
             "type": "conjunction",
             "branches": [
@@ -646,6 +1417,13 @@ def node_to_dict(node: IRNode) -> dict[str, Any]:
                 for item in node.branches
             ],
         }
+        # Historical PPSR semantic records did not carry conjunction-mode
+        # fields.  Preserve their exact semantic structure unless the prompt
+        # explicitly opts into PPSR-09E composable guidance.
+        if node.composition_mode != "legacy_normalized_average_v1":
+            payload["composition_mode"] = node.composition_mode
+            payload["algorithm"] = node.algorithm
+        return payload
     if isinstance(node, Scheduled):
         return {**base, "type": "scheduled", "value": node.value}
     if isinstance(node, Alternate):
@@ -670,6 +1448,18 @@ def _node_from_dict(payload: Mapping[str, Any]) -> IRNode:
     data = dict(payload or {})
     node_type = str(data.get("type") or "text")
     source_text = str(data.get("source_text") or "")
+    if node_type == "literal_text_scope":
+        return LiteralTextScope(
+            source_text=source_text,
+            value=str(data.get("value") or ""),
+            delimiter=str(data.get("delimiter") or '"'),
+        )
+    if node_type == "semantic_scope":
+        return SemanticScope(
+            source_text=source_text,
+            node=_node_from_dict(data.get("node") or {}),
+            delimiter=str(data.get("delimiter") or "'"),
+        )
     if node_type == "literal":
         return Literal(source_text=source_text, value=str(data.get("value") or ""), escaped_literal=True)
     if node_type == "text":
@@ -685,6 +1475,22 @@ def _node_from_dict(payload: Mapping[str, Any]) -> IRNode:
             source_text=source_text,
             items=tuple(_node_from_dict(item) for item in data.get("items") or []),
             algorithm=str(data.get("algorithm") or "shared_context_focus_v1"),
+        )
+    if node_type == "average_set":
+        branches = tuple(_node_from_dict(item) for item in data.get("branches") or [])
+        local_weights = tuple(float(item) for item in data.get("local_weights") or [])
+        if not local_weights:
+            local_weights = tuple(1.0 for _ in branches)
+        return AverageSet(
+            source_text=source_text,
+            branches=branches,
+            local_weights=local_weights,
+            algorithm=str(data.get("algorithm") or "branch_average_v1"),
+        )
+    if node_type == "chunk_break":
+        return ChunkBreak(
+            source_text=source_text,
+            algorithm=str(data.get("algorithm") or "encoder_chunk_break_v1"),
         )
     if node_type == "bound_concept":
         operator = str(data.get("operator") or "^")
@@ -746,6 +1552,8 @@ def _node_from_dict(payload: Mapping[str, Any]) -> IRNode:
     if node_type == "conjunction":
         return Conjunction(
             source_text=source_text,
+            composition_mode=str(data.get("composition_mode") or "legacy_normalized_average_v1"),
+            algorithm=str(data.get("algorithm") or data.get("composition_mode") or "legacy_normalized_average_v1"),
             branches=tuple(
                 ConjunctionBranch(
                     node=_node_from_dict(item.get("node") or {}),

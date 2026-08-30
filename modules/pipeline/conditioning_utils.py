@@ -94,6 +94,92 @@ def has_stepwise_conditioning(conditioning: Any) -> bool:
     return get_conditioning_resolver(conditioning) is not None
 
 
+def resolve_step_composable_conditioning(
+    conditioning: Any,
+    step_index: int,
+    *,
+    latents: torch.Tensor,
+    request: Any,
+) -> dict[str, Any] | None:
+    """Resolve PPSR-09E A1111 composable branches without embedding averaging."""
+
+    resolver = get_conditioning_resolver(conditioning)
+    if resolver is None:
+        return None
+    resolve_composable = getattr(resolver, "resolve_composable", None)
+    if not callable(resolve_composable):
+        return None
+    payload = resolve_composable(step_index=step_index, value_key="cross_attention")
+    if payload is None:
+        return None
+
+    branches = []
+    for index, tensor in enumerate(payload["branches"]):
+        aligned, _ = _align_to_latents(tensor, payload["uncond"], latents)
+        branches.append(aligned)
+    _, uncond = _align_to_latents(payload["branches"][0], payload["uncond"], latents)
+
+    result = dict(payload)
+    result["branches"] = tuple(branches)
+    result["uncond"] = uncond
+    result["branch_model_conditioning"] = tuple(None for _ in branches)
+    result["uncond_model_conditioning"] = None
+
+    conditioning_extra = getattr(conditioning, "extra", None)
+    architecture = (
+        str(conditioning_extra.get("conditioning_architecture") or "").strip().lower()
+        if isinstance(conditioning_extra, dict)
+        else ""
+    )
+    if architecture not in {"sdxl", "sd3.x"}:
+        return result
+
+    pooled = resolve_composable(step_index=step_index, value_key="pooled")
+    if pooled is None:
+        raise ValueError("Composable structured conditioning is missing pooled branch payloads.")
+    pooled_branches = []
+    for value in pooled["branches"]:
+        if value.ndim != 2:
+            raise ValueError("Composable pooled conditioning must be rank-2 [batch, width].")
+        batch = int(latents.shape[0])
+        if int(value.shape[0]) == 1 and batch > 1:
+            value = value.expand(batch, -1)
+        if int(value.shape[0]) != batch:
+            raise ValueError("Composable pooled conditioning batch does not match latent batch.")
+        pooled_branches.append(value.to(device=latents.device, dtype=latents.dtype))
+    pooled_uncond = pooled["uncond"]
+    if int(pooled_uncond.shape[0]) == 1 and int(latents.shape[0]) > 1:
+        pooled_uncond = pooled_uncond.expand(int(latents.shape[0]), -1)
+    pooled_uncond = pooled_uncond.to(device=latents.device, dtype=latents.dtype)
+
+    if architecture == "sd3.x":
+        result["branch_model_conditioning"] = tuple(
+            {"pooled_projections": value} for value in pooled_branches
+        )
+        result["uncond_model_conditioning"] = {"pooled_projections": pooled_uncond}
+        return result
+
+    branch_kwargs = []
+    uncond_kwargs = None
+    for pooled_cond in pooled_branches:
+        model_conditioning, time_id_plan = build_sdxl_branch_model_conditioning(
+            pooled_cond=pooled_cond,
+            pooled_uncond=pooled_uncond,
+            request=request,
+            latents=latents,
+        )
+        branch_kwargs.append(select_model_conditioning_branch(model_conditioning, "conditional"))
+        current_uncond = select_model_conditioning_branch(model_conditioning, "unconditional")
+        if uncond_kwargs is None:
+            uncond_kwargs = current_uncond
+        if isinstance(conditioning_extra, dict):
+            conditioning_extra["sdxl_time_id_plan"] = time_id_plan.to_serializable_dict()
+            conditioning_extra["model_conditioning_contract"] = "sdxl_text_time_v1"
+    result["branch_model_conditioning"] = tuple(branch_kwargs)
+    result["uncond_model_conditioning"] = uncond_kwargs
+    return result
+
+
 def resolve_step_conditioning(
     conditioning: Any,
     step_index: int,

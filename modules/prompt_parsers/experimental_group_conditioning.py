@@ -24,6 +24,8 @@ from modules.prompt_parsers.ir import (
     ExperimentalGroup,
     IRNode,
     Literal,
+    LiteralTextScope,
+    SemanticScope,
     Prompt,
     Relation,
     Text,
@@ -265,6 +267,10 @@ class _ExperimentalExpansionBuilder:
     ) -> list[ExperimentalGroupVariant]:
         if isinstance(node, ExperimentalGroup):
             return self._experimental_group(node, path)
+        if isinstance(node, LiteralTextScope):
+            return [ExperimentalGroupVariant(text=str(node.value), member_path=path)]
+        if isinstance(node, SemanticScope):
+            return self.expand(node.node, path=path)
         if isinstance(node, (Text, Literal)):
             value = str(node.value).replace(r"\!", "!")
             return [ExperimentalGroupVariant(text=value, member_path=path)]

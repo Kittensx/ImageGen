@@ -460,7 +460,7 @@ def payload_to_generation_request(payload: dict[str, Any]) -> tuple[GenerationRe
     request_kwargs["prompt_parser_name"] = parser_id
     snapshot = request_kwargs.get("prompt_shortcut_profile_snapshot")
     if isinstance(snapshot, dict) and snapshot:
-        shortcut_profile = PromptShortcutProfileDescriptor.from_dict(snapshot, builtin=bool(snapshot.get("builtin", False)))
+        shortcut_profile = PromptShortcutProfileDescriptor.from_snapshot(snapshot, builtin=bool(snapshot.get("builtin", False)))
         validation = validate_prompt_shortcut_profile(shortcut_profile)
         if not validation.valid:
             raise ValueError("Embedded prompt shortcut profile is invalid: " + " | ".join(issue.message for issue in validation.errors))

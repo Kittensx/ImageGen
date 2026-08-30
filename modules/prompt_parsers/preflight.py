@@ -209,7 +209,7 @@ class PromptProcessingPreflight:
         snapshot: Mapping[str, Any] | None = None,
     ) -> PromptShortcutProfileDescriptor:
         if snapshot:
-            profile = PromptShortcutProfileDescriptor.from_dict(
+            profile = PromptShortcutProfileDescriptor.from_snapshot(
                 dict(snapshot), builtin=bool(snapshot.get("builtin", False))
             )
             validation = validate_prompt_shortcut_profile(profile)

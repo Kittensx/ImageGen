@@ -36,15 +36,21 @@ from modules.prompt_parsers.binding_semantics import (
     inherited_text,
 )
 from modules.prompt_parsers.ir import (
+    AverageSet,
     Alternate,
     BoundConcept,
+    ChunkBreak,
     Conjunction,
+    ConjunctionBranch,
     ExperimentalGroup,
     Group,
     IRNode,
     Literal,
+    LiteralTextScope,
+    SemanticScope,
     OwnerSequence,
     Prompt,
+    Quantity,
     PromptIR,
     Relation,
     Scheduled,
@@ -54,8 +60,10 @@ from modules.prompt_parsers.ir import (
     Weighted,
 )
 
-CONDITIONING_PLAN_CONTRACT_VERSION = "image-gen-conditioning-plan-v6"
+LEGACY_CONDITIONING_PLAN_CONTRACT_VERSION = "image-gen-conditioning-plan-v6"
+CONDITIONING_PLAN_CONTRACT_VERSION = "image-gen-conditioning-plan-v7"
 _ESCAPED_STRUCTURAL_RE = re.compile(r"\\[{}⦃⦄^*:!|\\]")
+_CHUNK_BREAK_SENTINEL = "\x1eIMAGEGEN_CHUNK_BREAK\x1e"
 
 
 @dataclass(frozen=True)
@@ -109,6 +117,13 @@ class ConditioningBranch:
     group_operation_id: str | None = None
     group_local_weight: float = 1.0
     group_member_path: tuple[int, ...] = field(default_factory=tuple)
+    average_operation_id: str | None = None
+    average_local_weight: float = 1.0
+    average_branch_index: int | None = None
+    composition_operation_id: str | None = None
+    composition_mode: str = ""
+    composition_algorithm: str = ""
+    composition_branch_index: int | None = None
     sequence_operation_id: str | None = None
     sequence_local_weight: float = 1.0
     sequence_item_index: int | None = None
@@ -123,9 +138,13 @@ class ConditioningBranch:
     temporal_compiled: bool = False
     parent_scope: str = ""
     owner_composition: str = ""
+    chunk_break_segments: tuple[str, ...] = field(default_factory=tuple)
+    chunk_break_count: int = 0
+    protected_text: str = ""
+    literal_scope_replacements: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "text": self.text,
             "weight": float(self.weight),
             "active_until_step": self.active_until_step,
@@ -150,6 +169,41 @@ class ConditioningBranch:
             "parent_scope": self.parent_scope,
             "owner_composition": self.owner_composition,
         }
+        # Preserve Phase-04/earlier exact replay payloads byte-for-byte at the
+        # semantic level.  PPSR-09E metadata is serialized only when that
+        # operator actually participates in the branch.
+        if self.average_operation_id is not None:
+            payload.update(
+                {
+                    "average_operation_id": self.average_operation_id,
+                    "average_local_weight": float(self.average_local_weight),
+                    "average_branch_index": self.average_branch_index,
+                }
+            )
+        if self.composition_operation_id is not None:
+            payload.update(
+                {
+                    "composition_operation_id": self.composition_operation_id,
+                    "composition_mode": self.composition_mode,
+                    "composition_algorithm": self.composition_algorithm,
+                    "composition_branch_index": self.composition_branch_index,
+                }
+            )
+        if self.chunk_break_count or self.chunk_break_segments:
+            payload.update(
+                {
+                    "chunk_break_segments": list(self.chunk_break_segments),
+                    "chunk_break_count": int(self.chunk_break_count),
+                }
+            )
+        if self.protected_text or self.literal_scope_replacements:
+            payload.update(
+                {
+                    "protected_text": self.protected_text,
+                    "literal_scope_replacements": [list(item) for item in self.literal_scope_replacements],
+                }
+            )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -164,6 +218,9 @@ class ConditioningPlan:
     binding_diagnostics: tuple[BindingDiagnostic, ...] = field(default_factory=tuple)
     relationship_diagnostics: tuple[RelationshipDiagnostic, ...] = field(default_factory=tuple)
     numeric_semantics: tuple[NumericSemantic, ...] = field(default_factory=tuple)
+    composition_mode: str = "standard"
+    composition_algorithm: str = ""
+    composition_operation_id: str | None = None
     contract: str = CONDITIONING_PLAN_CONTRACT_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -178,6 +235,14 @@ class ConditioningPlan:
             "relationship_diagnostics": [item.to_dict() for item in self.relationship_diagnostics],
             "numeric_semantics": [item.to_dict() for item in self.numeric_semantics],
         }
+        if self.composition_mode not in {"", "standard", "legacy_normalized_average"}:
+            payload.update(
+                {
+                    "composition_mode": self.composition_mode,
+                    "composition_algorithm": self.composition_algorithm,
+                    "composition_operation_id": self.composition_operation_id,
+                }
+            )
         # Preserve PPSR-08 exact-replay digests for prompts that do not use the
         # PPSR-09 experiment. New fields serialize only when the new semantics
         # are actually present.
@@ -193,6 +258,8 @@ class ConditioningPlan:
 @dataclass
 class _CompileContext:
     group_operation_counter: int = 0
+    average_operation_counter: int = 0
+    composition_operation_counter: int = 0
     sequence_operation_counter: int = 0
     fallbacks: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -204,6 +271,16 @@ class _CompileContext:
     def next_group_operation_id(self) -> str:
         value = f"groupop-{self.group_operation_counter}"
         self.group_operation_counter += 1
+        return value
+
+    def next_average_operation_id(self) -> str:
+        value = f"avgop-{self.average_operation_counter}"
+        self.average_operation_counter += 1
+        return value
+
+    def next_composition_operation_id(self) -> str:
+        value = f"compop-{self.composition_operation_counter}"
+        self.composition_operation_counter += 1
         return value
 
     def next_sequence_operation_id(self) -> str:
@@ -239,6 +316,12 @@ def _node_type(node: IRNode) -> str:
 
 
 def _render_ir_node(node: IRNode, inherited_modifiers: tuple[str, ...] = ()) -> str:
+    if isinstance(node, ChunkBreak):
+        return _CHUNK_BREAK_SENTINEL
+    if isinstance(node, LiteralTextScope):
+        return str(node.value)
+    if isinstance(node, SemanticScope):
+        return _render_ir_node(node.node, inherited_modifiers)
     if isinstance(node, (Text, Literal)):
         value = str(node.value).replace(r"\!", "!")
         return inherited_text(value, inherited_modifiers).strip()
@@ -291,6 +374,8 @@ def _render_ir_node(node: IRNode, inherited_modifiers: tuple[str, ...] = ()) -> 
         return ", ".join(
             filter(None, (_render_ir_node(item.node, inherited_modifiers) for item in node.items))
         ).strip()
+    if isinstance(node, AverageSet):
+        return " || ".join(_render_ir_node(item, inherited_modifiers) for item in node.branches)
     if isinstance(node, Conjunction):
         return " AND ".join(_render_ir_node(item.node, inherited_modifiers) for item in node.branches)
     if isinstance(node, (Scheduled, Alternate)):
@@ -300,6 +385,336 @@ def _render_ir_node(node: IRNode, inherited_modifiers: tuple[str, ...] = ()) -> 
 
 def render_ir_node(node: IRNode) -> str:
     return _render_ir_node(node, ())
+
+
+_LITERAL_SCOPE_MARKER_PREFIX = "__IG_LITERAL_RUNTIME_"
+_AVERAGE_COMBINATION_LIMIT = 256
+
+
+def _protect_literal_scopes_for_runtime(
+    node: IRNode,
+    *,
+    counter: list[int] | None = None,
+) -> tuple[IRNode, tuple[tuple[str, str], ...]]:
+    """Replace literal quote scopes with opaque scheduler-safe markers.
+
+    The final encoder text is restored before model.encode(), but the opaque
+    form is what the legacy scheduling/alternate parser sees. This guarantees
+    that syntax written inside double quotes remains text all the way through
+    runtime lowering instead of being reinterpreted after PromptIR compilation.
+    """
+
+    state = counter if counter is not None else [0]
+    replacements: list[tuple[str, str]] = []
+
+    def visit(current: IRNode) -> IRNode:
+        if isinstance(current, LiteralTextScope):
+            marker = f"{_LITERAL_SCOPE_MARKER_PREFIX}{state[0]:04d}__"
+            state[0] += 1
+            replacements.append((marker, str(current.value)))
+            return Text(source_text=current.source_text, value=marker)
+        if isinstance(current, SemanticScope):
+            return replace(current, node=visit(current.node))
+        if isinstance(current, Group):
+            return replace(current, items=tuple(visit(item) for item in current.items))
+        if isinstance(current, ExperimentalGroup):
+            return replace(current, items=tuple(visit(item) for item in current.items))
+        if isinstance(current, AverageSet):
+            return replace(current, branches=tuple(visit(item) for item in current.branches))
+        if isinstance(current, Prompt):
+            return replace(current, parts=tuple(visit(item) for item in current.parts))
+        if isinstance(current, Relation):
+            return replace(current, parent=visit(current.parent), child=visit(current.child))
+        if isinstance(current, Weighted):
+            return replace(current, node=visit(current.node))
+        if isinstance(current, Quantity):
+            return replace(current, node=visit(current.node))
+        if isinstance(current, Sequence):
+            return replace(
+                current,
+                items=tuple(replace(item, node=visit(item.node)) for item in current.items),
+            )
+        if isinstance(current, OwnerSequence):
+            return replace(
+                current,
+                owner=visit(current.owner),
+                items=tuple(replace(item, node=visit(item.node)) for item in current.items),
+            )
+        if isinstance(current, Conjunction):
+            return replace(
+                current,
+                branches=tuple(replace(branch, node=visit(branch.node)) for branch in current.branches),
+            )
+        return current
+
+    protected = visit(node)
+    return protected, tuple(replacements)
+
+
+def _restore_literal_markers(value: str, replacements: tuple[tuple[str, str], ...]) -> str:
+    text = str(value or "")
+    for marker, literal in replacements:
+        text = text.replace(str(marker), str(literal))
+    return text
+
+
+def _restore_branch_literal_scopes(
+    branch: ConditioningBranch,
+    replacements: tuple[tuple[str, str], ...],
+) -> ConditioningBranch:
+    if not replacements:
+        return branch
+    protected_text = str(branch.text or "")
+    return replace(
+        branch,
+        text=_restore_literal_markers(protected_text, replacements),
+        protected_text=protected_text,
+        literal_scope_replacements=tuple(replacements),
+        chunk_break_segments=tuple(
+            _restore_literal_markers(item, replacements)
+            for item in tuple(branch.chunk_break_segments or ())
+        ),
+    )
+
+
+def _contains_average_set(node: IRNode) -> bool:
+    if isinstance(node, AverageSet):
+        return True
+    if isinstance(node, SemanticScope):
+        return _contains_average_set(node.node)
+    if isinstance(node, (Group, ExperimentalGroup)):
+        return any(_contains_average_set(item) for item in node.items)
+    if isinstance(node, Prompt):
+        return any(_contains_average_set(item) for item in node.parts)
+    if isinstance(node, Relation):
+        return _contains_average_set(node.parent) or _contains_average_set(node.child)
+    if isinstance(node, Weighted):
+        return _contains_average_set(node.node)
+    if isinstance(node, Quantity):
+        return _contains_average_set(node.node)
+    if isinstance(node, Sequence):
+        return any(_contains_average_set(item.node) for item in node.items)
+    if isinstance(node, OwnerSequence):
+        return _contains_average_set(node.owner) or any(
+            _contains_average_set(item.node) for item in node.items
+        )
+    if isinstance(node, Conjunction):
+        return any(_contains_average_set(branch.node) for branch in node.branches)
+    return False
+
+
+def _count_composable_conjunctions(node: IRNode) -> int:
+    count = 0
+    if isinstance(node, Conjunction) and node.composition_mode.startswith("a1111_composable"):
+        count += 1
+    if isinstance(node, SemanticScope):
+        return count + _count_composable_conjunctions(node.node)
+    if isinstance(node, (Group, ExperimentalGroup)):
+        return count + sum(_count_composable_conjunctions(item) for item in node.items)
+    if isinstance(node, Prompt):
+        return count + sum(_count_composable_conjunctions(item) for item in node.parts)
+    if isinstance(node, Relation):
+        return count + _count_composable_conjunctions(node.parent) + _count_composable_conjunctions(node.child)
+    if isinstance(node, Weighted):
+        return count + _count_composable_conjunctions(node.node)
+    if isinstance(node, Quantity):
+        return count + _count_composable_conjunctions(node.node)
+    if isinstance(node, Sequence):
+        return count + sum(_count_composable_conjunctions(item.node) for item in node.items)
+    if isinstance(node, OwnerSequence):
+        return count + _count_composable_conjunctions(node.owner) + sum(
+            _count_composable_conjunctions(item.node) for item in node.items
+        )
+    if isinstance(node, AverageSet):
+        return count + sum(_count_composable_conjunctions(item) for item in node.branches)
+    return count
+
+
+def _cross_node_variants(
+    left: list[tuple[list[IRNode], float]],
+    right: list[tuple[IRNode, float]],
+) -> list[tuple[list[IRNode], float]]:
+    if len(left) * len(right) > _AVERAGE_COMBINATION_LIMIT:
+        raise ValueError(
+            f"AverageSet expansion exceeds {_AVERAGE_COMBINATION_LIMIT} complete prompt combinations."
+        )
+    output: list[tuple[list[IRNode], float]] = []
+    for left_nodes, left_weight in left:
+        for right_node, right_weight in right:
+            output.append(([*left_nodes, right_node], float(left_weight) * float(right_weight)))
+    return output
+
+
+def _expand_average_variants(node: IRNode) -> list[tuple[IRNode, float]]:
+    """Cartesian-expand local AverageSet axes into complete semantic branches."""
+
+    if isinstance(node, AverageSet):
+        raw = tuple(node.local_weights or tuple(1.0 for _ in node.branches))
+        if len(raw) != len(node.branches):
+            raise ValueError("AverageSet local_weights must match the branch count.")
+        total = float(sum(float(value) for value in raw))
+        if abs(total) <= 1e-12:
+            raise ValueError("AverageSet local weights must not sum to zero.")
+        output: list[tuple[IRNode, float]] = []
+        for branch, raw_weight in zip(node.branches, raw):
+            branch_weight = float(raw_weight) / total
+            for expanded, nested_weight in _expand_average_variants(branch):
+                output.append((expanded, branch_weight * float(nested_weight)))
+        return output
+    if isinstance(node, SemanticScope):
+        return [
+            (replace(node, node=child), weight)
+            for child, weight in _expand_average_variants(node.node)
+        ]
+    if isinstance(node, Prompt):
+        combinations: list[tuple[list[IRNode], float]] = [([], 1.0)]
+        for part in node.parts:
+            combinations = _cross_node_variants(combinations, _expand_average_variants(part))
+        return [
+            (replace(node, parts=tuple(parts)), weight)
+            for parts, weight in combinations
+        ]
+    if isinstance(node, Group):
+        combinations: list[tuple[list[IRNode], float]] = [([], 1.0)]
+        for item in node.items:
+            combinations = _cross_node_variants(combinations, _expand_average_variants(item))
+        return [(replace(node, items=tuple(items)), weight) for items, weight in combinations]
+    if isinstance(node, ExperimentalGroup):
+        combinations: list[tuple[list[IRNode], float]] = [([], 1.0)]
+        for item in node.items:
+            combinations = _cross_node_variants(combinations, _expand_average_variants(item))
+        return [(replace(node, items=tuple(items)), weight) for items, weight in combinations]
+    if isinstance(node, Relation):
+        output: list[tuple[IRNode, float]] = []
+        for parent, parent_weight in _expand_average_variants(node.parent):
+            for child, child_weight in _expand_average_variants(node.child):
+                output.append((replace(node, parent=parent, child=child), parent_weight * child_weight))
+        return output
+    if isinstance(node, Weighted):
+        return [(replace(node, node=child), weight) for child, weight in _expand_average_variants(node.node)]
+    if isinstance(node, Quantity):
+        return [(replace(node, node=child), weight) for child, weight in _expand_average_variants(node.node)]
+    if isinstance(node, Sequence):
+        combinations: list[tuple[list[IRNode], float]] = [([], 1.0)]
+        for item in node.items:
+            variants = [(child, weight) for child, weight in _expand_average_variants(item.node)]
+            expanded_items: list[tuple[IRNode, float]] = [
+                (replace(item, node=child), weight) for child, weight in variants
+            ]
+            combinations = _cross_node_variants(combinations, expanded_items)
+        return [
+            (replace(node, items=tuple(items)), weight)
+            for items, weight in combinations
+        ]
+    if isinstance(node, OwnerSequence):
+        output: list[tuple[IRNode, float]] = []
+        for owner, owner_weight in _expand_average_variants(node.owner):
+            combinations: list[tuple[list[IRNode], float]] = [([], owner_weight)]
+            for item in node.items:
+                variants = [
+                    (replace(item, node=child), weight)
+                    for child, weight in _expand_average_variants(item.node)
+                ]
+                combinations = _cross_node_variants(combinations, variants)
+            for items, weight in combinations:
+                output.append((replace(node, owner=owner, items=tuple(items)), weight))
+        return output
+    if isinstance(node, Conjunction):
+        # Mixed average/composable guidance is rejected before this helper.
+        return [(node, 1.0)]
+    return [(node, 1.0)]
+
+
+def _compile_average_composite(node: IRNode, ctx: _CompileContext) -> list[ConditioningBranch]:
+    if _count_composable_conjunctions(node):
+        raise ValueError(
+            "PPSR-09E does not define mixed top-level || and composable AND semantics in one semantic scope. "
+            "Use one branch-composition operation at a time during qualification."
+        )
+    variants = _expand_average_variants(node)
+    if len(variants) > _AVERAGE_COMBINATION_LIMIT:
+        raise ValueError(
+            f"AverageSet expansion exceeds {_AVERAGE_COMBINATION_LIMIT} complete prompt combinations."
+        )
+    total = float(sum(weight for _, weight in variants))
+    if abs(total) <= 1e-12:
+        raise ValueError("AverageSet expanded branch weights sum to zero.")
+    operation_id = ctx.next_average_operation_id()
+    output: list[ConditioningBranch] = []
+    for branch_index, (branch_node, weight) in enumerate(variants):
+        local_weight = float(weight) / total
+        nested = _compile_node(branch_node, ctx)
+        for item in nested:
+            output.append(
+                replace(
+                    item,
+                    average_operation_id=operation_id,
+                    average_local_weight=local_weight,
+                    average_branch_index=branch_index,
+                    semantic_role=(
+                        item.semantic_role
+                        if item.semantic_role not in {"text", "literal"}
+                        else "average_set_member"
+                    ),
+                )
+            )
+    return output
+
+
+def _expand_single_composable_context(node: IRNode) -> Conjunction | None:
+    """Lift one nested single-quoted composable AND into complete prompt branches."""
+
+    if isinstance(node, Conjunction) and node.composition_mode.startswith("a1111_composable"):
+        return node
+    count = _count_composable_conjunctions(node)
+    if count == 0:
+        return None
+    if count > 1:
+        raise ValueError(
+            "Multiple independent local composable AND scopes in one prompt are not yet qualified."
+        )
+
+    def variants(current: IRNode) -> list[tuple[IRNode, float]]:
+        if isinstance(current, Conjunction) and current.composition_mode.startswith("a1111_composable"):
+            return [(branch.node, float(branch.weight)) for branch in current.branches]
+        if isinstance(current, SemanticScope):
+            return [(replace(current, node=child), weight) for child, weight in variants(current.node)]
+        if isinstance(current, Prompt):
+            combos: list[tuple[list[IRNode], float]] = [([], 1.0)]
+            for part in current.parts:
+                combos = _cross_node_variants(combos, variants(part))
+            return [(replace(current, parts=tuple(parts)), weight) for parts, weight in combos]
+        return [(current, 1.0)]
+
+    expanded = variants(node)
+    if len(expanded) <= 1:
+        return None
+    return Conjunction(
+        source_text=node.source_text,
+        branches=tuple(
+            ConjunctionBranch(node=child, weight=weight, source_text=render_ir_node(child))
+            for child, weight in expanded
+        ),
+        composition_mode="a1111_composable_guidance_v1",
+        algorithm="a1111_composable_guidance_v1",
+    )
+
+
+def _consume_chunk_break_sentinels(branch: ConditioningBranch) -> ConditioningBranch:
+    text = str(branch.text or "")
+    if _CHUNK_BREAK_SENTINEL not in text:
+        return branch
+    raw_segments = text.split(_CHUNK_BREAK_SENTINEL)
+    segments = tuple(segment.strip(" ,") for segment in raw_segments)
+    if not all(segments):
+        raise ValueError("BREAK requires non-empty encoder text on both sides of each boundary.")
+    clean_text = " ".join(segments).strip()
+    return replace(
+        branch,
+        text=clean_text,
+        chunk_break_segments=segments,
+        chunk_break_count=max(0, len(segments) - 1),
+    )
 
 
 def _apply_sequence_metadata(branch: ConditioningBranch, metadata: _SequenceMetadata) -> ConditioningBranch:
@@ -773,8 +1188,61 @@ def _compile_sequence(
 
 
 def _compile_node(node: IRNode, ctx: _CompileContext) -> list[ConditioningBranch]:
+    if _contains_average_set(node):
+        return _compile_average_composite(node, ctx)
+
+    if isinstance(node, SemanticScope):
+        return _compile_node(node.node, ctx)
+
+    if not isinstance(node, Conjunction):
+        lifted_conjunction = _expand_single_composable_context(node)
+        if lifted_conjunction is not None:
+            return _compile_node(lifted_conjunction, ctx)
+
+    if isinstance(node, LiteralTextScope):
+        return [
+            ConditioningBranch(
+                text=str(node.value),
+                semantic_role="literal_text_scope",
+                source_node_type="literal_text_scope",
+            )
+        ]
+
     if isinstance(node, (OwnerSequence, Sequence)):
         return _compile_sequence(node, ctx)
+
+    if isinstance(node, AverageSet):
+        if any(isinstance(item, Conjunction) and item.composition_mode.startswith("a1111_composable") for item in node.branches):
+            raise ValueError(
+                "PPSR-09E does not define mixed top-level || and composable AND semantics. "
+                "Use one branch-composition operator at a time during qualification."
+            )
+        operation_id = ctx.next_average_operation_id()
+        raw_weights = tuple(node.local_weights or tuple(1.0 for _ in node.branches))
+        if len(raw_weights) != len(node.branches):
+            raise ValueError("AverageSet local_weights must match the branch count.")
+        weight_total = sum(float(value) for value in raw_weights)
+        if abs(weight_total) <= 1e-8:
+            raise ValueError("AverageSet local weights must not sum to zero.")
+        normalized = tuple(float(value) / weight_total for value in raw_weights)
+        output: list[ConditioningBranch] = []
+        for branch_index, (branch_node, local_weight) in enumerate(zip(node.branches, normalized)):
+            nested = _compile_node(branch_node, ctx)
+            for item in nested:
+                output.append(
+                    replace(
+                        item,
+                        average_operation_id=operation_id,
+                        average_local_weight=float(local_weight),
+                        average_branch_index=int(branch_index),
+                        semantic_role=(
+                            item.semantic_role
+                            if item.semantic_role not in {"text", "literal"}
+                            else "average_set_member"
+                        ),
+                    )
+                )
+        return output
 
     if isinstance(node, ExperimentalGroup):
         return _compile_experimental_group_operation(
@@ -845,6 +1313,28 @@ def _compile_node(node: IRNode, ctx: _CompileContext) -> list[ConditioningBranch
         return [replace(item, weight=float(item.weight) * float(node.weight)) for item in nested]
 
     if isinstance(node, Conjunction):
+        if node.composition_mode.startswith("a1111_composable"):
+            operation_id = ctx.next_composition_operation_id()
+            output: list[ConditioningBranch] = []
+            for branch_index, branch in enumerate(node.branches):
+                nested = _compile_node(branch.node, ctx)
+                for item in nested:
+                    output.append(
+                        replace(
+                            item,
+                            weight=float(item.weight) * float(branch.weight),
+                            composition_operation_id=operation_id,
+                            composition_mode=node.composition_mode,
+                            composition_algorithm=node.algorithm,
+                            composition_branch_index=int(branch_index),
+                            semantic_role=(
+                                item.semantic_role
+                                if item.semantic_role not in {"text", "literal"}
+                                else "composable_and_member"
+                            ),
+                        )
+                    )
+            return output
         output: list[ConditioningBranch] = []
         for branch in node.branches:
             nested = _compile_node(branch.node, ctx)
@@ -874,16 +1364,56 @@ def _root_is_structured(root: IRNode) -> bool:
 def compile_conditioning_plan(prompt_ir: PromptIR) -> ConditioningPlan:
     ctx = _CompileContext(warnings=list(prompt_ir.warnings))
     ctx.binding_diagnostics.extend(binding_diagnostics(prompt_ir.root))
-    branches = _compile_node(prompt_ir.root, ctx)
+
+    protected_root, literal_replacements = _protect_literal_scopes_for_runtime(prompt_ir.root)
+    branches = _compile_node(protected_root, ctx)
+    branches = [_consume_chunk_break_sentinels(item) for item in branches]
+    branches = [
+        _restore_branch_literal_scopes(item, literal_replacements)
+        for item in branches
+    ]
     branches = [
         replace(
             item,
-            temporal_source=item.text if contains_temporal_syntax(item.text) else "",
-            temporal_compiled=bool(contains_temporal_syntax(item.text)),
+            temporal_source=(
+                (item.protected_text or item.text)
+                if contains_temporal_syntax(item.protected_text or item.text)
+                else ""
+            ),
+            temporal_compiled=bool(contains_temporal_syntax(item.protected_text or item.text)),
         )
         for item in branches
     ]
-    lowering_required = _root_is_structured(prompt_ir.root) or bool(
+
+    composition_mode = "standard"
+    composition_algorithm = ""
+    composition_operation_id = None
+    if _contains_average_set(prompt_ir.root):
+        composition_mode = "normalized_average"
+        composition_algorithm = "branch_average_v1"
+        composition_operation_id = next(
+            (item.average_operation_id for item in branches if item.average_operation_id),
+            None,
+        )
+    elif _count_composable_conjunctions(prompt_ir.root):
+        composition_mode = "a1111_composable_guidance"
+        composition_algorithm = "a1111_composable_guidance_v1"
+        composition_operation_id = next(
+            (item.composition_operation_id for item in branches if item.composition_operation_id),
+            None,
+        )
+    elif isinstance(prompt_ir.root, Conjunction):
+        composition_mode = "legacy_normalized_average"
+        composition_algorithm = prompt_ir.root.algorithm
+
+    # Runtime lowering is required not only for syntactically structured IR,
+    # but also whenever the compiled plan carries semantics that the historical
+    # raw-text compatibility path cannot preserve.  In particular, a plain
+    # text-only A1111 composable AND still needs its branch metadata to survive
+    # into StepConditioningResolver; otherwise get_multicond_prompt_list()
+    # would re-split the raw text and discard composition_mode/branch indexes.
+    semantic_runtime_route_required = composition_mode == "a1111_composable_guidance"
+    lowering_required = semantic_runtime_route_required or _root_is_structured(prompt_ir.root) or bool(
         _ESCAPED_STRUCTURAL_RE.search(prompt_ir.raw_source)
     ) or any(item.temporal_compiled for item in branches)
     return ConditioningPlan(
@@ -897,4 +1427,14 @@ def compile_conditioning_plan(prompt_ir: PromptIR) -> ConditioningPlan:
         binding_diagnostics=tuple(ctx.binding_diagnostics),
         relationship_diagnostics=tuple(ctx.relationship_diagnostics),
         numeric_semantics=tuple(prompt_ir.numeric_semantics),
+        composition_mode=composition_mode,
+        composition_algorithm=composition_algorithm,
+        composition_operation_id=composition_operation_id,
+        contract=(
+            CONDITIONING_PLAN_CONTRACT_VERSION
+            if composition_mode in {"normalized_average", "a1111_composable_guidance"}
+            or any(item.chunk_break_count or item.chunk_break_segments for item in branches)
+            or any(item.literal_scope_replacements for item in branches)
+            else LEGACY_CONDITIONING_PLAN_CONTRACT_VERSION
+        ),
     )

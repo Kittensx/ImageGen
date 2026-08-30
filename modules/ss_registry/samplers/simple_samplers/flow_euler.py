@@ -7,6 +7,7 @@ import torch
 
 from modules.contracts import SamplerCapabilities, SamplerOutput
 from modules.pipeline.conditioning_utils import (
+    resolve_step_composable_conditioning,
     resolve_step_conditioning,
     resolve_step_model_conditioning,
 )
@@ -167,27 +168,81 @@ class FlowEulerSampler(SamplerTraceMixin):
             sigma_next = sigmas[i + 1]
             timestep = timesteps[i]
             latent_before = x.detach()
-            cond, uncond = resolve_step_conditioning(
-                conditioning=conditioning,
-                step_index=i,
-                latents=x,
-                state=state,
-            )
-            model_conditioning = resolve_step_model_conditioning(
-                conditioning=conditioning,
-                step_index=i,
+            composable = resolve_step_composable_conditioning(
+                conditioning,
+                i,
                 latents=x,
                 request=request,
             )
-            flow_prediction = flow_fn(
-                x,
-                sigma,
-                timestep,
-                cond,
-                uncond,
-                cfg_scale,
-                model_conditioning,
-            )
+            if composable is not None:
+                composable_flow_fn = getattr(
+                    guided_model_fn, "predict_composable_guided_flow", None
+                )
+                if not callable(composable_flow_fn):
+                    raise TypeError(
+                        "Flow Euler requires predict_composable_guided_flow for PPSR-09E AND."
+                    )
+                flow_prediction = composable_flow_fn(
+                    x,
+                    sigma,
+                    timestep,
+                    composable["branches"],
+                    composable["weights"],
+                    composable["uncond"],
+                    cfg_scale,
+                    composable["branch_model_conditioning"],
+                    composable["uncond_model_conditioning"],
+                )
+            else:
+                cond, uncond = resolve_step_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=x,
+                    state=state,
+                )
+                model_conditioning = resolve_step_model_conditioning(
+                    conditioning=conditioning,
+                    step_index=i,
+                    latents=x,
+                    request=request,
+                )
+                flow_prediction = flow_fn(
+                    x,
+                    sigma,
+                    timestep,
+                    cond,
+                    uncond,
+                    cfg_scale,
+                    model_conditioning,
+                )
+
+            # Qualification telemetry is emitted only for PPSR-09E requests and
+            # only after the guided model path has actually returned.
+            experiment = getattr(request, "ppsr09e_experiment", None)
+            if i == 0 and isinstance(experiment, dict):
+                runtime_mode = (
+                    str(composable.get("mode") or "")
+                    if composable is not None
+                    else "standard"
+                )
+                runtime_branches = (
+                    len(composable.get("branches") or ())
+                    if composable is not None
+                    else 1
+                )
+                runtime_evals = (
+                    runtime_branches + 1
+                    if composable is not None
+                    else (2 if cfg_scale > 1.0 else 1)
+                )
+                print(
+                    "PPSR09E_SAMPLER_ROUTE "
+                    f"variant={experiment.get('variant_id', '')} "
+                    f"mode={runtime_mode} branches={runtime_branches} "
+                    f"model_evaluations={runtime_evals}",
+                    flush=True,
+                )
+
             if not torch.is_tensor(flow_prediction) or flow_prediction.shape != x.shape:
                 raise ValueError("SD3 flow prediction must match the latent tensor shape.")
             if not bool(torch.isfinite(flow_prediction).all()):
@@ -221,6 +276,15 @@ class FlowEulerSampler(SamplerTraceMixin):
                 "timestep": float(timestep.detach().cpu().item()),
                 "cfg_scale": cfg_scale,
                 "cfg_active": bool(cfg_scale > 1.0),
+                "composition_mode": (
+                    str(composable.get("mode") or "") if composable is not None else "standard"
+                ),
+                "composition_branch_count": (
+                    len(composable.get("branches") or ()) if composable is not None else 1
+                ),
+                "logical_model_evaluations": (
+                    len(composable.get("branches") or ()) + 1 if composable is not None else (2 if cfg_scale > 1.0 else 1)
+                ),
             }
             step_records.append(step_record)
             self._trace_step(

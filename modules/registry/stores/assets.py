@@ -166,7 +166,7 @@ class AssetStore:
             else:
                 conn.execute(
                     """
-                    INSERT INTO assets (
+                    INSERT OR IGNORE INTO assets (
                         path, filename, extension, file_size, modified_time, created_time,
                         first_seen_at, last_seen_at, exists_on_disk,
                         quick_fingerprint, sha256, blake3,
