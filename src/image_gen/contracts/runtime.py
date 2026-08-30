@@ -649,6 +649,14 @@ class PipelineComponents:
     model_identity: str = ""
     model_hash: str = ""
     vae_provenance: dict[str, Any] = field(default_factory=dict)
+    composition_sha256: str = ""
+    composition_identity_version: str = ""
+    composition_contract: dict[str, Any] = field(default_factory=dict)
+    component_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    composition_projection: dict[str, Any] = field(default_factory=dict)
+    advanced_model_composition_sha256: str = ""
+    component_transition_report: dict[str, Any] = field(default_factory=dict)
+    runtime_component_source_plan: dict[str, Any] = field(default_factory=dict)
     denoiser: torch.nn.Module | None = None
     denoiser_kind: str = "unet"
 
@@ -702,6 +710,14 @@ class PipelineComponents:
             "prediction_type_source": self.prediction_type_source,
             "architecture": self.architecture,
             "model_runtime_profile": _json_safe(self.model_runtime_profile),
+            "composition_sha256": self.composition_sha256,
+            "composition_identity_version": self.composition_identity_version,
+            "composition_contract": _json_safe(self.composition_contract),
+            "component_sources": _json_safe(self.component_sources),
+            "composition_projection": _json_safe(self.composition_projection),
+            "advanced_model_composition_sha256": self.advanced_model_composition_sha256,
+            "component_transition_report": _json_safe(self.component_transition_report),
+            "runtime_component_source_plan": _json_safe(self.runtime_component_source_plan),
             "latent_channels": int(self.latent_channels),
             "latent_scale_factor": int(self.latent_scale_factor),
             "vae_scaling_factor": float(self.vae_scaling_factor),

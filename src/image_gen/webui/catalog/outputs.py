@@ -39,6 +39,7 @@ from image_gen.webui.asset_metadata import (
 )
 from image_gen.webui.image_refs import encode_external_image_ref, is_within_root
 from image_gen.webui.output_details import load_image_file_details, load_output_details
+from image_gen.webui.output_execution import image_execution_from_manifest
 from image_gen.webui.schema_utils import normalize_config_schema
 from modules.checkpoint_inspector import CheckpointInspector, detect_model_name
 from modules.project_context import ProjectContext
@@ -129,18 +130,30 @@ class OutputCatalogMixin:
                     return bool(required.get(key))
         return None
 
+    @staticmethod
+    def _output_metadata_signature(image_path: Path) -> tuple[int, int, int]:
+        values: list[int] = []
+        for path in (
+            image_path,
+            image_path.with_suffix(".json"),
+            image_path.with_name(f"{image_path.stem}.diagnostics.json"),
+        ):
+            try:
+                values.append(int(path.stat().st_mtime_ns))
+            except OSError:
+                values.append(0)
+        return tuple(values)
+
     def output_summary_from_path(self, image_path: Path) -> dict[str, Any] | None:
         try:
             resolved = image_path.resolve()
         except OSError:
             return None
 
-        try:
-            modified_ns = resolved.stat().st_mtime_ns
-        except OSError:
-            modified_ns = 0
+        metadata_signature = self._output_metadata_signature(resolved)
+        modified_ns = metadata_signature[0]
 
-        cache_key = (str(resolved).casefold(), int(modified_ns))
+        cache_key = (str(resolved).casefold(), *metadata_signature)
         cached = self._output_summary_cache.get(cache_key)
         if cached is not None:
             return dict(cached)
@@ -179,6 +192,7 @@ class OutputCatalogMixin:
         image = dict(details.image) if details is not None else {}
         metadata_source = str(getattr(details, "metadata_source", "partial_summary") or "partial_summary")
         manifest = dict(getattr(details, "manifest", {}) or {})
+        image_execution = image_execution_from_manifest(manifest)
         model = image.get("model") or {}
         vae = image.get("vae") or {}
         loras = image.get("loras") or []
@@ -215,6 +229,10 @@ class OutputCatalogMixin:
             "absolute_path": str(resolved),
             "generation_mode": self._infer_generation_mode(replay),
             "hires": self._infer_hires(replay, manifest),
+            "image_execution": dict(image_execution),
+            "execution_time_ms": image_execution.get("execution_time_ms"),
+            "generation_residency_classification": image_execution.get("generation_residency_classification"),
+            "residency_state_effective": image_execution.get("residency_state_effective"),
         }
         self._output_summary_cache[cache_key] = dict(payload)
         if len(self._output_summary_cache) > 4096:

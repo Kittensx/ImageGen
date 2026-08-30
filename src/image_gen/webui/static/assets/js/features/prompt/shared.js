@@ -45,7 +45,8 @@ export function presetById(value) {
 export function profileSnapshot(profile) {
   if (!profile) return {};
   const keys = [
-    "contract_version", "profile_id", "label", "version", "aliases", "parser_emitters",
+    "contract_version", "profile_schema_version", "profile_id", "label", "version", "aliases", "parser_emitters",
+    "semantic_modes", "preprocessing", "precedence", "reserved_syntax", "migrated_from_contract",
     "compatible_parsers", "escape_character", "builtin", "credit", "description", "source",
     "palette", "mapping_hash",
   ];

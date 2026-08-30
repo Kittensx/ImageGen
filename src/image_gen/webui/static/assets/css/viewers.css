@@ -318,3 +318,86 @@ body.is-resizing .center-splitter::before {
   display: none;
 }
 
+
+/* HMR-06: compact, per-image execution timing anchored to the selected output. */
+.output-timing-chip {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 4;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid rgba(151, 208, 246, 0.34);
+  border-radius: 999px;
+  background: rgba(10, 20, 30, 0.88);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  backdrop-filter: blur(5px);
+}
+
+.output-timing-chip:hover,
+.output-timing-chip:focus-visible,
+.output-timing-chip[aria-expanded="true"] {
+  border-color: rgba(151, 208, 246, 0.7);
+  background: rgba(18, 38, 56, 0.96);
+}
+
+.output-timing-popover {
+  position: absolute;
+  right: 10px;
+  bottom: 46px;
+  z-index: 5;
+  width: min(320px, calc(100% - 20px));
+  max-height: min(360px, calc(100% - 58px));
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(151, 208, 246, 0.28);
+  border-radius: 9px;
+  background: rgba(10, 20, 30, 0.97);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.36);
+  color: var(--text);
+  font-size: 0.72rem;
+  backdrop-filter: blur(8px);
+}
+
+.output-timing-popover[hidden],
+.output-timing-chip[hidden] {
+  display: none !important;
+}
+
+.output-timing-popover h3 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+}
+
+.output-timing-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.output-timing-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.output-timing-list dt {
+  color: var(--muted);
+}
+
+.output-timing-list dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.output-timing-scope {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.35;
+}

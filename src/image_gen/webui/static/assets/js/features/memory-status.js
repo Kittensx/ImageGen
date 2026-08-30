@@ -2,6 +2,29 @@ import { $ } from "../utils.js";
 import { productName } from "../branding.js?v=brand1";
 import { setSubsystemStatus } from "../components/status-indicators.js?v=1";
 
+let latestMemoryJob = null;
+let latestRuntimeStatus = {};
+let memoryRuntimeSyncBound = false;
+
+const RESIDENCY_LABELS = {
+  empty: "Unloaded",
+  managed_resident: "Managed Resident",
+  hot_gpu: "Hot GPU",
+  hot_staged: "Hot Staged",
+  switching: "Switching",
+  recovering: "Recovering",
+};
+
+const REUSE_LABELS = {
+  cold_load: "Cold load",
+  model_switch: "Model switch",
+  resident_managed_reuse: "Managed resident reuse",
+  managed_resident_reuse: "Managed resident reuse",
+  managed_reuse: "Managed resident reuse",
+  hot_reuse: "Hot reuse",
+  hot_staged_reuse: "Hot staged reuse",
+};
+
 function formatBytes(value) {
   if (value === null || value === undefined || value === "") return "Unavailable";
   const number = Number(value);
@@ -40,7 +63,104 @@ function actionLabel(action) {
   return `${name}${component}${reason}`;
 }
 
+function finiteMs(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function formatDurationMs(value) {
+  const ms = finiteMs(value);
+  if (ms === null) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 10000) return `${(ms / 1000).toFixed(2)} s`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function runtimeSemanticFromRaw(runtime = {}) {
+  const state = String(runtime.residency_state_effective || "empty").trim().toLowerCase() || "empty";
+  const requested = String(runtime.residency_mode_requested || "managed").trim().toLowerCase() || "managed";
+  const componentDevices = runtime.component_devices || {};
+  const activeGpu = [];
+  const cpuReady = [];
+  Object.entries(componentDevices).forEach(([component, device]) => {
+    const normalized = String(device || "").toLowerCase();
+    if (normalized.startsWith("cuda")) activeGpu.push(component);
+    else if (normalized.startsWith("cpu")) cpuReady.push(component);
+  });
+  const lease = runtime.composition_execution_lease || {};
+  const reports = Array.isArray(runtime.recent_job_reports) ? runtime.recent_job_reports : [];
+  const report = reports.length ? reports[reports.length - 1] : {};
+  const timings = report.timings || {};
+  const classification = String(report.generation_residency_classification || runtime.last_generation_residency_classification || "").toLowerCase();
+  const hydrationMs = finiteMs(timings.checkpoint_hydration_time_ms);
+  const reuse = ["hot_reuse", "hot_staged_reuse", "managed_reuse", "resident_managed_reuse", "managed_resident_reuse"].includes(classification);
+  return {
+    requested_mode: requested,
+    effective_state: state,
+    effective_label: RESIDENCY_LABELS[state] || state.replaceAll("_", " "),
+    stage: runtime.stage || "idle",
+    current_model_name: String(runtime.current_model_path || runtime.model_path || "").split(/[\\/]/).pop() || null,
+    active_gpu_components: activeGpu.sort(),
+    cpu_ready_components: cpuReady.sort(),
+    lease_state: String(lease.state || "inactive"),
+    lease_component_pool_count: Number(lease.component_pool_count || 0),
+    prepared_composition_count: Object.keys(lease.prepared_compositions || {}).length,
+    warm_states: lease.warm_states || {},
+    last_generation_residency_classification: classification || null,
+    last_generation_label: REUSE_LABELS[classification] || (classification ? classification.replaceAll("_", " ") : "None"),
+    last_activation_ms: finiteMs(runtime.timings?.activate_time_ms ?? runtime.timings?.initial_activation_time_ms),
+    last_preparation_ms: finiteMs(timings.request_setup_time_ms ?? timings.next_job_preparation_time_ms),
+    checkpoint_hydration_state: reuse ? "none" : (hydrationMs !== null ? "performed" : "unknown"),
+    checkpoint_hydration_time_ms: hydrationMs,
+  };
+}
+
+function residencySemantic(status = {}) {
+  if (status.runtime_residency && Object.keys(status.runtime_residency).length) return status.runtime_residency;
+  if (latestRuntimeStatus && Object.keys(latestRuntimeStatus).length) return runtimeSemanticFromRaw(latestRuntimeStatus);
+  return runtimeSemanticFromRaw({});
+}
+
+function renderResidencyDetails(status = {}, job = null) {
+  const semantic = residencySemantic(status);
+  const requested = String(semantic.requested_mode || "managed").replaceAll("_", " ");
+  const effective = semantic.effective_label || RESIDENCY_LABELS[semantic.effective_state] || "Unloaded";
+  const modelName = semantic.current_model_name || "None";
+  const runtimeCleared = ["empty", "recovering"].includes(String(semantic.effective_state || "").toLowerCase());
+  const activeGpu = runtimeCleared ? [] : (semantic.active_gpu_components || status.active_gpu_components || []);
+  const cpuReady = runtimeCleared ? [] : (semantic.cpu_ready_components || status.cpu_ready_components || []);
+  const offloaded = runtimeCleared ? [] : (status.offloaded_components || []);
+  const preparedCount = Number(semantic.prepared_composition_count || 0);
+  const poolCount = Number(semantic.lease_component_pool_count || 0);
+  const warmStates = semantic.warm_states || {};
+  const warmingCount = Object.values(warmStates).filter((item) => ["queued", "warming", "warm"].includes(String(item?.state || ""))).length;
+  const leaseParts = [String(semantic.lease_state || "inactive").replaceAll("_", " ")];
+  if (preparedCount) leaseParts.push(`${preparedCount} prepared`);
+  if (poolCount) leaseParts.push(`${poolCount} pooled component${poolCount === 1 ? "" : "s"}`);
+  if (warmingCount) leaseParts.push(`${warmingCount} warm state${warmingCount === 1 ? "" : "s"}`);
+  const hydrationState = String(semantic.checkpoint_hydration_state || "unknown");
+  const hydrationMs = finiteMs(semantic.checkpoint_hydration_time_ms);
+  const hydrationText = hydrationState === "none"
+    ? "None for last generation"
+    : hydrationState === "performed"
+      ? `Performed${hydrationMs !== null ? ` · ${formatDurationMs(hydrationMs)}` : ""}`
+      : "Unknown";
+
+  if ($("#memoryResidencyRequested")) $("#memoryResidencyRequested").textContent = requested;
+  if ($("#memoryResidencyEffective")) $("#memoryResidencyEffective").textContent = effective;
+  if ($("#memoryResidentModel")) $("#memoryResidentModel").textContent = modelName;
+  if ($("#memoryActiveComponents")) $("#memoryActiveComponents").textContent = listText(activeGpu, "None reported");
+  if ($("#memoryCpuReadyComponents")) $("#memoryCpuReadyComponents").textContent = listText(cpuReady, "None reported");
+  if ($("#memoryOffloadedComponents")) $("#memoryOffloadedComponents").textContent = listText(offloaded, "None reported");
+  if ($("#memoryLeaseStatus")) $("#memoryLeaseStatus").textContent = leaseParts.join(" · ");
+  if ($("#memoryLastGenerationReuse")) $("#memoryLastGenerationReuse").textContent = semantic.last_generation_label || "None";
+  if ($("#memoryLastPreparation")) $("#memoryLastPreparation").textContent = formatDurationMs(semantic.last_preparation_ms);
+  if ($("#memoryCheckpointHydration")) $("#memoryCheckpointHydration").textContent = hydrationText;
+  if ($("#memoryActiveStage")) $("#memoryActiveStage").textContent = semantic.stage || status.active_stage || job?.status || "Idle";
+}
+
 export function renderMemoryStatus(job) {
+  if (job) latestMemoryJob = job;
   const status = job?.memory_status || {};
   const snapshot = status.latest_snapshot || {};
   const cuda = snapshot.cuda || {};
@@ -49,6 +169,7 @@ export function renderMemoryStatus(job) {
   const physical = physicalMemoryValues(cuda);
   const allocated = finiteNonnegative(cuda.allocated_vram_bytes);
   const reserved = finiteNonnegative(cuda.reserved_vram_bytes);
+  const jobPeakPhysical = finiteNonnegative(status.job_peak_physical_vram_bytes) ?? physical.used;
   const jobPeakAllocated = finiteNonnegative(
     status.job_peak_allocated_vram_bytes
       ?? status.peak_allocated_vram_bytes
@@ -95,6 +216,7 @@ export function renderMemoryStatus(job) {
       physical_used: formatBytes(physical.used),
       physical_free: formatBytes(physical.free),
       physical_total: formatBytes(physical.total),
+      job_peak_physical: formatBytes(jobPeakPhysical),
       torch_allocated: formatBytes(allocated),
       torch_reserved: formatBytes(reserved),
       oom_recoveries: oomRecoveryCount,
@@ -108,6 +230,7 @@ export function renderMemoryStatus(job) {
   if ($("#memoryPhysicalVramUsed")) $("#memoryPhysicalVramUsed").textContent = formatBytes(physical.used);
   if ($("#memoryPhysicalVramFree")) $("#memoryPhysicalVramFree").textContent = formatBytes(physical.free);
   if ($("#memoryPhysicalVramTotal")) $("#memoryPhysicalVramTotal").textContent = formatBytes(physical.total);
+  if ($("#memoryJobPeakPhysicalVram")) $("#memoryJobPeakPhysicalVram").textContent = formatBytes(jobPeakPhysical);
   if ($("#memoryTorchAllocated")) $("#memoryTorchAllocated").textContent = formatBytes(allocated);
   if ($("#memoryTorchReserved")) $("#memoryTorchReserved").textContent = formatBytes(reserved);
   if ($("#memoryJobPeakAllocated")) $("#memoryJobPeakAllocated").textContent = formatBytes(jobPeakAllocated);
@@ -122,21 +245,13 @@ export function renderMemoryStatus(job) {
     if (oversubscribed) {
       semanticsStatus.textContent = `PyTorch allocator reservation exceeds physical VRAM${overcommit !== null ? ` by ${formatBytes(overcommit)}` : ""}. Windows shared GPU memory or paging may be active.`;
     } else if (physical.total !== null) {
-      semanticsStatus.textContent = `Physical VRAM is measured from CUDA total/free memory. PyTorch allocated and reserved values are shown separately.`;
+      semanticsStatus.textContent = `Physical VRAM is measured from CUDA total/free memory. Job peak physical VRAM is the highest observed physical usage during this image/job; PyTorch allocated and reserved values are shown separately.`;
     } else {
       semanticsStatus.textContent = "Physical VRAM measurement is unavailable. PyTorch allocator values are not treated as physical VRAM usage.";
     }
     semanticsStatus.classList.toggle("warning", oversubscribed);
   }
-  if ($("#memoryActiveComponents")) {
-    $("#memoryActiveComponents").textContent = listText(status.active_gpu_components, "None reported");
-  }
-  if ($("#memoryOffloadedComponents")) {
-    $("#memoryOffloadedComponents").textContent = listText(status.offloaded_components, "None reported");
-  }
-  if ($("#memoryActiveStage")) {
-    $("#memoryActiveStage").textContent = status.active_stage || job?.status || "Idle";
-  }
+  renderResidencyDetails(status, job);
 
   const actions = Array.isArray(status.automatic_actions) ? status.automatic_actions.slice(-5) : [];
   const container = $("#memoryAutomaticActions");
@@ -165,6 +280,25 @@ export function renderMemoryStatus(job) {
       : "Image preview active; CFG telemetry is independent.";
     previewStatus.classList.toggle("warning", suspended);
   }
+}
+
+export function bindMemoryRuntimeStatusSync() {
+  if (memoryRuntimeSyncBound) return;
+  memoryRuntimeSyncBound = true;
+  window.addEventListener("image-gen-model-runtime-status", (event) => {
+    latestRuntimeStatus = event?.detail && typeof event.detail === "object" ? event.detail : {};
+    renderResidencyDetails(latestMemoryJob?.memory_status || {}, latestMemoryJob);
+  });
+  window.addEventListener("image-gen-model-unloaded", (event) => {
+    latestRuntimeStatus = event?.detail?.model_runtime || {
+      residency_mode_requested: latestRuntimeStatus?.residency_mode_requested || "managed",
+      residency_state_effective: "empty",
+      stage: "idle",
+      component_devices: {},
+      composition_execution_lease: {},
+    };
+    renderResidencyDetails(latestMemoryJob?.memory_status || {}, latestMemoryJob);
+  });
 }
 
 function runtimeText(value, fallback = "Unavailable") {

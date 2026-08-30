@@ -916,6 +916,7 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
   $("#dialogLivePreviewCfgVisualEnabled").checked = settings.cfg_lab_enabled === true && settings.live_preview_cfg_visual_enabled === true;
   $("#dialogDiagnosticsMode").value = settings.diagnostics_mode || "failures_only";
   $("#dialogDiagnosticDecodeEnabled").checked = settings.diagnostic_decode_enabled === true;
+  $("#dialogModelResidencyMode").value = String(settings.model_residency_mode || "managed");
   $("#dialogLivePreviewMode").value = FORCED_LIVE_PREVIEW_MODE;
   $("#dialogLivePreviewInterval").value = String(settings.live_preview_interval || 10);
   $("#dialogLivePreviewWidth").value = String(settings.live_preview_width || 384);
@@ -991,6 +992,7 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
   });
 
   $("#saveSettingsButton").addEventListener("click", async () => {
+    const previousResidencyMode = String(state.settings.model_residency_mode || "managed");
     try {
       const saved = await api.saveSettings({
         restore_last_session: $("#dialogRestoreLastSession").checked,
@@ -1000,6 +1002,7 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
         live_preview_cfg_visual_enabled: $("#dialogCfgLabEnabled").checked && $("#dialogLivePreviewCfgVisualEnabled").checked,
         diagnostics_mode: $("#dialogDiagnosticsMode").value || "failures_only",
         diagnostic_decode_enabled: $("#dialogDiagnosticDecodeEnabled").checked,
+        model_residency_mode: $("#dialogModelResidencyMode").value || "managed",
         live_preview_mode: FORCED_LIVE_PREVIEW_MODE,
         live_preview_interval: Number($("#dialogLivePreviewInterval").value),
         live_preview_width: Number($("#dialogLivePreviewWidth").value),
@@ -1026,6 +1029,7 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
       $("#dialogLivePreviewCfgVisualEnabled").checked = saved.cfg_lab_enabled === true && saved.live_preview_cfg_visual_enabled === true;
       $("#dialogDiagnosticsMode").value = saved.diagnostics_mode || "failures_only";
       $("#dialogDiagnosticDecodeEnabled").checked = saved.diagnostic_decode_enabled === true;
+      $("#dialogModelResidencyMode").value = String(saved.model_residency_mode || "managed");
       $("#dialogLivePreviewMode").value = FORCED_LIVE_PREVIEW_MODE;
       $("#dialogLivePreviewInterval").value = String(saved.live_preview_interval || 10);
       $("#dialogLivePreviewWidth").value = String(saved.live_preview_width || 384);
@@ -1050,6 +1054,17 @@ export function bindSettings(settings, { resetLayout = async () => {}, saveLayou
       updateStabilitySettingVisibility();
       applyUiScale(saved.ui_scale);
       state.settings = { ...state.settings, ...saved };
+      const nextResidencyMode = String(saved.model_residency_mode || "managed");
+      if (previousResidencyMode !== nextResidencyMode || saved._model_runtime_status) {
+        window.dispatchEvent(new CustomEvent("image-gen-model-residency-setting-changed", {
+          detail: {
+            previousMode: previousResidencyMode,
+            mode: nextResidencyMode,
+            runtime: saved._model_runtime_status || null,
+            transition: saved._model_residency_transition || null,
+          },
+        }));
+      }
       settings.cfg_lab_enabled = saved.cfg_lab_enabled === true;
       settings.live_preview_cfg_visual_enabled = saved.cfg_lab_enabled === true && saved.live_preview_cfg_visual_enabled === true;
       window.dispatchEvent(new CustomEvent("live-preview-cfg-visual-setting-changed", {

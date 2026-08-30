@@ -1,5 +1,5 @@
 {
-  "settings_defaults_version": 13,
+  "settings_defaults_version": 14,
   "restore_last_session": true,
   "ui_scale": 105,
   "density": "comfortable",
@@ -110,6 +110,7 @@
     "require_metadata_for_external": true
   },
   "memory_policy": "auto",
+  "model_residency_mode": "managed",
   "memory_vram_safety_margin_mb": 1024,
   "memory_retain_checkpoint_between_jobs": true,
   "memory_retain_vae_between_jobs": true,

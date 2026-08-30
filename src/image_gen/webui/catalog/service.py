@@ -90,7 +90,7 @@ class WebUICatalog(
         self._civitai_client = CivitaiAssetMetadataService(context)
         # Compatibility alias for older extensions/tests; the implementation is generic.
         self._civitai_lora_client = self._civitai_client
-        self._output_summary_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        self._output_summary_cache: dict[tuple[str, int, int, int], dict[str, Any]] = {}
         self._lora_root_report: dict[str, Any] = {"roots": [], "diagnostics": [], "summary": {}}
         self.refresh_models()
 

@@ -27,14 +27,24 @@ let profileEditorBody = {};
 let profileEditorReadonly = false;
 
 export function editableProfileBody(profile = {}) {
-  const keys = ["aliases", "parser_emitters", "escape_character", "description", "credit", "palette"];
+  const keys = [
+    "profile_schema_version", "migrated_from_contract",
+    "aliases", "parser_emitters", "semantic_modes", "preprocessing", "precedence", "reserved_syntax",
+    "escape_character", "description", "credit", "palette",
+  ];
   return Object.fromEntries(keys.filter((key) => key in profile).map((key) => [key, structuredClone(profile[key])]));
 }
 
 export function normalizeProfileEditorBody(profile = {}) {
   const body = editableProfileBody(profile);
+  body.profile_schema_version = Number(body.profile_schema_version || 2);
+  body.migrated_from_contract = String(body.migrated_from_contract || "");
   body.aliases = body.aliases && typeof body.aliases === "object" ? body.aliases : {};
   body.parser_emitters = body.parser_emitters && typeof body.parser_emitters === "object" ? body.parser_emitters : {};
+  body.semantic_modes = body.semantic_modes && typeof body.semantic_modes === "object" ? body.semantic_modes : {};
+  body.preprocessing = body.preprocessing && typeof body.preprocessing === "object" ? body.preprocessing : {};
+  body.precedence = Array.isArray(body.precedence) ? body.precedence : [];
+  body.reserved_syntax = Array.isArray(body.reserved_syntax) ? body.reserved_syntax : [];
   body.escape_character = String(body.escape_character || "\\");
   body.description = String(body.description || "");
   body.credit = String(body.credit || "");
@@ -287,7 +297,13 @@ export function loadProfileEditor(profile) {
     compatible_parsers: ["legacy", "parser21", "superhybrid"],
     builtin: false,
     aliases: {},
+    profile_schema_version: 2,
+    migrated_from_contract: "",
     parser_emitters: { legacy: {}, parser21: {}, superhybrid: {} },
+    semantic_modes: {},
+    preprocessing: {},
+    precedence: [],
+    reserved_syntax: [],
     escape_character: "\\",
     description: "",
     credit: "",

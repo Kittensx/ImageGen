@@ -2,6 +2,7 @@ import { api } from "../api.js";
 import { productName } from "../branding.js?v=brand1";
 import { state } from "../state.js";
 import { $, notify } from "../utils.js";
+import { saveGenerationProfileValues } from "./profiles.js?v=generation-profile-file-identity1";
 import { renderCfgGraph } from "./cfg-lab.js?v=0.1.47-lightning-recommendation";
 
 let collectValues = () => ({});
@@ -655,6 +656,32 @@ function selectedReplayPayload(fieldNames) {
   return payload;
 }
 
+function suggestGenerationProfileName() {
+  const imageName = state.outputDetails.data?.image?.name || "";
+  if (!imageName) return "";
+  return imageName.replace(/\.[^.]+$/, "");
+}
+
+async function saveOutputDetailsAsGenerationProfile() {
+  const fieldNames = Object.keys(state.outputDetails.data?.replay || {});
+  const payload = selectedReplayPayload(fieldNames);
+  if (!Object.keys(payload).length) {
+    const message = "This image does not expose replay fields that can be saved as a generation profile.";
+    announce(message, "error");
+    notify(message, "error");
+    return;
+  }
+  try {
+    await saveGenerationProfileValues(payload, {
+      defaultName: suggestGenerationProfileName(),
+      successMessage: "Generation profile saved from image details.",
+    });
+  } catch (error) {
+    announce(`Unable to save generation profile: ${error.message}`, "error");
+    notify(error.message, "error");
+  }
+}
+
 function announce(message, kind = "info") {
   const live = $("#outputDetailsLiveRegion");
   live.textContent = message;
@@ -945,6 +972,7 @@ function renderDetails() {
   $("#outputDetailsSendSelectedButton").disabled = noSelectedFields;
   $("#outputDetailsPreviewMergedButton").disabled = noSelectedFields;
   $("#outputDetailsDuplicateButton").disabled = noReplayFields;
+  $("#outputDetailsSaveProfileButton").disabled = noReplayFields;
   $("#outputDetailsExactReplayButton").disabled = noReplayFields;
   $("#outputDetailsNewSeedButton").disabled = noReplayFields;
   $("#outputDetailsCurrentModelButton").disabled = noReplayFields;
@@ -955,6 +983,7 @@ function renderError(error) {
   $("#outputDetailsLoading").hidden = true;
   $("#outputDetailsBody").hidden = true;
   $("#outputDetailsError").hidden = false;
+  $("#outputDetailsSaveProfileButton").disabled = true;
   $("#outputDetailsError").textContent = state.outputDetails.error;
   announce(state.outputDetails.error, "error");
 }
@@ -1024,6 +1053,7 @@ function prepareOutputDetailsDialog(opener = null, outputId = "") {
   $("#outputDetailsCopyFullButton").disabled = true;
   $("#outputDetailsSendSelectedButton").disabled = true;
   $("#outputDetailsDuplicateButton").disabled = true;
+  $("#outputDetailsSaveProfileButton").disabled = true;
   $("#outputDetailsPreviewMergedButton").disabled = true;
   $("#outputDetailsExactReplayButton").disabled = true;
   $("#outputDetailsNewSeedButton").disabled = true;
@@ -1325,6 +1355,9 @@ export function bindOutputDetails({ collect = () => ({}), apply = async () => ({
       return;
     }
     requestApply(payload);
+  });
+  $("#outputDetailsSaveProfileButton").addEventListener("click", async () => {
+    await saveOutputDetailsAsGenerationProfile();
   });
   $("#outputDetailsExactReplayButton").addEventListener("click", () => {
     openReplayPreflight(replaySpecification());

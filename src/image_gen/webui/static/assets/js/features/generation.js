@@ -265,83 +265,105 @@ function renderQueueSubsystemStatus() {
   });
 }
 
-function renderWarmWorkerStatus(warm = {}) {
-  const persistentMode = state.settings.generation_worker_mode === "persistent_experimental" && state.settings.warm_worker_enabled === true;
-  $("#modelWarmStatusPanel")?.classList.toggle("is-hidden", !persistentMode);
-  const stage = String(warm.stage || (warm.online ? "idle" : "offline"));
-  const warmState = String(warm.warm_state || "cold");
-  const badge = $("#modelWarmStatusBadge");
-  const text = $("#modelWarmStatusText");
-  const memory = $("#modelWarmMemoryText");
-  const unloadButton = $("#unloadWarmModelButton");
-  const recoverButton = $("#recoverWarmWorkerButton");
-  const clearQueueButton = $("#clearQueuedJobsButton");
-  const warmTransitionStages = new Set(["starting", "preparing_model", "loading_tokenizer", "loading_checkpoint", "reusing_checkpoint", "applying_retention_policy"]);
-  let warmIndicatorStatus = "inactive";
-  let warmIndicatorLabel = "Inactive";
-  if (persistentMode) {
-    if (warm.last_error) {
-      warmIndicatorStatus = "critical";
-      warmIndicatorLabel = "Error";
-    } else if (!warm.online) {
-      warmIndicatorStatus = "inactive";
-      warmIndicatorLabel = "Offline";
-    } else if (warmTransitionStages.has(stage)) {
-      warmIndicatorStatus = "transitioning";
-      warmIndicatorLabel = humanizeStage(stage);
-    } else if (warm.cpu_fallback_reason) {
-      warmIndicatorStatus = "warning";
-      warmIndicatorLabel = "CPU fallback";
-    } else {
-      warmIndicatorStatus = "healthy";
-      warmIndicatorLabel = warmState === "warm" || ["ready", "model_ready"].includes(stage) ? "Ready" : "Online";
-    }
+function formatResidencyBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 GiB";
+  return `${(bytes / (1024 ** 3)).toFixed(2)} GiB`;
+}
+
+function modelResidencyDisplay(runtime = {}) {
+  const stateValue = String(runtime.residency_state_effective || "empty").trim().toLowerCase();
+  const stage = String(runtime.stage || "").trim().toLowerCase();
+  if (["preparing_model", "loading_tokenizer", "loading_checkpoint", "applying_retention_policy"].includes(stage)) return "LOADING";
+  if (["unloading", "superseded"].includes(stage) || stateValue === "switching") return "SWITCHING";
+  if (stage === "recovering" || stateValue === "recovering") return "RECOVERING";
+  if (stateValue === "hot_gpu") return "HOT - GPU";
+  if (stateValue === "hot_staged") return "HOT - STAGED";
+  if (stateValue === "managed_resident") return "MANAGED - RESIDENT";
+  return "UNLOADED";
+}
+
+function formatResidencyMs(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(1)} ms` : "—";
+}
+
+function residencyPerformanceReport(runtime = {}) {
+  const reports = Array.isArray(runtime.recent_job_reports) ? runtime.recent_job_reports.slice(-5) : [];
+  const transitions = Array.isArray(runtime.residency_transition_history) ? runtime.residency_transition_history.slice(-8) : [];
+  const lines = [];
+  lines.push(`Requested policy: ${runtime.residency_mode_requested || "managed"}`);
+  lines.push(`Effective state: ${modelResidencyDisplay(runtime)}`);
+  lines.push(`Current reason: ${runtime.last_residency_reason || "none"}`);
+  lines.push(`Hot reuse count: ${Number(runtime.hot_reuse_count || 0)}`);
+  lines.push("");
+  if (!reports.length) {
+    lines.push("No completed resident-runtime generation report has been recorded yet.");
+  } else {
+    lines.push("Recent generations (newest last):");
+    reports.forEach((report, index) => {
+      const timings = report.timings || {};
+      const modelName = String(report.model_path || "").split(/[\\/]/).pop() || "unknown";
+      lines.push(`${index + 1}. ${modelName} · ${report.generation_residency_classification || "unknown"} · ${report.residency_state_effective || "unknown"}`);
+      lines.push(`   total=${formatResidencyMs(timings.last_job_total_ms)} setup=${formatResidencyMs(timings.request_setup_time_ms)} generation=${formatResidencyMs(timings.generation_execution_time_ms)} residency=${formatResidencyMs(timings.post_generation_residency_time_ms)} save-wait=${formatResidencyMs(timings.output_save_wait_time_ms)} finalize=${formatResidencyMs(timings.post_generation_finalize_time_ms)}`);
+      lines.push(`   checkpoint-hydration=${formatResidencyMs(timings.checkpoint_hydration_time_ms)} cpu->gpu=${formatResidencyMs(timings.cpu_to_gpu_promotion_time_ms)} first-step=${formatResidencyMs(timings.first_step_latency_ms)}`);
+      lines.push(`   policy=${report.memory_policy || "unknown"} retention-device=${report.retention_device_policy || "unknown"} execution-device=${report.execution_device_policy || "unknown"}`);
+      lines.push(`   change=${report.resident_change_classification || "unknown"} retention=${report.post_job_residency_action || "unknown"} reason=${report.degradation_reason || report.staging_reason || report.residency_reason || "none"}`);
+    });
   }
+  if (transitions.length) {
+    lines.push("");
+    lines.push("Recent residency transitions:");
+    transitions.forEach((item) => {
+      lines.push(`- ${item.from || "?"} -> ${item.to || "?"}: ${item.reason || "unspecified"}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+function renderModelResidencyStatus(runtime = {}) {
+  if (state.bootstrap) state.bootstrap.model_runtime = runtime;
+  const label = modelResidencyDisplay(runtime);
+  const stage = String(runtime.stage || (runtime.online ? "idle" : "offline"));
+  const modelName = String(runtime.current_model_path || runtime.selected_model_path || "").split(/[\\/]/).pop() || "none";
+  const isTransition = ["LOADING", "SWITCHING", "RECOVERING"].includes(label);
+  const active = ["HOT - GPU", "HOT - STAGED", "MANAGED - RESIDENT"].includes(label);
+  const indicatorStatus = runtime.last_error ? "critical" : isTransition ? "transitioning" : active ? "healthy" : "inactive";
   setSubsystemStatus({
-    id: "warmWorkerStatusLight",
+    id: "modelResidencyStatusLight",
     host: "#workerStatusLights",
-    label: "Persistent worker",
-    status: warmIndicatorStatus,
-    stateLabel: warmIndicatorLabel,
-    summary: persistentMode
-      ? (warm.last_error ? "Persistent worker reported an error." : `Persistent worker is ${warmIndicatorLabel.toLowerCase()}.`)
-      : "Persistent worker mode is disabled.",
-    detail: warm.last_error || warm.cpu_fallback_reason || `Stage: ${stage}. Warm state: ${warmState}.`,
+    label: "Model residency",
+    status: indicatorStatus,
+    stateLabel: runtime.last_error ? "Error" : label,
+    summary: runtime.last_error ? "Resident model runtime reported an error." : `${label}${modelName !== "none" ? ` · ${modelName}` : ""}`,
+    detail: runtime.last_error || `Requested policy: ${runtime.residency_mode_requested || "managed"}. Stage: ${stage}.`,
     facts: {
-      mode: persistentMode ? "enabled" : "disabled",
-      stage,
-      warm_state: warmState,
-      model: String(warm.current_model_path || warm.selected_model_path || "").split(/[\/]/).pop() || "none",
-      cuda: warm.cuda_available === false ? "unavailable" : warm.cuda_available === true ? "available" : "unknown",
+      policy: runtime.residency_mode_requested || "managed",
+      residency: label,
+      model: modelName,
+      hot_reuse_count: Number(runtime.hot_reuse_count || 0),
+      last_generation: runtime.last_generation_residency_classification || "none",
     },
     diagnosticTarget: "#runtimeStatusPanel",
   });
-  if (badge) {
-    badge.textContent = stage === "ready" ? "Ready" : humanizeStage(stage);
-    badge.className = `status-badge ${stage === "ready" ? "warm" : stage}`;
-  }
-  const modelName = String(warm.current_model_path || warm.selected_model_path || "").split(/[\\/]/).pop();
-  if (text) {
-    if (warm.last_error) text.textContent = `Warm worker error: ${warm.last_error}`;
-    else if (warmState === "warm") text.textContent = `${modelName || "Selected model"} is retained by the persistent worker.`;
-    else if (["preparing_model", "loading_tokenizer", "loading_checkpoint", "reusing_checkpoint", "model_ready", "applying_retention_policy"].includes(stage)) {
-      text.textContent = `${humanizeStage(stage)}${modelName ? ` · ${modelName}` : ""}`;
-    } else if (!warm.online) text.textContent = "The persistent worker is offline and will start when needed.";
-    else text.textContent = "The persistent worker is online without a loaded checkpoint.";
-  }
-  if (memory) {
-    const devices = Object.entries(warm.component_devices || {})
-      .map(([name, device]) => `${name}: ${device}`)
-      .join(" · ");
-    const allocated = Number(warm.memory?.allocated_bytes || 0) / (1024 ** 3);
-    const cudaState = warm.cuda_available === false ? "CUDA unavailable" : warm.cuda_available === true ? "CUDA available" : "CUDA status unknown";
-    const policy = warm.execution_device_policy ? ` · policy: ${String(warm.execution_device_policy).replaceAll("_", " ")}` : "";
-    const fallback = warm.cpu_fallback_reason ? ` · CPU fallback: ${warm.cpu_fallback_reason}` : "";
-    memory.textContent = `${devices || `GPU residency: ${warm.gpu_loaded ? "active" : "none"}`}${allocated ? ` · ${allocated.toFixed(2)} GiB allocated` : ""} · ${cudaState}${policy}${fallback}`;
-  }
-  if (unloadButton) unloadButton.disabled = warmState !== "warm" && !warm.current_model_path;
-  if (recoverButton) recoverButton.disabled = false;
-  if (clearQueueButton) clearQueueButton.disabled = false;
+
+  const memory = runtime.memory || {};
+  const allocated = formatResidencyBytes(memory.allocated_bytes);
+  const free = memory.free_bytes == null ? "unknown" : formatResidencyBytes(memory.free_bytes);
+  const devices = Object.entries(runtime.component_devices || {}).map(([name, device]) => `${name}: ${device}`).join(" · ");
+  const activationMs = Number(runtime.timings?.activate_time_ms ?? runtime.timings?.initial_activation_time_ms);
+  const activationText = Number.isFinite(activationMs) ? `${activationMs.toFixed(0)} ms` : "—";
+  const reuseCount = Number(runtime.hot_reuse_count || 0);
+  const lastReuse = String(runtime.last_generation_residency_classification || "none").replaceAll("_", " ");
+
+  if ($("#runtimeModelResidencyStatus")) $("#runtimeModelResidencyStatus").textContent = label;
+  if ($("#runtimeResidentModelStatus")) $("#runtimeResidentModelStatus").textContent = modelName === "none" ? "None" : `${modelName}${devices ? ` · ${devices}` : ""}`;
+  if ($("#runtimeModelMemoryStatus")) $("#runtimeModelMemoryStatus").textContent = `allocated ${allocated} · free ${free}`;
+  if ($("#runtimeModelActivationStatus")) $("#runtimeModelActivationStatus").textContent = activationText;
+  if ($("#runtimeHotReuseStatus")) $("#runtimeHotReuseStatus").textContent = `${reuseCount} reuse${reuseCount === 1 ? "" : "s"} · last: ${lastReuse}`;
+  if ($("#runtimeResidencyReport")) $("#runtimeResidencyReport").textContent = residencyPerformanceReport(runtime);
+
+  window.dispatchEvent(new CustomEvent("image-gen-model-runtime-status", { detail: runtime }));
 }
 
 function renderWorker(worker) {
@@ -380,7 +402,7 @@ function renderWorker(worker) {
     diagnosticTarget: "#runtimeStatusPanel",
     placement: "prepend",
   });
-  renderWarmWorkerStatus(worker?.warm_worker || {});
+  renderModelResidencyStatus(worker?.model_runtime || {});
   renderQueueSubsystemStatus();
 }
 
@@ -909,6 +931,15 @@ function connectEventStream(job) {
     }
     schedulePostCompletionRefresh(payload?.job || payload);
   });
+  bindEvent("job-output-timing-updated", async (payload) => {
+    applyEventPayload(payload);
+    const recentOutput = payload?.recent_output || null;
+    if (recentOutput) {
+      upsertRecentOutput(recentOutput, {
+        selectNewest: Boolean(!state.selectedOutput),
+      });
+    }
+  });
   bindEvent("job-cancelled", async (payload) => {
     applyEventPayload(payload);
     closeEventStream({ terminal: true });
@@ -1183,12 +1214,12 @@ export function bindGeneration(options) {
     placement: "prepend",
   });
   setSubsystemStatus({
-    id: "warmWorkerStatusLight",
+    id: "modelResidencyStatusLight",
     host: "#workerStatusLights",
-    label: "Persistent worker",
+    label: "Model residency",
     status: "inactive",
     stateLabel: "Checking",
-    summary: "Persistent worker state has not been received yet.",
+    summary: "Resident model state has not been received yet.",
     detail: "This indicator updates with the first worker status response.",
     diagnosticTarget: "#runtimeStatusPanel",
   });
@@ -1201,6 +1232,15 @@ export function bindGeneration(options) {
     event?.preventDefault?.();
     submit(false);
   };
+  $("#copyResidencyReportButton")?.addEventListener("click", async () => {
+    const report = $("#runtimeResidencyReport")?.textContent || "No residency report is available.";
+    try {
+      await navigator.clipboard.writeText(report);
+      notify("Residency report copied.");
+    } catch (error) {
+      notify(`Unable to copy residency report: ${error.message}`, "error");
+    }
+  });
   $("#generateButton")?.addEventListener("click", submitNow);
   $("#infinityButton").addEventListener("click", () => {
     const job = activeJob();
@@ -1322,7 +1362,7 @@ export function bindGeneration(options) {
       }
       const response = await api.preloadWarmModel(modelPath);
       if (response.active_model) state.activeModel = response.active_model;
-      renderWarmWorkerStatus(response.warm_worker || response.result?.status || {});
+      renderModelResidencyStatus(response.model_runtime || response.result?.status || {});
       if (response.result?.disabled || response.result?.ok === false) {
         notify(response.result?.reason || "Persistent warmup is disabled by the selected policy.", "warning");
       } else {
@@ -1343,7 +1383,7 @@ export function bindGeneration(options) {
     try {
       if (button) button.disabled = true;
       const response = await api.unloadWarmModel();
-      renderWarmWorkerStatus(response.warm_worker || {});
+      renderModelResidencyStatus(response.model_runtime || {});
       notify("Warm checkpoint unloaded.");
     } catch (error) {
       notify(error.message, "error");
@@ -1363,7 +1403,7 @@ export function bindGeneration(options) {
         clear_queue: false,
         reason: "Manual recovery requested from the WebUI.",
       });
-      renderWarmWorkerStatus(response.worker?.warm_worker || {});
+      renderModelResidencyStatus(response.worker?.model_runtime || {});
       if (response.active_job_id) notify(`Recovered the persistent worker and released stuck job ${response.active_job_id}.`, "warning");
       else notify("Persistent worker recovered and ready for the next generation.");
     } catch (error) {

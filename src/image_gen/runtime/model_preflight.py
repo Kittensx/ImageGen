@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -212,50 +213,101 @@ class ModelPreflightMixin:
         request: GenerationRequest,
         extras: dict[str, Any],
     ) -> None:
+        trace_enabled = bool(extras.get("model_runtime_trace_enabled"))
+        trace_started = time.perf_counter()
+        trace: dict[str, Any] = {
+            "schema_version": 1,
+            "kind": "sd3_runtime_preflight",
+            "stages": [],
+        }
+
+        def record(name: str, started: float, **details: Any) -> None:
+            if not trace_enabled:
+                return
+            item = {
+                "name": str(name),
+                "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            }
+            if details:
+                item.update(details)
+            trace["stages"].append(item)
+
         if bool(extras.get("_sd3_profile_preflight_complete")):
+            if trace_enabled and "sd3_preflight_trace" not in extras:
+                trace["already_complete"] = True
+                trace["total_ms"] = round((time.perf_counter() - trace_started) * 1000.0, 3)
+                extras["sd3_preflight_trace"] = trace
             return
         preflight_model_path = extras.get("model_path") or self.model_loading_system.default_model_path
         if not preflight_model_path:
             return
+        stage_started = time.perf_counter()
         candidate = Path(str(preflight_model_path)).expanduser()
         if not candidate.is_absolute():
             candidate = self.project_context.resolve_project_path(candidate)
+        record("resolve_checkpoint_path", stage_started, checkpoint=str(candidate))
         if not candidate.is_file() or candidate.suffix.lower() != ".safetensors":
             return
         try:
+            stage_started = time.perf_counter()
             report = CheckpointInspector().inspect(str(candidate), compute_sha256=False)
+            record(
+                "checkpoint_inspection",
+                stage_started,
+                architecture=str(report.architecture or ""),
+                architecture_variant=str(getattr(report, "architecture_variant", "") or ""),
+            )
             if str(report.architecture or "").strip().lower() != "sd3.x":
                 extras["_sd3_profile_preflight_complete"] = True
+                if trace_enabled:
+                    trace["total_ms"] = round((time.perf_counter() - trace_started) * 1000.0, 3)
+                    extras["sd3_preflight_trace"] = trace
                 return
             explicit_profile = str(extras.get("sd3_runtime_profile_override") or "").strip() or None
+            trace["profile_before"] = explicit_profile or ""
+            stage_started = time.perf_counter()
             sd3_contract = resolve_sd3_model_contract(
                 self.project_context,
                 checkpoint_variant=report.architecture_variant,
                 explicit_profile_id=explicit_profile,
             )
+            record("resolve_sd3_model_contract", stage_started, profile_id=sd3_contract.profile.profile_id)
             generic_steps = _optional_bool(
                 extras.get("model_enforce_recommended_steps", extras.get("sdxl_enforce_recommended_steps"))
             )
             generic_cfg = _optional_bool(
                 extras.get("model_enforce_recommended_cfg", extras.get("sdxl_enforce_recommended_cfg"))
             )
+            stage_started = time.perf_counter()
             application = apply_sd3_profile_to_request(
                 request,
                 sd3_contract.profile,
                 enforce_steps=generic_steps,
                 enforce_cfg=generic_cfg,
             )
+            record("apply_sd3_profile_to_request", stage_started)
             extras["sd3_runtime_profile_override"] = sd3_contract.profile.profile_id
             extras["model_runtime_profile"] = sd3_contract.profile.to_dict()
             extras["sd3_profile_application"] = application
             extras.setdefault("sd3_text_encoder_source", "auto")
+            stage_started = time.perf_counter()
             scheduler_kwargs = dict(getattr(request, "scheduler_kwargs", {}) or {})
             if str(request.scheduler_name or "").strip().lower() == "flow_match_euler":
                 scheduler_kwargs.setdefault(
                     "scheduler_config_path", str(sd3_contract.assets.scheduler_config)
                 )
             request.scheduler_kwargs = scheduler_kwargs
+            record("configure_sd3_scheduler_assets", stage_started)
             extras["_sd3_profile_preflight_complete"] = True
+            if trace_enabled:
+                trace["profile_after"] = str(extras.get("sd3_runtime_profile_override") or "")
+                trace["profile_mutated"] = trace.get("profile_before") != trace.get("profile_after")
+                trace["total_ms"] = round((time.perf_counter() - trace_started) * 1000.0, 3)
+                extras["sd3_preflight_trace"] = trace
         except Exception as exc:
             extras["sd3_profile_preflight_error"] = f"{type(exc).__name__}: {exc}"
+            if trace_enabled:
+                trace["failed"] = {"error_type": type(exc).__name__, "error": str(exc)}
+                trace["total_ms"] = round((time.perf_counter() - trace_started) * 1000.0, 3)
+                extras["sd3_preflight_trace"] = trace
             raise

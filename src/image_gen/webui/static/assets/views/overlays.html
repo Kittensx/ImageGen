@@ -144,6 +144,16 @@
       <p class="settings-hint">Active and pending values are shown in Runtime Status. Browser refresh alone cannot activate these changes.</p>
     </fieldset>
     <fieldset class="settings-group">
+      <legend>Model Residency</legend>
+      <label class="field-block"><span>Model residency</span>
+        <select id="dialogModelResidencyMode">
+          <option value="managed">Managed / Memory Policy</option>
+          <option value="hot">Hot / Keep Selected Model Ready</option>
+        </select>
+      </label>
+      <p class="settings-hint">Hot keeps the selected model and composition hydrated across compatible jobs, keeping the selected model ready across generations for faster follow-up jobs. It may use more VRAM/RAM. Architecture-required staging and OOM safety still apply. Managed applies the normal memory-policy retention behavior after each runtime job.</p>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>Per-Job Memory Runtime</legend>
       <p>These values apply to the next queued job and do not require restart.</p>
       <button class="secondary-button compact-button" id="inheritStartupRuntimeButton" type="button" aria-pressed="false">Inherit Startup Profile</button>
@@ -657,6 +667,7 @@
       <button class="secondary-button" id="outputDetailsCopyFullButton" type="button">Copy Full Metadata</button>
       <button class="secondary-button" id="outputDetailsSendSelectedButton" type="button">Send Selected Fields to Form</button>
       <button class="secondary-button" id="outputDetailsDuplicateButton" type="button">Duplicate Full Run to Form</button>
+      <button class="secondary-button" id="outputDetailsSaveProfileButton" type="button">Save as Generation Profile</button>
       <span class="output-details-action-spacer"></span>
       <label class="output-details-replay-prompt-mode">
         <span>Replay prompt</span>

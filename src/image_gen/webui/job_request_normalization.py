@@ -572,7 +572,7 @@ def normalize_generation_request(payload: dict[str, Any] | None) -> dict[str, An
     normalized["prompt_parser_name"] = default_prompt_parser_registry().resolve_id(requested_parser)
     snapshot = normalized.get("prompt_shortcut_profile_snapshot")
     if isinstance(snapshot, Mapping) and snapshot:
-        shortcut_profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
+        shortcut_profile = PromptShortcutProfileDescriptor.from_snapshot(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
         validation = validate_prompt_shortcut_profile(shortcut_profile)
         if not validation.valid:
             raise ValueError("Embedded prompt shortcut profile is invalid: " + " | ".join(issue.message for issue in validation.errors))

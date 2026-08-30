@@ -164,7 +164,7 @@ class PromptConfigurationService:
         snapshot: Mapping[str, Any] | None = None,
     ) -> PromptShortcutProfileDescriptor:
         if snapshot:
-            profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
+            profile = PromptShortcutProfileDescriptor.from_snapshot(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
             validation = validate_prompt_shortcut_profile(profile)
             if not validation.valid:
                 raise ValueError("Embedded shortcut profile snapshot is invalid: " + " | ".join(issue.message for issue in validation.errors))

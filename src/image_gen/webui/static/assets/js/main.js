@@ -8,16 +8,17 @@ import { renderAdvancedEditor } from "./components/advanced-editor.js?v=schedule
 import { setSubsystemStatus } from "./components/status-indicators.js?v=1";
 import { initResponsiveActionBars } from "./components/action-bar.js?v=responsive-action-bar1";
 import { collectGenerationValues, applyGenerationValues } from "./components/form-state.js?v=hires-prompt-inheritance1";
-import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=queue-active-pin1-p3c-metadata1";
-import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=responsive-action-bar1";
+import { acceptQueuedJob, bindGeneration } from "./features/generation.js?v=hmr06";
+import { bindGallery, initializeRecentOutputBrowser, recentOutputApiFilters, renderGallery } from "./features/gallery.js?v=hmr06";
+// Legacy gallery cachebuster contract retained for regression traceability: from "./features/gallery.js?v=responsive-action-bar1";
 import { bindPromptPresets, renderPromptPresets } from "./features/presets.js";
-import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js";
-import { bindSettings } from "./features/settings.js?v=theme-manager-tm02a";
+import { bindGenerationProfiles, renderGenerationProfiles } from "./features/profiles.js?v=generation-profile-file-identity1";
+import { bindSettings } from "./features/settings.js?v=theme-manager-tm02a-hmr03";
 import { bindCivitaiConnection } from "./features/civitai-connection.js?v=civitai-connect2";
-import { bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=0.1.62";
+import { bindMemoryRuntimeStatusSync, bindRuntimeCommandCopy, renderRuntimeStartupStatus } from "./features/memory-status.js?v=hmr06";
 import { bindWorkspaceLayout } from "./features/layout.js?v=responsive-action-bar1";
 import { bindDefaultAssets } from "./features/default-assets.js?v=0.1.77";
-import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-preview-recovery1";
+import { bindCheckpointWorkspace } from "./features/checkpoints.js?v=asset-preview-recovery1-hmr03";
 import { bindLoraWorkspace } from "./features/loras.js?v=lora-catalog-preview-recovery1";
 // Legacy cachebuster contract retained for regression traceability:
 // import { bindAssetBrowser } from "./features/asset-browser.js?v=asset-browser18-search-lifecycle1-preview-staging1-fast-replay1-preview-recovery2-atomic-preview1-tab-responsive1-new-search-draft1-close-responsive1-dsv2-02-chip-sync2-p3a-gallery1-p3b-gallery-cache1-autoload1";
@@ -32,7 +33,7 @@ import { bindBugReporter } from "./features/bug-reports.js?v=bug-manager1";
 import { bindImageGenProfile } from "./features/profile.js?v=clean-install1";
 import { bindLightbox } from "./features/lightbox.js?v=0.1.40";
 import { enforceExactDimensionInputs } from "./features/exact-dimensions.js";
-import { bindOutputDetails } from "./features/output-details.js?v=p3c-embedded-metadata-partial-replay1";
+import { bindOutputDetails } from "./features/output-details.js?v=output-details-save-profile1";
 import { bindQueueComposer } from "./features/queue-composer.js";
 import { bindBatchIO } from "./features/batch-io.js";
 import { bindVariationMatrix, openVariationMatrix } from "./features/variation-matrix.js?v=responsive-action-bar1";
@@ -937,6 +938,25 @@ function bindModelSelection() {
       notify(error.message, "error");
     }
   });
+  window.addEventListener("image-gen-model-residency-setting-changed", async (event) => {
+    const mode = String(event.detail?.mode || state.settings.model_residency_mode || "managed");
+    const runtime = event.detail?.runtime || null;
+    if (runtime && state.bootstrap) state.bootstrap.model_runtime = runtime;
+    if (runtime?.current_model_path) rememberModelRuntime(runtime, runtime.current_model_path);
+    if (mode !== "hot") {
+      if (runtime?.current_model_path) {
+        setModelReadyState(true, "Managed residency is active for the selected checkpoint.", "ready");
+      }
+      return;
+    }
+    const requestedPath = $("#modelPath")?.value || "";
+    if (!requestedPath) return;
+    try {
+      await ensureSelectedModelReady();
+    } catch (error) {
+      notify(`Unable to establish Hot model residency: ${error.message}`, "error");
+    }
+  });
 }
 
 function bindAdvancedButtons() {
@@ -1276,6 +1296,7 @@ async function start() {
     bindOutputDetails({ collect: collectCurrentValues, apply: applyReplayValues, onJobQueued: acceptQueuedJob });
     initializeRecentOutputBrowser(state.settings);
     bindGallery({ refreshOutputs });
+    bindMemoryRuntimeStatusSync();
     bindQueueComposer({ onQueued: acceptQueuedJob });
     bindBatchIO({ collect: collectCurrentValues, onQueued: acceptQueuedJob });
     bindVariationMatrix({ collect: collectCurrentValues, onQueued: acceptQueuedJob });

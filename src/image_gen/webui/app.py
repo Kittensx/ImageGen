@@ -279,7 +279,6 @@ def create_app(
         context=context,
         service=asset_hub,
         downloads=asset_hub_downloads,
-        gallery_cache=asset_hub_gallery_cache,
         catalog=catalog,
         upscaler_catalog=upscaler_catalog,
         registry=asset_hub_registry,
@@ -370,6 +369,7 @@ def create_app(
         selections=asset_hub_selections,
         discovery_index=asset_hub_discovery_index,
         search_sessions=asset_hub_search_sessions,
+        gallery_cache=asset_hub_gallery_cache,
         user_config_path=context.config_path,
     ))
     app.state.theme_library = theme_library
@@ -637,6 +637,7 @@ def create_app(
         store=store,
         theme_library=theme_library,
         registry=jobs.registry,
+        jobs=jobs,
         _runtime_startup_status=_runtime_startup_status,
     ))
 

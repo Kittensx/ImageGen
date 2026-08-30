@@ -897,16 +897,26 @@ def _classify_plugin_support(
     profile_name = replay.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else ("superhybrid_native" if requested_parser == "superhybrid" else "parser21_native"))
     snapshot = replay.get("prompt_shortcut_profile_snapshot")
     if isinstance(snapshot, Mapping) and snapshot:
-        profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
-        validation = validate_prompt_shortcut_profile(profile)
-        if not validation.valid:
+        try:
+            profile = PromptShortcutProfileDescriptor.from_snapshot(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
+        except ValueError as exc:
             _unknown_field(
                 unsupported,
                 "prompt_shortcut_profile_snapshot",
                 snapshot,
-                "The embedded prompt shortcut profile snapshot is invalid.",
+                f"The embedded prompt shortcut profile snapshot failed integrity validation: {exc}",
                 status="invalid_metadata",
             )
+        else:
+            validation = validate_prompt_shortcut_profile(profile)
+            if not validation.valid:
+                _unknown_field(
+                    unsupported,
+                    "prompt_shortcut_profile_snapshot",
+                    snapshot,
+                    "The embedded prompt shortcut profile snapshot is invalid.",
+                    status="invalid_metadata",
+                )
     elif not default_prompt_shortcut_registry().has(profile_name):
         _unknown_field(
             unsupported,

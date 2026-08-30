@@ -67,6 +67,28 @@ class BaseDenoiseStageMixin:
             "predict_regional_denoised",
             regional_denoised_fn,
         )
+        composable_noise_fn = diagnostics.wrap_callable(
+            session,
+            "denoising",
+            "predict_composable_guided_noise",
+            self.systems.denoising.predict_composable_guided_noise,
+        )
+        composable_denoised_fn = diagnostics.wrap_callable(
+            session,
+            "denoising",
+            "predict_composable_denoised",
+            self.systems.denoising.predict_composable_denoised,
+        )
+        setattr(
+            guided_model_fn,
+            "predict_composable_guided_noise",
+            composable_noise_fn,
+        )
+        setattr(
+            guided_model_fn,
+            "predict_composable_denoised",
+            composable_denoised_fn,
+        )
         if bool(getattr(self.systems.denoising, "is_flow_match", False)):
             guided_flow_fn = diagnostics.wrap_callable(
                 session,
@@ -75,6 +97,13 @@ class BaseDenoiseStageMixin:
                 self.systems.denoising.predict_guided_flow,
             )
             setattr(guided_model_fn, "predict_guided_flow", guided_flow_fn)
+            composable_flow_fn = diagnostics.wrap_callable(
+                session,
+                "denoising",
+                "predict_composable_guided_flow",
+                self.systems.denoising.predict_composable_guided_flow,
+            )
+            setattr(guided_model_fn, "predict_composable_guided_flow", composable_flow_fn)
             setattr(
                 guided_model_fn,
                 "denoising_contract",

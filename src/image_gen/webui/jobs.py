@@ -49,6 +49,7 @@ from image_gen.runtime_options import (
     runtime_request_settings,
 )
 from image_gen.runtime.hires_sizing import apply_hires_dimensions
+from image_gen.runtime.residency_policy import normalize_model_residency_mode
 from image_gen.runtime.scheduler_settings import (
     normalize_scheduler_payload,
     scheduler_resolution_from_payload,
@@ -145,6 +146,7 @@ class GenerationJob:
     last_runtime_line_at: str | None = None
     return_code: int | None = None
     output_paths: list[str] = field(default_factory=list)
+    image_execution_reports: list[dict[str, Any]] = field(default_factory=list)
     log_lines: list[str] = field(default_factory=list)
     error: str | None = None
     job_root: str | None = None
@@ -229,6 +231,7 @@ class GenerationJob:
             "last_runtime_line_at": self.last_runtime_line_at,
             "return_code": self.return_code,
             "output_paths": list(self.output_paths),
+            "image_execution_reports": [dict(item) for item in self.image_execution_reports[-64:]],
             "log_lines": self.log_lines[-80:],
             "error": self.error,
             "failure_stage_code": (
@@ -554,6 +557,7 @@ class GenerationJobManager(
         settings = self._application_settings()
         return {
             **self._runtime_request_values(),
+            "model_residency_mode": normalize_model_residency_mode(settings.get("model_residency_mode")),
             "memory_pinned_cpu_memory": settings.get("memory_pinned_cpu_memory", False),
             "memory_allow_tiled_vae_fallback": settings.get("memory_allow_tiled_vae_fallback", True),
             "memory_allow_preview_suspension_on_oom": settings.get("memory_allow_preview_suspension_on_oom", True),
@@ -1137,6 +1141,36 @@ class GenerationJobManager(
         current_settings = (
             dict(self.settings_provider() or {}) if self.settings_provider is not None else {}
         )
+        residency_mode_requested = normalize_model_residency_mode(
+            current_settings.get("model_residency_mode")
+        )
+        request_payload["model_residency_mode"] = residency_mode_requested
+        set_residency_mode = getattr(self.model_runtime, "set_residency_mode_requested", None)
+        if callable(set_residency_mode):
+            set_residency_mode(residency_mode_requested)
+        runtime_status_before_job = self.model_runtime.status()
+        job.model_runtime_diagnostics["residency_policy"] = {
+            "residency_mode_requested": residency_mode_requested,
+            "residency_state_effective_at_job_start": runtime_status_before_job.get("residency_state_effective", "empty"),
+            "runtime_status_at_job_start": {
+                key: runtime_status_before_job.get(key)
+                for key in (
+                    "residency_mode_requested",
+                    "residency_state_effective",
+                    "hot_model_path",
+                    "hot_model_identity",
+                    "hot_composition_sha256",
+                    "hot_load_variant_fingerprint",
+                    "hot_since",
+                    "last_residency_transition",
+                    "last_residency_reason",
+                    "retention_suppressed_for_hot",
+                    "hot_reuse_count",
+                    "cold_or_switch_load_count",
+                    "last_generation_residency_classification",
+                )
+            },
+        }
         runtime_startup_status = build_runtime_startup_status(
             self.runtime_startup_options,
             current_settings,

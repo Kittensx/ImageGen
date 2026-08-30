@@ -1064,29 +1064,142 @@ class DenoisingSystem:
             )
 
         batch = int(sample.shape[0])
-        model_sample = torch.cat([sample, sample], dim=0)
-        model_cond = torch.cat([uncond, cond], dim=0)
-        model_pooled = torch.cat([pooled_uncond, pooled_cond], dim=0)
-        model_sigma = self._repeat_flow_batch_value(
-            sigma, source_batch=batch, repeats=2
-        )
-        model_timestep = self._repeat_flow_batch_value(
-            timestep, source_batch=batch, repeats=2
-        )
-        combined = self.predict_flow_model_output(
-            model_sample,
-            model_sigma,
-            model_timestep,
-            model_cond,
-            {
-                "pooled_projections": model_pooled,
-                "joint_attention_kwargs": cond_joint,
-            },
-        )
-        output_uncond, output_cond = combined.chunk(2, dim=0)
+        if cond.ndim != 3 or uncond.ndim != 3:
+            raise ValueError(
+                "SD3 CFG conditioning must be rank-3 [batch, sequence, width]."
+            )
+        if int(cond.shape[0]) != batch or int(uncond.shape[0]) != batch:
+            raise ValueError("SD3 CFG conditioning batch must match the latent batch.")
+        if int(cond.shape[-1]) != int(uncond.shape[-1]):
+            raise ValueError(
+                "SD3 CFG conditional and unconditional embedding widths must match."
+            )
+
+        if int(cond.shape[1]) != int(uncond.shape[1]):
+            # Forced BREAK can legitimately lengthen only the positive sequence.
+            # A batch-concatenated transformer call requires equal sequence
+            # lengths, so preserve exact CFG math by evaluating U and P
+            # independently. This is also friendlier to the project's low-VRAM
+            # target than padding one branch with invented conditioning values.
+            output_uncond = self.predict_flow_model_output(
+                sample,
+                sigma,
+                timestep,
+                uncond,
+                {
+                    "pooled_projections": pooled_uncond,
+                    "joint_attention_kwargs": uncond_joint,
+                },
+            )
+            output_cond = self.predict_flow_model_output(
+                sample,
+                sigma,
+                timestep,
+                cond,
+                {
+                    "pooled_projections": pooled_cond,
+                    "joint_attention_kwargs": cond_joint,
+                },
+            )
+        else:
+            model_sample = torch.cat([sample, sample], dim=0)
+            model_cond = torch.cat([uncond, cond], dim=0)
+            model_pooled = torch.cat([pooled_uncond, pooled_cond], dim=0)
+            model_sigma = self._repeat_flow_batch_value(
+                sigma, source_batch=batch, repeats=2
+            )
+            model_timestep = self._repeat_flow_batch_value(
+                timestep, source_batch=batch, repeats=2
+            )
+            combined = self.predict_flow_model_output(
+                model_sample,
+                model_sigma,
+                model_timestep,
+                model_cond,
+                {
+                    "pooled_projections": model_pooled,
+                    "joint_attention_kwargs": cond_joint,
+                },
+            )
+            output_uncond, output_cond = combined.chunk(2, dim=0)
         guided = output_uncond + scale * (output_cond - output_uncond)
         if not torch.isfinite(guided).all():
             raise ValueError("SD3 classifier-free guidance produced non-finite flow output.")
+        return guided
+
+    def predict_composable_guided_flow(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        branches: tuple[torch.Tensor, ...] | list[torch.Tensor],
+        branch_weights: tuple[float, ...] | list[float],
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        branch_model_conditioning: tuple[dict[str, Any] | None, ...] | list[dict[str, Any] | None],
+        uncond_model_conditioning: dict[str, Any] | None,
+    ) -> torch.Tensor:
+        """PPSR-09E A1111-style composable guidance for SD3 flow output.
+
+        Top-level branch weights are deliberately *not* normalized:
+
+            U + SUM((P_i - U) * (w_i * CFG))
+
+        The unconditional branch and conditional branches are evaluated
+        sequentially.  This intentionally favors the project's low-VRAM target
+        over one large concatenated transformer batch; a five-way AND therefore
+        performs six model evaluations per step without multiplying the latent
+        batch residency by six.
+        """
+
+        if not self.is_flow_match:
+            raise RuntimeError("Composable flow guidance is only valid for an SD3 flow-matching denoiser.")
+        branch_values = tuple(branches or ())
+        weights = tuple(float(value) for value in (branch_weights or ()))
+        branch_kwargs = tuple(branch_model_conditioning or ())
+        if not branch_values or len(branch_values) != len(weights):
+            raise ValueError("Composable flow guidance requires one weight per conditional branch.")
+        if len(branch_kwargs) != len(branch_values):
+            raise ValueError("Composable flow guidance requires model-conditioning kwargs per branch.")
+        if float(getattr(self, "_cfg_rescale", 0.0) or 0.0) > 0.0:
+            raise ValueError("PPSR-09E composable AND is not yet qualified with CFG rescale enabled.")
+
+        uncond_kwargs = dict(uncond_model_conditioning or {})
+        pooled_uncond = uncond_kwargs.get("pooled_projections")
+        if pooled_uncond is None:
+            raise ValueError("SD3 composable guidance requires unconditional pooled_projections.")
+        pooled_branches = []
+        for index, values in enumerate(branch_kwargs):
+            pooled = dict(values or {}).get("pooled_projections")
+            if pooled is None:
+                raise ValueError(
+                    f"SD3 composable branch {index} is missing pooled_projections."
+                )
+            pooled_branches.append(pooled)
+
+        output_uncond = self.predict_flow_model_output(
+            sample,
+            sigma,
+            timestep,
+            uncond,
+            {"pooled_projections": pooled_uncond},
+        )
+        outputs = tuple(
+            self.predict_flow_model_output(
+                sample,
+                sigma,
+                timestep,
+                branch,
+                {"pooled_projections": pooled},
+            )
+            for branch, pooled in zip(branch_values, pooled_branches)
+        )
+        guided = output_uncond.clone()
+        scale = float(cfg_scale)
+        for weight, output_cond in zip(weights, outputs):
+            guided = guided + (output_cond - output_uncond) * (float(weight) * scale)
+        if not torch.isfinite(guided).all():
+            raise ValueError("SD3 composable guidance produced non-finite flow output.")
         return guided
 
     def _guided_model_output(
@@ -1199,6 +1312,113 @@ class DenoisingSystem:
             denoised=denoised,
         )
         return epsilon
+
+    def _composable_guided_model_output(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        branches: tuple[torch.Tensor, ...] | list[torch.Tensor],
+        branch_weights: tuple[float, ...] | list[float],
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        branch_model_conditioning: tuple[dict[str, Any] | None, ...] | list[dict[str, Any] | None] = (),
+        uncond_model_conditioning: dict[str, Any] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...], torch.Tensor]:
+        branch_values = tuple(branches or ())
+        weights = tuple(float(value) for value in (branch_weights or ()))
+        if not branch_values or len(branch_values) != len(weights):
+            raise ValueError("Composable guidance requires one weight per conditional branch.")
+        kwargs_values = tuple(branch_model_conditioning or tuple(None for _ in branch_values))
+        if len(kwargs_values) != len(branch_values):
+            raise ValueError("Composable guidance requires model-conditioning kwargs per branch.")
+        if float(getattr(self, "_cfg_rescale", 0.0) or 0.0) > 0.0:
+            raise ValueError("PPSR-09E composable AND is not yet qualified with CFG rescale enabled.")
+
+        output_uncond = self.predict_model_output(
+            sample,
+            sigma,
+            timestep,
+            uncond,
+            dict(uncond_model_conditioning or {}) or None,
+        )
+        output_branches = tuple(
+            self.predict_model_output(
+                sample,
+                sigma,
+                timestep,
+                cond,
+                dict(extra or {}) or None,
+            )
+            for cond, extra in zip(branch_values, kwargs_values)
+        )
+        guided = output_uncond.clone()
+        scale = float(cfg_scale)
+        for weight, output_cond in zip(weights, output_branches):
+            guided = guided + (output_cond - output_uncond) * (float(weight) * scale)
+        model_input, _ = self._prepare_model_input(sample, sigma)
+        return guided, output_uncond, output_branches, model_input
+
+    def predict_composable_guided_noise(
+        self,
+        latents: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        branches: tuple[torch.Tensor, ...] | list[torch.Tensor],
+        branch_weights: tuple[float, ...] | list[float],
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        branch_model_conditioning: tuple[dict[str, Any] | None, ...] | list[dict[str, Any] | None] = (),
+        uncond_model_conditioning: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        guided_output, _, _, _ = self._composable_guided_model_output(
+            latents,
+            sigma,
+            timestep,
+            branches,
+            branch_weights,
+            uncond,
+            cfg_scale,
+            branch_model_conditioning,
+            uncond_model_conditioning,
+        )
+        return self.convert_model_output_to_epsilon(
+            solver_sample=latents,
+            sigma=sigma,
+            model_output=guided_output,
+            prediction_type=self.prediction_type,
+        )
+
+    def predict_composable_denoised(
+        self,
+        sample: torch.Tensor,
+        sigma: torch.Tensor | float,
+        timestep: torch.Tensor | float,
+        branches: tuple[torch.Tensor, ...] | list[torch.Tensor],
+        branch_weights: tuple[float, ...] | list[float],
+        uncond: torch.Tensor,
+        cfg_scale: float,
+        branch_model_conditioning: tuple[dict[str, Any] | None, ...] | list[dict[str, Any] | None] = (),
+        uncond_model_conditioning: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        guided_output, _, _, _ = self._composable_guided_model_output(
+            sample,
+            sigma,
+            timestep,
+            branches,
+            branch_weights,
+            uncond,
+            cfg_scale,
+            branch_model_conditioning,
+            uncond_model_conditioning,
+        )
+        denoised = self.convert_model_output_to_denoised(
+            solver_sample=sample,
+            sigma=sigma,
+            model_output=guided_output,
+            prediction_type=self.prediction_type,
+        )
+        return denoised.to(dtype=torch.float32)
 
     def predict_denoised(
         self,

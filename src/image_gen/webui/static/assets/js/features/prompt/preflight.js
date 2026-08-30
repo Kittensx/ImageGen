@@ -728,6 +728,19 @@ export function formatSemanticInspection(role = {}) {
     : {};
   if (!Object.keys(inspection).length) return "No semantic inspection data.";
   const lines = [];
+  const profileDiagnostics = role?.diagnostics && typeof role.diagnostics === "object" ? role.diagnostics : {};
+  if (profileDiagnostics.profile_id) {
+    lines.push(`Prompt style profile: ${profileDiagnostics.profile_id} · schema v${profileDiagnostics.profile_schema_version || "?"}`);
+    const modes = profileDiagnostics.semantic_modes && typeof profileDiagnostics.semantic_modes === "object"
+      ? profileDiagnostics.semantic_modes
+      : {};
+    const modeText = Object.entries(modes).map(([key, value]) => `${key}=${value}`).join(", ");
+    if (modeText) lines.push(`Profile semantic modes: ${modeText}`);
+    const operators = Array.isArray(profileDiagnostics.semantic_operators) ? profileDiagnostics.semantic_operators : [];
+    operators.forEach((item, index) => {
+      lines.push(`Profile operator ${index + 1}: ${item.source || "?"} -> ${item.semantic_operator_id || item.canonical_operator || "?"}${item.semantic_algorithm ? ` · ${item.semantic_algorithm}` : ""}`);
+    });
+  }
   lines.push(`Contract: ${inspection.contract_version || "unknown"}`);
   lines.push(`Root: ${inspection.root_type || "text"}`);
   if (inspection.semantic_digest?.digest) lines.push(`Semantic digest: ${inspection.semantic_digest.digest}`);

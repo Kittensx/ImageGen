@@ -13,7 +13,7 @@ from image_gen.webui.routes.payloads import NamedPayload, PromptPresetPayload
 from image_gen.webui.schema_utils import scope_plugin_profile_values
 
 
-def build_settings_router(*, context, store, theme_library, registry, _runtime_startup_status) -> APIRouter:
+def build_settings_router(*, context, store, theme_library, registry, jobs=None, _runtime_startup_status) -> APIRouter:
     router = APIRouter()
 
     def _user_config_path() -> Path:
@@ -87,7 +87,24 @@ def build_settings_router(*, context, store, theme_library, registry, _runtime_s
                 if not isinstance(overrides, dict):
                     raise ValueError("runtime_job_overrides must be a JSON object.")
                 resolve_runtime_startup_options(environment={}, settings=overrides)
+            previous = store.load_application_settings() if "model_residency_mode" in payload else {}
             saved = store.save_application_settings(payload)
+            residency_transition = None
+            if "model_residency_mode" in payload and jobs is not None:
+                previous_mode = str(previous.get("model_residency_mode") or "managed")
+                saved_mode = str(saved.get("model_residency_mode") or "managed")
+                if previous_mode != saved_mode:
+                    try:
+                        residency_transition = await jobs.apply_model_residency_mode(saved_mode)
+                    except RuntimeError as exc:
+                        residency_transition = {
+                            "deferred": True,
+                            "reason": "runtime_apply_failed",
+                            "error": str(exc),
+                            "status": jobs.model_runtime_status(),
+                        }
+                else:
+                    residency_transition = {"deferred": False, "unchanged": True, "status": jobs.model_runtime_status()}
             if "theme_palette" in payload:
                 theme_library.deactivate_global_theme()
         except (TypeError, ValueError) as exc:
@@ -95,6 +112,9 @@ def build_settings_router(*, context, store, theme_library, registry, _runtime_s
         saved["theme_effective_palette"] = theme_library.resolve_effective_palette()
         saved["theme_library_activation"] = theme_library.library_payload().get("activation", {})
         saved["_runtime_startup_status"] = _runtime_startup_status()
+        if residency_transition is not None:
+            saved["_model_residency_transition"] = residency_transition
+            saved["_model_runtime_status"] = dict(residency_transition.get("status") or {})
         return saved
 
 

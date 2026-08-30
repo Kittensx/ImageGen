@@ -12,6 +12,7 @@ import torch
 from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
 from image_gen.webui.job_request_normalization import _coerce_top_level_number
 from image_gen.webui.job_store import _utc_now
+from image_gen.webui.residency_telemetry import merge_runtime_into_memory_status
 from modules.prompt_parsers import default_prompt_parser_registry
 
 _IMAGE_LINE = re.compile(r"^\s*Image \[seed (?P<seed>[^\]]+)\]:\s*(?P<path>.+?)\s*$")
@@ -29,12 +30,16 @@ _MODEL_RUNTIME_STATUS_LINE = re.compile(r"^MODEL_RUNTIME_STATUS_JSON:\s*(\{.*\})
 _ASYNC_OUTPUT_SAVE_STATUS_LINE = re.compile(r"^ASYNC_OUTPUT_SAVE_STATUS_JSON:\s*(\{.*\})\s*$")
 _ASYNC_OUTPUT_SAVE_ERROR_LINE = re.compile(r"^ASYNC_OUTPUT_SAVE_ERROR_JSON:\s*(\{.*\})\s*$")
 
-def _normalize_live_memory_status(value: Mapping[str, Any] | None) -> dict[str, Any]:
+def _normalize_live_memory_status(
+    value: Mapping[str, Any] | None,
+    *,
+    previous_status: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     status = dict(value or {})
+    previous = dict(previous_status or {})
     snapshot = dict(status.get("latest_snapshot") or {})
-    snapshot["cuda"] = normalize_cuda_memory_payload(
-        dict(snapshot.get("cuda") or {})
-    )
+    raw_cuda = dict(snapshot.get("cuda") or {})
+    snapshot["cuda"] = normalize_cuda_memory_payload(raw_cuda)
     status["latest_snapshot"] = snapshot
     if status.get("job_peak_allocated_vram_bytes") is None:
         status["job_peak_allocated_vram_bytes"] = status.get(
@@ -44,6 +49,49 @@ def _normalize_live_memory_status(value: Mapping[str, Any] | None) -> dict[str, 
         status["job_peak_reserved_vram_bytes"] = status.get(
             "peak_reserved_vram_bytes"
         )
+
+    # HMR-06A: keep a separate observed *physical* VRAM peak for the job.
+    # PyTorch allocated/reserved peaks are allocator metrics and can differ
+    # materially from the brief CUDA total-minus-free spike a user sees while
+    # components are staged for sampling.  Track the largest physical-used
+    # value reported by any live memory snapshot for this job.
+    cuda = dict(snapshot.get("cuda") or {})
+
+    def _nonnegative_int(raw: Any) -> int | None:
+        try:
+            number = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
+
+    physical_total = _nonnegative_int(
+        cuda.get("physical_total_vram_bytes")
+        if cuda.get("physical_total_vram_bytes") is not None
+        else (raw_cuda.get("physical_total_vram_bytes") if raw_cuda.get("physical_total_vram_bytes") is not None else cuda.get("total_vram_bytes"))
+    )
+    physical_free = _nonnegative_int(
+        cuda.get("physical_free_vram_bytes")
+        if cuda.get("physical_free_vram_bytes") is not None
+        else (raw_cuda.get("physical_free_vram_bytes") if raw_cuda.get("physical_free_vram_bytes") is not None else cuda.get("free_vram_bytes"))
+    )
+    physical_used = _nonnegative_int(
+        cuda.get("physical_used_vram_bytes")
+        if cuda.get("physical_used_vram_bytes") is not None
+        else raw_cuda.get("physical_used_vram_bytes")
+    )
+    if physical_used is None and physical_total is not None and physical_free is not None:
+        physical_used = max(0, physical_total - min(physical_total, physical_free))
+    if physical_total is not None and physical_used is not None:
+        physical_used = min(physical_total, physical_used)
+
+    candidates = [
+        _nonnegative_int(previous.get("job_peak_physical_vram_bytes")),
+        _nonnegative_int(status.get("job_peak_physical_vram_bytes")),
+        physical_used,
+    ]
+    observed = [item for item in candidates if item is not None]
+    if observed:
+        status["job_peak_physical_vram_bytes"] = max(observed)
     return status
 
 
@@ -405,70 +453,11 @@ class JobRuntimeEventsMixin:
                 job.model_runtime_diagnostics = dict(status_payload)
                 if batch_orchestration:
                     job.model_runtime_diagnostics["batch_orchestration"] = batch_orchestration
-                runtime_memory = dict(status_payload.get("memory") or {})
-                component_devices = dict(status_payload.get("component_devices") or {})
-                if runtime_memory or component_devices:
-                    active_gpu_components = [
-                        str(component)
-                        for component, device in component_devices.items()
-                        if str(device or "").lower().startswith("cuda")
-                    ]
-                    offloaded_components = [
-                        str(component)
-                        for component, device in component_devices.items()
-                        if not str(device or "").lower().startswith("cuda")
-                    ]
-                    previous = dict(job.memory_status or {})
-                    previous_snapshot = dict(previous.get("latest_snapshot") or {})
-                    previous_cuda = dict(previous_snapshot.get("cuda") or {})
-                    current_allocated = runtime_memory.get("allocated_bytes")
-                    current_reserved = runtime_memory.get("reserved_bytes")
-                    previous_peak_allocated = previous.get("peak_allocated_vram_bytes")
-                    previous_peak_reserved = previous.get("peak_reserved_vram_bytes")
-                    normalized_cuda = normalize_cuda_memory_payload(
-                        {
-                            **previous_cuda,
-                            "available": bool(runtime_memory),
-                            "device_name": runtime_memory.get("device_name"),
-                            "allocated_vram_bytes": current_allocated,
-                            "reserved_vram_bytes": current_reserved,
-                            "free_vram_bytes": runtime_memory.get("free_bytes"),
-                            "total_vram_bytes": runtime_memory.get("total_bytes"),
-                        }
-                    )
-                    job.memory_status = {
-                        **previous,
-                        "event": "model_runtime_status",
-                        "stage": stage,
-                        "active_stage": stage,
-                        "active_gpu_components": active_gpu_components,
-                        "offloaded_components": offloaded_components,
-                        "latest_snapshot": {
-                            **previous_snapshot,
-                            "pipeline_stage": stage,
-                            "cuda": normalized_cuda,
-                        },
-                        "peak_allocated_vram_bytes": max(
-                            int(previous_peak_allocated or 0),
-                            int(current_allocated or 0),
-                        ),
-                        "peak_reserved_vram_bytes": max(
-                            int(previous_peak_reserved or 0),
-                            int(current_reserved or 0),
-                        ),
-                        "job_peak_allocated_vram_bytes": max(
-                            int(previous.get("job_peak_allocated_vram_bytes") or 0),
-                            int(previous_peak_allocated or 0),
-                            int(current_allocated or 0),
-                        ),
-                        "job_peak_reserved_vram_bytes": max(
-                            int(previous.get("job_peak_reserved_vram_bytes") or 0),
-                            int(previous_peak_reserved or 0),
-                            int(current_reserved or 0),
-                        ),
-                        "telemetry_source": "resident_model_runtime",
-                        "updated_at": _utc_now(),
-                    }
+                job.memory_status = merge_runtime_into_memory_status(
+                    job.memory_status,
+                    status_payload,
+                    updated_at=_utc_now(),
+                )
                 preserve_control_state = job.status in {"cancelling", "cancelled", "failed", "completed"}
                 if preserve_control_state:
                     # Runtime stdout can still contain buffered status records after a cancel
@@ -578,16 +567,22 @@ class JobRuntimeEventsMixin:
                 memory_payload = {}
             if isinstance(memory_payload, dict):
                 status_payload = _normalize_live_memory_status(
-                    memory_payload.get("status") or {}
+                    memory_payload.get("status") or {},
+                    previous_status=job.memory_status,
                 )
                 updated_at = _utc_now()
-                job.memory_status = {
+                memory_status = {
                     **status_payload,
                     "event": memory_payload.get("event"),
                     "stage": memory_payload.get("stage"),
                     "active_stage": memory_payload.get("active_stage"),
                     "updated_at": updated_at,
                 }
+                job.memory_status = merge_runtime_into_memory_status(
+                    memory_status,
+                    job.model_runtime_diagnostics,
+                    updated_at=updated_at,
+                )
                 job.updated_at = updated_at
                 job.last_runtime_line_at = updated_at
                 self._persist_job(job)

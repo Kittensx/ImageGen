@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
+from image_gen.runtime.residency_policy import normalize_model_residency_mode
 from image_gen.webui.default_assets import default_document, normalize_document
 from image_gen.webui.theme.contracts import normalize_legacy_theme_palette
 from image_gen.webui.theme.storage import normalize_theme_storage_settings
@@ -82,6 +83,7 @@ FAILSAFE_APPLICATION_DEFAULTS: dict[str, Any] = {
     "live_preview_retention_jobs": 24,
     "live_preview_disk_budget_mb": 1024,
     "memory_policy": "auto",
+    "model_residency_mode": "managed",
     "memory_vram_safety_margin_mb": 1024,
     "memory_retain_checkpoint_between_jobs": True,
     "memory_retain_vae_between_jobs": True,
@@ -337,6 +339,9 @@ class WebUIStore:
             if isinstance(merged.get("runtime_job_overrides"), dict)
             else {}
         )
+        merged["model_residency_mode"] = normalize_model_residency_mode(
+            merged.get("model_residency_mode")
+        )
         for legacy_key in (
             "startup_model_behavior",
             "generation_worker_mode",
@@ -411,6 +416,17 @@ class WebUIStore:
             changed = True
         return stored, changed
 
+    @classmethod
+    def _migrate_hmr01_residency_settings(cls, value: Any) -> tuple[dict[str, Any], bool]:
+        stored = dict(value) if isinstance(value, dict) else {}
+        if "model_residency_mode" not in stored:
+            return stored, False
+        normalized = normalize_model_residency_mode(stored.get("model_residency_mode"))
+        if stored.get("model_residency_mode") == normalized:
+            return stored, False
+        stored["model_residency_mode"] = normalized
+        return stored, True
+
     def load_packaged_application_defaults(self) -> dict[str, Any]:
         packaged = self._read(self._packaged_defaults_path(), {})
         return self._normalize_application_settings(packaged)
@@ -427,7 +443,8 @@ class WebUIStore:
         packaged = self.load_packaged_application_defaults()
         settings_path = self.settings_dir / "application.json"
         stored, changed = self._migrate_phase13_troubleshooting_settings(self._read(settings_path, {}))
-        if changed:
+        stored, residency_changed = self._migrate_hmr01_residency_settings(stored)
+        if changed or residency_changed:
             self._write(settings_path, stored)
         return self._normalize_application_settings(_deep_merge(packaged, stored))
 
@@ -444,6 +461,10 @@ class WebUIStore:
 
     def save_application_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         incoming = dict(payload or {})
+        if "model_residency_mode" in incoming:
+            incoming["model_residency_mode"] = normalize_model_residency_mode(
+                incoming.get("model_residency_mode")
+            )
         if "theme_palette" in incoming:
             incoming["theme_palette"] = self._normalize_theme_palette(incoming.get("theme_palette"))
         stored = self._read(self.settings_dir / "application.json", {})
@@ -504,10 +525,19 @@ class WebUIStore:
     def list_profiles(self, kind: str, plugin_id: str | None = None) -> list[dict[str, Any]]:
         root = self._profile_root(kind, plugin_id)
         output: list[dict[str, Any]] = []
-        for path in sorted(root.glob("*.json"), key=lambda item: item.stem.casefold()):
+        for path in root.glob("*.json"):
             payload = self._read(path, {})
             if isinstance(payload, dict):
                 output.append({**payload, "file_name": path.name})
+        if str(kind or "").strip().casefold() == "generation":
+            output.sort(
+                key=lambda item: (
+                    str(item.get("name") or Path(str(item.get("file_name") or "")).stem).casefold(),
+                    str(item.get("file_name") or "").casefold(),
+                )
+            )
+        else:
+            output.sort(key=lambda item: str(item.get("file_name") or "").casefold())
         return output
 
     def save_profile(
@@ -536,7 +566,7 @@ class WebUIStore:
             "values": dict(payload or {}),
         }
         self._write(root / safe_name, record)
-        return record
+        return {**record, "file_name": safe_name}
 
     def delete_profile(self, kind: str, name: str, plugin_id: str | None = None) -> bool:
         root = self._profile_root(kind, plugin_id)

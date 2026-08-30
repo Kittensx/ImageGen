@@ -461,6 +461,7 @@ function applyAndRenderGallery({ selectNewest = false, focusOutputId = "" } = {}
     $("#outputImage").removeAttribute("src");
     $("#outputDimensions").textContent = "—";
     $("#outputStatus").textContent = "No selection";
+    renderOutputTiming(null);
     updateThumbnailCarouselControls();
     updateNavigationState();
     publishSelection();
@@ -673,6 +674,107 @@ function focusThumbnailButton(id) {
   return true;
 }
 
+function executionRecord(item) {
+  return item?.image_execution && typeof item.image_execution === "object" ? item.image_execution : {};
+}
+
+function formatExecutionDuration(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 10000) return `${(ms / 1000).toFixed(2)} s`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
+  const minutes = Math.floor(ms / 60000);
+  const seconds = ((ms % 60000) / 1000).toFixed(1);
+  return `${minutes}m ${seconds}s`;
+}
+
+function executionClassificationLabel(value) {
+  const key = String(value || "").trim().toLowerCase();
+  const labels = {
+    cold_load: "Cold load",
+    model_switch: "Model switch",
+    managed_reuse: "Managed resident reuse",
+    resident_managed_reuse: "Managed resident reuse",
+    managed_resident_reuse: "Managed resident reuse",
+    hot_reuse: "Hot reuse",
+    hot_staged_reuse: "Hot staged reuse",
+  };
+  return labels[key] || (key ? key.replaceAll("_", " ") : "Unknown");
+}
+
+function closeOutputTimingPopover() {
+  const button = $("#outputTimingButton");
+  const popover = $("#outputTimingPopover");
+  if (button) button.setAttribute("aria-expanded", "false");
+  if (popover) popover.hidden = true;
+}
+
+function renderOutputTiming(item) {
+  const button = $("#outputTimingButton");
+  const popover = $("#outputTimingPopover");
+  if (!button || !popover) return;
+  const record = executionRecord(item);
+  const totalMs = Number(item?.execution_time_ms ?? record.execution_time_ms);
+  const hasTiming = Number.isFinite(totalMs) && totalMs >= 0;
+  closeOutputTimingPopover();
+  button.hidden = !hasTiming;
+  popover.replaceChildren();
+  if (!hasTiming) return;
+
+  button.textContent = formatExecutionDuration(totalMs);
+  button.title = `Image execution time: ${formatExecutionDuration(totalMs)}. Click for details.`;
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Image execution timing";
+  const list = document.createElement("dl");
+  list.className = "output-timing-list";
+  const timings = record.timings || {};
+  const rows = [
+    ["Total execution", totalMs],
+    ["Preparation", timings.request_setup_time_ms ?? timings.next_job_preparation_time_ms],
+    ["Generation", timings.generation_execution_time_ms],
+    ["Finalization", timings.post_generation_finalize_time_ms],
+    ["Save wait", timings.output_save_wait_time_ms],
+    ["First step", timings.first_step_latency_ms],
+  ];
+  rows.forEach(([label, value]) => {
+    const ms = Number(value);
+    if (!Number.isFinite(ms) || ms < 0) return;
+    const row = document.createElement("div");
+    const dt = document.createElement("dt");
+    const dd = document.createElement("dd");
+    dt.textContent = label;
+    dd.textContent = formatExecutionDuration(ms);
+    row.append(dt, dd);
+    list.append(row);
+  });
+
+  const classification = document.createElement("div");
+  const classificationTerm = document.createElement("dt");
+  const classificationValue = document.createElement("dd");
+  classificationTerm.textContent = "Residency path";
+  classificationValue.textContent = executionClassificationLabel(record.generation_residency_classification);
+  classification.append(classificationTerm, classificationValue);
+  list.append(classification);
+
+  const hydration = document.createElement("div");
+  const hydrationTerm = document.createElement("dt");
+  const hydrationValue = document.createElement("dd");
+  hydrationTerm.textContent = "Checkpoint hydration";
+  const hydrationMs = Number(record.checkpoint_hydration_time_ms);
+  hydrationValue.textContent = record.checkpoint_hydration_occurred
+    ? `Yes${Number.isFinite(hydrationMs) ? ` · ${formatExecutionDuration(hydrationMs)}` : ""}`
+    : "None for this reuse path";
+  hydration.append(hydrationTerm, hydrationValue);
+  list.append(hydration);
+
+  const scope = document.createElement("small");
+  scope.className = "output-timing-scope";
+  scope.textContent = "Execution time excludes queue wait and paused time. It includes preparation, generation, and finalization for this image command.";
+  popover.append(heading, list, scope);
+}
+
 export function showOutput(item, { skipWindowSync = false, focusThumbnail = false } = {}) {
   if (!item) return;
   state.selectedOutput = item;
@@ -690,6 +792,7 @@ export function showOutput(item, { skipWindowSync = false, focusThumbnail = fals
   $("#outputScheduler").textContent = item.scheduler_name || "—";
   $("#outputSeed").textContent = item.seed ?? "—";
   $("#outputStatus").textContent = item.timestamp ? formatTime(item.timestamp) : "Completed";
+  renderOutputTiming(item);
   document.querySelectorAll(".thumbnail-button").forEach((button) => {
     const id = button.closest("[data-gallery-output-id]")?.dataset.galleryOutputId;
     const active = id === outputId(item);
@@ -914,6 +1017,29 @@ export function bindGallery(options = {}) {
   $("#previousOutputButton").addEventListener("click", () => navigate(-1));
   $("#nextOutputButton").addEventListener("click", () => navigate(1));
   $("#fitOutputButton").addEventListener("click", toggleFitMode);
+  $("#outputTimingButton")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget;
+    const popover = $("#outputTimingPopover");
+    if (!popover) return;
+    const opening = popover.hidden;
+    popover.hidden = !opening;
+    button.setAttribute("aria-expanded", String(opening));
+  });
+  $("#outputTimingButton")?.addEventListener("dblclick", (event) => event.stopPropagation());
+  $("#outputTimingPopover")?.addEventListener("click", (event) => event.stopPropagation());
+  $("#outputTimingPopover")?.addEventListener("dblclick", (event) => event.stopPropagation());
+  document.addEventListener("click", (event) => {
+    const button = $("#outputTimingButton");
+    const popover = $("#outputTimingPopover");
+    if (!button || !popover || popover.hidden) return;
+    if (button.contains(event.target) || popover.contains(event.target)) return;
+    closeOutputTimingPopover();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeOutputTimingPopover();
+  });
   $("#selectAllVisibleButton").addEventListener("click", selectAllVisible);
   $("#clearGallerySelectionButton").addEventListener("click", clearGallerySelection);
   $("#clearRecentOutputsButton").addEventListener("click", clearRecentOutputs);
@@ -930,6 +1056,7 @@ export function bindGallery(options = {}) {
     openSelectedOutput(event.currentTarget);
   });
   $("#outputStage").addEventListener("keydown", (event) => {
+    if (event.target?.closest?.("#outputTimingButton, #outputTimingPopover")) return;
     if (event.key === "ArrowLeft") {
       event.preventDefault();
       navigate(-1);

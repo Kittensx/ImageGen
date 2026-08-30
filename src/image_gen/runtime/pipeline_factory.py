@@ -10,8 +10,15 @@ import torch
 from image_gen.contracts import GenerationRequest
 from image_gen.contracts.vae_provenance import read_vae_provenance
 from image_gen.runtime.composition import PipelineCompositionRoot
+from image_gen.runtime.component_residency import public_transition_report
 from image_gen.runtime.model_preflight import _advanced_model_family
-from image_gen.runtime.model_load_variant import model_load_variant_fingerprint, model_load_variant_payload
+from image_gen.runtime.model_load_variant import (
+    model_load_variant_fingerprint,
+    model_load_variant_payload,
+    model_load_variant_payload_fingerprint,
+    resolved_model_load_variant_payload,
+    model_load_variant_comparison,
+)
 from image_gen.systems.diagnostics import DiagnosticSession
 from image_gen.systems.memory.telemetry import normalize_cuda_memory_payload
 from image_gen.systems.upscaling import StandaloneNeuralUpscaler, UpscalerModelRegistry, discover_upscalers
@@ -256,6 +263,7 @@ class PipelineFactoryMixin:
             desc="Sampling",
             unit="step",
             machine_readable=bool(extras.get("progress_json", False)),
+            first_step_callback=extras.get("model_runtime_first_step_callback"),
         )
         extras["progress_reporter"] = progress_reporter
         if hasattr(self.state, "extra"):
@@ -364,11 +372,40 @@ class PipelineFactoryMixin:
         extras: dict[str, Any],
         session: DiagnosticSession,
     ):
+        trace_enabled = bool(extras.get("model_runtime_trace_enabled"))
+        trace_started = time.perf_counter()
+        pipeline_trace: dict[str, Any] = {
+            "schema_version": 1,
+            "kind": "pipeline_build",
+            "stages": [],
+        }
+
+        def record_trace(name: str, started: float, **details: Any) -> None:
+            if not trace_enabled:
+                return
+            item = {
+                "name": str(name),
+                "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            }
+            if details:
+                item.update(details)
+            pipeline_trace["stages"].append(item)
+
         # Programmatic callers may compose directly. Normal run_request performs
         # this before registry resolution so profile-selected adapters cannot be stale.
+        stage_started = time.perf_counter()
         self._apply_sdxl_runtime_preflight(request, extras)
+        record_trace("sdxl_runtime_preflight", stage_started)
+        stage_started = time.perf_counter()
         self._apply_sd3_runtime_preflight(request, extras)
+        record_trace(
+            "sd3_runtime_preflight",
+            stage_started,
+            resolved_profile=str(extras.get("sd3_runtime_profile_override") or ""),
+        )
+        stage_started = time.perf_counter()
         prompt_adapter, scheduler_adapter, sampler_adapter = self._resolve_adapters(request, extras)
+        record_trace("resolve_adapters", stage_started)
         hires_scheduler_descriptor = extras.get("resolved_hires_scheduler_descriptor")
         hires_sampler_descriptor = extras.get("resolved_hires_sampler_descriptor")
         hires_scheduler_name = str(
@@ -412,6 +449,7 @@ class PipelineFactoryMixin:
             self.state.extra["hires_scheduler_inherited"] = bool(
                 extras.get("hires_scheduler_inherited", True)
             )
+        stage_started = time.perf_counter()
         memory_policy = str(extras.get("memory_policy") or "auto").strip().lower().replace(" ", "_")
         if memory_policy == "cpu_fallback":
             runtime_device, fallback_reason = torch.device("cpu"), "Memory policy explicitly selected CPU fallback."
@@ -431,10 +469,17 @@ class PipelineFactoryMixin:
             self.state.d.device = runtime_device
             self.state.d.device_type = runtime_device.type
             self.state.d.device_index = runtime_device.index
+        record_trace(
+            "resolve_execution_device",
+            stage_started,
+            execution_device=str(runtime_device),
+            memory_policy=memory_policy,
+        )
         model_path = extras.get("model_path") or self.model_loading_system.default_model_path
         if not model_path:
             raise ValueError("No model_path provided in request extras and no default MODEL_PATH found.")
 
+        stage_started = time.perf_counter()
         model_file = Path(str(model_path)).expanduser().resolve()
         checkpoint_family = ""
         advanced_family = _advanced_model_family(extras)
@@ -455,6 +500,12 @@ class PipelineFactoryMixin:
                     "family": "",
                     "error": f"{type(exc).__name__}: {exc}",
                 }
+        record_trace(
+            "checkpoint_architecture_inspection",
+            stage_started,
+            checkpoint_family=checkpoint_family,
+        )
+        stage_started = time.perf_counter()
         try:
             resolved_lora_stack = self.lora_runtime_manager.prepare_request(
                 request,
@@ -470,7 +521,9 @@ class PipelineFactoryMixin:
             raise ValueError(f"LoRA request validation failed: {exc}") from exc
         session.request_extras["adapter_preflight"] = dict(extras.get("adapter_preflight") or {})
         session.request_extras["adapter_runtime_plans"] = list(extras.get("adapter_runtime_plans") or [])
+        record_trace("lora_prepare_request", stage_started)
 
+        stage_started = time.perf_counter()
         expected_tokenizer_identity = ""
         preflight_family = checkpoint_family
         if "SD 2" in preflight_family or preflight_family.lower().startswith("sd2"):
@@ -505,6 +558,12 @@ class PipelineFactoryMixin:
                 ),
             )
             self.tokenizer, self._tokenizer_identity = tokenizer_result
+        record_trace(
+            "tokenizer_resolution",
+            stage_started,
+            tokenizer_identity=str(self._tokenizer_identity or ""),
+        )
+        stage_started = time.perf_counter()
         model_provenance: dict[str, Any] = {
             "requested_path": str(model_path),
             "resolved_path": str(model_file),
@@ -576,7 +635,55 @@ class PipelineFactoryMixin:
             **model_provenance,
         )
         loaded = self._loaded_model_cache.get(cache_key)
+        cnrr07_prepared_reuse = False
+        if loaded is None:
+            prepared_context = dict(getattr(self, "_cnrr07_prepared_transition_context", {}) or {})
+            prepared_loaded = getattr(self, "last_loaded_model", None)
+            prepared_report = getattr(getattr(prepared_loaded, "load_plan", None), "report", None)
+            prepared_path = str(getattr(prepared_report, "model_path", "") or prepared_context.get("model_path") or "")
+            requested_path_key = str(model_file.resolve(strict=False)).casefold()
+            prepared_path_key = str(Path(prepared_path).expanduser().resolve(strict=False)).casefold() if prepared_path else ""
+            source_signature = dict(prepared_context.get("source_signature") or {})
+            source_signature_matches = True
+            if source_signature and model_file.is_file():
+                stat_now = model_file.stat()
+                source_signature_matches = bool(
+                    int(source_signature.get("file_size_bytes") or -1) == int(stat_now.st_size)
+                    and int(source_signature.get("modified_ns") or -1) == int(stat_now.st_mtime_ns)
+                )
+            prepared_components = getattr(prepared_loaded, "components", None)
+            prepared_variant = model_load_variant_comparison(
+                extras,
+                {
+                    "runtime_load_variant": dict(getattr(prepared_components, "runtime_load_variant", {}) or {}),
+                    "runtime_load_variant_fingerprint": str(getattr(prepared_components, "runtime_load_variant_fingerprint", "") or ""),
+                    "runtime_effective_load_variant": dict(getattr(prepared_components, "runtime_effective_load_variant", {}) or {}),
+                    "runtime_effective_load_variant_fingerprint": str(getattr(prepared_components, "runtime_effective_load_variant_fingerprint", "") or ""),
+                },
+            ) if prepared_loaded is not None else {"matches": False}
+            prepared_variant_matches = bool(prepared_variant.get("matches"))
+            if (
+                prepared_loaded is not None
+                and prepared_path_key
+                and prepared_path_key == requested_path_key
+                and prepared_variant_matches
+                and source_signature_matches
+            ):
+                loaded = prepared_loaded
+                cnrr07_prepared_reuse = True
+                self._loaded_model_cache.clear()
+                self._loaded_model_cache[cache_key] = loaded
+                model_provenance["cache_reused"] = True
+                model_provenance["cnrr07_prepared_transition_reused"] = True
+        record_trace(
+            "checkpoint_cache_lookup",
+            stage_started,
+            cache_hit=bool(loaded is not None),
+            cnrr07_prepared_transition_reused=cnrr07_prepared_reuse,
+            load_variant_fingerprint=str(load_variant_key[0]),
+        )
         load_started = time.perf_counter()
+        stage_started = load_started
         if loaded is None:
             self._emit_model_runtime_event(
                 extras,
@@ -585,6 +692,13 @@ class PipelineFactoryMixin:
                 target_device=str(runtime_device),
                 target_dtype=str(runtime_dtype),
             )
+            if bool(extras.get("_component_transition_requested")) and self.last_loaded_model is not None:
+                lease_bundle = getattr(self, "execution_lease_reuse_bundle", None)
+                extras["_resident_component_reuse_bundle"] = (
+                    lease_bundle() if callable(lease_bundle) else self.resident_component_reuse_bundle()
+                )
+            else:
+                extras.pop("_resident_component_reuse_bundle", None)
             load_method = self.model_loading_system.load
             try:
                 load_parameters = inspect.signature(load_method).parameters
@@ -625,6 +739,10 @@ class PipelineFactoryMixin:
                 "load_checkpoint",
                 lambda: load_method(load_path, **load_kwargs),
             )
+            # A conventional load supersedes any prior CNRR-07 prepared-commit
+            # reuse marker.  Keeping this context beyond its exact target request
+            # would make a later unrelated cache miss eligible for stale reuse.
+            self._cnrr07_prepared_transition_context = {}
             self._loaded_model_cache.clear()
             self._loaded_model_cache[cache_key] = loaded
         else:
@@ -654,12 +772,62 @@ class PipelineFactoryMixin:
                 loaded,
                 device=runtime_device,
                 dtype=runtime_dtype,
+                settings=extras,
             )
+        record_trace(
+            "checkpoint_load_or_cached_placement",
+            stage_started,
+            cache_reused=bool(model_provenance.get("cache_reused")),
+        )
         components = getattr(loaded, "components", None)
-        if components is not None:
-            setattr(components, "runtime_load_variant", model_load_variant_payload(extras))
-            setattr(components, "runtime_load_variant_fingerprint", model_load_variant_fingerprint(extras))
         report = getattr(getattr(loaded, "load_plan", None), "report", None)
+        if components is not None:
+            raw_load_variant = model_load_variant_payload(extras)
+            setattr(components, "runtime_load_variant", raw_load_variant)
+            setattr(components, "runtime_load_variant_fingerprint", model_load_variant_fingerprint(extras))
+
+            load_plan = getattr(loaded, "load_plan", None)
+            profile_ids: dict[str, str] = {}
+            profile_contract_fields = (
+                ("sd2_runtime_profile_override", getattr(load_plan, "sd2_contract", None)),
+                ("sdxl_runtime_profile_override", getattr(load_plan, "sdxl_contract", None)),
+                ("sd3_runtime_profile_override", getattr(load_plan, "sd3_contract", None)),
+            )
+            for field, contract in profile_contract_fields:
+                profile = getattr(contract, "profile", None)
+                profile_id = str(getattr(profile, "profile_id", "") or "").strip()
+                if profile_id:
+                    profile_ids[field] = profile_id
+
+            runtime_profile = dict(getattr(components, "model_runtime_profile", {}) or {})
+            sd3_text_encoder_sources = dict(runtime_profile.get("text_encoder_sources") or {})
+            effective_load_variant = resolved_model_load_variant_payload(
+                extras,
+                profile_ids=profile_ids,
+                sd3_text_encoder_sources=sd3_text_encoder_sources,
+            )
+            effective_load_variant_fingerprint = model_load_variant_payload_fingerprint(
+                effective_load_variant
+            )
+            setattr(components, "runtime_effective_load_variant", effective_load_variant)
+            setattr(
+                components,
+                "runtime_effective_load_variant_fingerprint",
+                effective_load_variant_fingerprint,
+            )
+
+            checkpoint_identity = {
+                "path": str(Path(str(getattr(report, "model_path", "") or model_file)).expanduser().resolve(strict=False)),
+                "sha256": str(getattr(report, "sha256", "") or "").strip().lower(),
+                "file_size_bytes": model_provenance.get("file_size_bytes"),
+                "modified_ns": model_provenance.get("modified_ns"),
+                "proof": (
+                    "resident_sha256_bound_to_source_file_signature"
+                    if str(getattr(report, "sha256", "") or "").strip()
+                    else "source_file_signature"
+                ),
+            }
+            setattr(components, "runtime_checkpoint_identity", checkpoint_identity)
         report_path = getattr(report, "model_path", None)
         model_provenance.update(
             {
@@ -742,6 +910,37 @@ class PipelineFactoryMixin:
         model_provenance["model_runtime_profile"] = dict(
             getattr(loaded.components, "model_runtime_profile", {}) or {}
         )
+        model_provenance["runtime_checkpoint_identity"] = dict(
+            getattr(loaded.components, "runtime_checkpoint_identity", {}) or {}
+        )
+        model_provenance["runtime_effective_load_variant"] = dict(
+            getattr(loaded.components, "runtime_effective_load_variant", {}) or {}
+        )
+        model_provenance["runtime_effective_load_variant_fingerprint"] = str(
+            getattr(loaded.components, "runtime_effective_load_variant_fingerprint", "") or ""
+        )
+        model_provenance["composition_sha256"] = str(
+            getattr(loaded.components, "composition_sha256", "") or ""
+        )
+        model_provenance["composition_identity_version"] = str(
+            getattr(loaded.components, "composition_identity_version", "") or ""
+        )
+        model_provenance["composition_contract"] = dict(
+            getattr(loaded.components, "composition_contract", {}) or {}
+        )
+        model_provenance["component_sources"] = {
+            str(role): dict(source)
+            for role, source in dict(getattr(loaded.components, "component_sources", {}) or {}).items()
+        }
+        model_provenance["composition_projection"] = dict(
+            getattr(loaded.components, "composition_projection", {}) or {}
+        )
+        model_provenance["advanced_model_composition_sha256"] = str(
+            getattr(loaded.components, "advanced_model_composition_sha256", "") or ""
+        )
+        model_provenance["component_transition_report"] = public_transition_report(
+            getattr(loaded.components, "component_transition_report", {}) or {}
+        )
         model_provenance["latent_vae_contract"] = {
             "latent_channels": int(getattr(loaded.components, "latent_channels", 4) or 4),
             "latent_scale_factor": int(getattr(loaded.components, "latent_scale_factor", 8) or 8),
@@ -786,6 +985,20 @@ class PipelineFactoryMixin:
             **model_provenance,
         )
         self.last_loaded_model = loaded
+        lease_commit = getattr(self, "on_composition_committed_to_lease", None)
+        if callable(lease_commit):
+            try:
+                extras["composition_execution_lease_commit"] = lease_commit(
+                    str(model_provenance.get("loaded_path") or model_file)
+                )
+            except Exception as exc:
+                extras["composition_execution_lease_commit"] = {
+                    "updated": False,
+                    "reason": "lease_commit_diagnostics_failed",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+        stage_started = time.perf_counter()
         try:
             self.lora_runtime_manager.apply(
                 components=loaded.components,
@@ -794,6 +1007,7 @@ class PipelineFactoryMixin:
             )
         except Exception as exc:
             raise ValueError(f"LoRA runtime application failed: {exc}") from exc
+        record_trace("lora_runtime_apply", stage_started)
         session.request_extras["resolved_lora_stack"] = list(extras.get("resolved_lora_stack") or [])
         self.diagnostics_system.update_components(session, loaded.components)
         model_load_memory = dict(getattr(loaded, "memory_telemetry", {}) or {})
@@ -808,6 +1022,7 @@ class PipelineFactoryMixin:
                 "checkpoint component load memory telemetry captured",
                 **model_load_memory,
             )
+        stage_started = time.perf_counter()
         pipeline = PipelineCompositionRoot(
             components=loaded.components,
             prompt_adapter=prompt_adapter,
@@ -823,8 +1038,10 @@ class PipelineFactoryMixin:
             dtype=runtime_dtype,
             system_overrides=self.system_overrides,
         ).build(state=self.state)
+        record_trace("pipeline_composition_root_build", stage_started)
         pixel_requested = bool(getattr(request, "hires_enabled", False))
         if pixel_requested:
+            stage_started = time.perf_counter()
             discovery = self.diagnostics_system.run_stage(
                 session,
                 "upscaler_discovery",
@@ -843,4 +1060,9 @@ class PipelineFactoryMixin:
             discovery_record = discovery.to_dict() if hasattr(discovery, "to_dict") else {}
             extras["hires_upscaler_discovery"] = discovery_record
             session.request_extras["hires_upscaler_discovery"] = discovery_record
+            record_trace("hires_upscaler_discovery_and_configure", stage_started)
+        if trace_enabled:
+            pipeline_trace["total_ms"] = round((time.perf_counter() - trace_started) * 1000.0, 3)
+            extras["pipeline_build_trace"] = pipeline_trace
+            session.request_extras["pipeline_build_trace"] = dict(pipeline_trace)
         return pipeline

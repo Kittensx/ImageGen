@@ -340,6 +340,7 @@ class RequestExecutionMixin:
                         "live_preview_memory_event_callback",
                         "memory_event_callback",
                         "model_runtime_event_callback",
+                        "model_runtime_first_step_callback",
                     }
                 }
             )
@@ -349,6 +350,24 @@ class RequestExecutionMixin:
                 "compose_pipeline",
                 lambda: self._build_pipeline(request, extras, session),
             )
+
+            # CNRR-06: once the active composition is fully built, a generation
+            # profile may declare future same-family compositions. Establish one
+            # process-local lease and start a single ordered CPU warm worker before
+            # sampling so target-only component construction can overlap the current
+            # GPU generation. Shared live components remain placement-preserved.
+            planned_schedule = extras.get("model_runtime_composition_schedule")
+            if planned_schedule:
+                ensure_lease = getattr(self, "ensure_composition_execution_lease", None)
+                prime_prefetch = getattr(self, "prime_composition_prefetch", None)
+                if callable(ensure_lease):
+                    lease_result = ensure_lease(planned_schedule, extras)
+                    extras["composition_execution_lease"] = dict(lease_result or {})
+                    session.request_extras["composition_execution_lease"] = dict(lease_result or {})
+                    if (lease_result or {}).get("state") == "active" and callable(prime_prefetch):
+                        prefetch_result = prime_prefetch(extras)
+                        extras["composition_prefetch"] = dict(prefetch_result or {})
+                        session.request_extras["composition_prefetch"] = dict(prefetch_result or {})
 
             performance_matrix_enabled = os.environ.get(
                 "IMAGE_GEN_PERF_MATRIX", ""

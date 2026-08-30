@@ -104,6 +104,7 @@
       <article><strong>Physical VRAM used</strong><span id="memoryPhysicalVramUsed">Unavailable</span></article>
       <article><strong>Physical VRAM free</strong><span id="memoryPhysicalVramFree">Unavailable</span></article>
       <article><strong>Physical VRAM total</strong><span id="memoryPhysicalVramTotal">Unavailable</span></article>
+      <article><strong>Job peak physical VRAM</strong><span id="memoryJobPeakPhysicalVram">Unavailable</span></article>
       <article><strong>PyTorch allocated</strong><span id="memoryTorchAllocated">Unavailable</span></article>
       <article><strong>PyTorch reserved</strong><span id="memoryTorchReserved">Unavailable</span></article>
       <article><strong>Job peak allocated</strong><span id="memoryJobPeakAllocated">Unavailable</span></article>
@@ -112,8 +113,16 @@
     </div>
     <small id="memoryVramSemanticsStatus" class="field-status subtle">Physical VRAM and PyTorch allocator measurements are reported separately.</small>
     <dl class="memory-component-status">
+      <div><dt>Residency requested</dt><dd id="memoryResidencyRequested">Managed</dd></div>
+      <div><dt>Residency effective</dt><dd id="memoryResidencyEffective">Unloaded</dd></div>
+      <div><dt>Resident model</dt><dd id="memoryResidentModel">None</dd></div>
       <div><dt>Active GPU components</dt><dd id="memoryActiveComponents">None reported</dd></div>
+      <div><dt>CPU-ready components</dt><dd id="memoryCpuReadyComponents">None reported</dd></div>
       <div><dt>Offloaded components</dt><dd id="memoryOffloadedComponents">None reported</dd></div>
+      <div><dt>Prepared / lease state</dt><dd id="memoryLeaseStatus">Inactive</dd></div>
+      <div><dt>Last generation</dt><dd id="memoryLastGenerationReuse">None</dd></div>
+      <div><dt>Last preparation</dt><dd id="memoryLastPreparation">—</dd></div>
+      <div><dt>Checkpoint hydration</dt><dd id="memoryCheckpointHydration">Unknown</dd></div>
       <div><dt>Active stage</dt><dd id="memoryActiveStage">Idle</dd></div>
     </dl>
     <div id="memoryAutomaticActions" class="memory-actions empty-state">No automatic memory actions yet.</div>
@@ -127,6 +136,11 @@
       <div><dt>Attention</dt><dd id="runtimeAttentionStatus">Loading…</dd></div>
       <div><dt>Kernel provider</dt><dd id="runtimeKernelProviderStatus">Unverified</dd></div>
       <div><dt>Memory policy</dt><dd id="runtimeMemoryPolicyStatus">Loading…</dd></div>
+      <div><dt>Model residency</dt><dd id="runtimeModelResidencyStatus">Loading…</dd></div>
+      <div><dt>Resident model</dt><dd id="runtimeResidentModelStatus">None</dd></div>
+      <div><dt>Model memory</dt><dd id="runtimeModelMemoryStatus">Loading…</dd></div>
+      <div><dt>Last model activation</dt><dd id="runtimeModelActivationStatus">—</dd></div>
+      <div><dt>Hot reuse</dt><dd id="runtimeHotReuseStatus">—</dd></div>
       <div><dt>Hires memory</dt><dd id="runtimeHiresMemoryStatus">Loading…</dd></div>
       <div><dt>Preview policy</dt><dd id="runtimePreviewPolicyStatus">Loading…</dd></div>
       <div><dt>VAE</dt><dd id="runtimeVaeStatus">Loading…</dd></div>
@@ -136,6 +150,14 @@
       <button class="secondary-button compact-button" id="copyRuntimeCommandButton" type="button">Copy Runtime Command</button>
       <small id="runtimeCommandCopyStatus" class="field-status subtle" aria-live="polite">Copies active settings, or saved pending settings when a restart is required.</small>
     </div>
+    <details class="runtime-residency-report">
+      <summary>Residency / performance report</summary>
+      <pre class="metadata-pre" id="runtimeResidencyReport">No generation residency report has been recorded in this runtime session yet.</pre>
+      <div class="runtime-command-actions">
+        <button class="secondary-button compact-button" id="copyResidencyReportButton" type="button">Copy Residency Report</button>
+        <small class="field-status subtle">Shows the most recent resident-runtime jobs, timing breakdown, Hot degradation reason, and residency transitions.</small>
+      </div>
+    </details>
     <small id="runtimeRestartStatus" class="field-status subtle">Process-start settings are active.</small>
   </section>
 

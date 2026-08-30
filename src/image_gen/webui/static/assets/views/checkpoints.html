@@ -59,15 +59,19 @@
             <div><dt>Architecture</dt><dd id="currentCheckpointArchitecture">—</dd></div>
             <div><dt>Size</dt><dd id="currentCheckpointSize">—</dd></div>
             <div><dt>Device</dt><dd id="currentCheckpointDevice">—</dd></div>
+            <div><dt>Residency</dt><dd id="currentCheckpointResidency">UNLOADED</dd></div>
+            <div><dt>Memory</dt><dd id="currentCheckpointMemory">—</dd></div>
+            <div><dt>Last reuse</dt><dd id="currentCheckpointReuse">—</dd></div>
+            <div><dt>Activation</dt><dd id="currentCheckpointActivation">—</dd></div>
           </dl>
         </div>
       </div>
       <div class="checkpoint-current-actions">
         <button class="primary-button compact-button" id="checkpointUseCurrentButton" type="button">Use Current</button>
-        <button class="secondary-button compact-button" id="checkpointUnloadButton" type="button">Unload</button>
+        <button class="secondary-button compact-button" id="checkpointUnloadButton" type="button">Unload Active Model</button>
         <button class="secondary-button compact-button" id="checkpointSetStartupButton" type="button">★ Set Startup Default</button>
       </div>
-      <small class="field-status subtle">Compatible default prompt assets can auto-apply after this model loads.</small>
+      <small class="field-status subtle">Hot keeps the selected model ready across generations for faster follow-up jobs. It may use more VRAM/RAM; architecture staging and OOM safety still apply.</small>
     </section>
   </aside>
 

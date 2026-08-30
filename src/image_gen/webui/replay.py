@@ -1351,12 +1351,18 @@ class ReplayService:
         profile_name = raw_request.get("prompt_shortcut_profile_name") or ("legacy_default" if requested_parser == "legacy" else ("parser21_native" if requested_parser == "parser21" else ("superhybrid_native" if requested_parser == "superhybrid" else "canonical")))
         snapshot = raw_request.get("prompt_shortcut_profile_snapshot")
         if isinstance(snapshot, Mapping) and snapshot:
-            profile = PromptShortcutProfileDescriptor.from_dict(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
-            validation = validate_prompt_shortcut_profile(profile)
-            if not validation.valid:
-                reason = "Recorded prompt shortcut profile snapshot is invalid."
+            try:
+                profile = PromptShortcutProfileDescriptor.from_snapshot(dict(snapshot), builtin=bool(snapshot.get("builtin", False)))
+            except ValueError as exc:
+                reason = f"Recorded prompt shortcut profile snapshot failed integrity validation: {exc}"
                 missing.append({"kind": "prompt_shortcut_profile", "field": "prompt_shortcut_profile_snapshot", "requested": profile_name, "reason": reason})
                 errors.append(reason)
+            else:
+                validation = validate_prompt_shortcut_profile(profile)
+                if not validation.valid:
+                    reason = "Recorded prompt shortcut profile snapshot is invalid."
+                    missing.append({"kind": "prompt_shortcut_profile", "field": "prompt_shortcut_profile_snapshot", "requested": profile_name, "reason": reason})
+                    errors.append(reason)
         elif not default_prompt_shortcut_registry().has(profile_name):
             reason = f"Recorded prompt shortcut profile is not installed: {profile_name!r}."
             missing.append({"kind": "prompt_shortcut_profile", "field": "prompt_shortcut_profile_name", "requested": profile_name, "reason": reason})

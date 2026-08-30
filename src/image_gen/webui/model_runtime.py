@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from modules.project_context import ProjectContext
+from image_gen.runtime.residency_policy import (
+    RESIDENCY_STATE_HOT_GPU,
+    RESIDENCY_STATE_HOT_STAGED,
+    build_residency_diagnostics,
+    normalize_model_residency_mode,
+    resolve_effective_residency_state,
+)
 
 _READY_PREFIX = "MODEL_RUNTIME_READY_JSON: "
 _STATUS_PREFIX = "MODEL_RUNTIME_STATUS_JSON: "
@@ -66,6 +73,7 @@ class ResidentModelRuntimeClient:
         self._current_job_id: str | None = None
         self._superseded_command_id: str | None = None
         self._supersede_reason: str | None = None
+        self._residency_mode_requested = "managed"
         self._status: dict[str, Any] = {
             "schema_version": 1,
             "online": False,
@@ -75,8 +83,22 @@ class ResidentModelRuntimeClient:
             "current_model_path": None,
             "cpu_loaded": False,
             "gpu_loaded": False,
+            "hot_gpu_ready": False,
             "current_job_id": None,
             "last_error": None,
+            "residency_mode_requested": "managed",
+            "residency_state_effective": "empty",
+            "hot_model_path": None,
+            "hot_model_identity": None,
+            "hot_composition_sha256": None,
+            "hot_load_variant_fingerprint": None,
+            "hot_since": None,
+            "last_residency_transition": None,
+            "last_residency_reason": "client_initialized",
+            "retention_suppressed_for_hot": False,
+            "hot_reuse_count": 0,
+            "cold_or_switch_load_count": 0,
+            "last_generation_residency_classification": None,
         }
         self._started_at_unix: float | None = None
         self._restart_count = 0
@@ -108,10 +130,52 @@ class ResidentModelRuntimeClient:
                     f"than {_MODEL_RUNTIME_STREAM_LIMIT} bytes."
                 )
 
+    def set_residency_mode_requested(self, value: Any) -> str:
+        mode = normalize_model_residency_mode(value)
+        self._residency_mode_requested = mode
+        self._status["residency_mode_requested"] = mode
+        return mode
+
     def status(self) -> dict[str, Any]:
         process_online = self.process is not None and self.process.returncode is None
+        raw = dict(self._status)
+        raw_stage = str(raw.get("stage") or "offline")
+        resident = bool(
+            raw.get("current_model_path")
+            or str(raw.get("residency_state") or "").strip().lower() == "resident"
+        )
+        worker_effective = str(raw.get("residency_state_effective") or "").strip().lower()
+        hot_active = worker_effective in {RESIDENCY_STATE_HOT_GPU, RESIDENCY_STATE_HOT_STAGED}
+        effective = resolve_effective_residency_state(
+            requested_mode=self._residency_mode_requested,
+            stage=raw_stage,
+            resident=resident,
+            gpu_loaded=bool(raw.get("gpu_loaded")),
+            staged_runtime=bool(raw.get("staged_runtime")),
+            hot_residency_active=hot_active,
+            hot_gpu_ready=bool(raw.get("hot_gpu_ready", raw.get("gpu_loaded"))),
+        )
+        resident_status = {
+            "model_path": raw.get("current_model_path"),
+            "model_identity": raw.get("model_identity"),
+            "composition_sha256": raw.get("composition_sha256"),
+            "runtime_load_variant_fingerprint": raw.get("runtime_load_variant_fingerprint"),
+        }
+        diagnostics = build_residency_diagnostics(
+            requested_mode=self._residency_mode_requested,
+            effective_state=effective,
+            resident_status=resident_status,
+            last_residency_transition=raw.get("last_residency_transition"),
+            last_residency_reason=raw.get("last_residency_reason"),
+            retention_suppressed_for_hot=bool(raw.get("retention_suppressed_for_hot", False)),
+            hot_reuse_count=int(raw.get("hot_reuse_count") or 0),
+            cold_or_switch_load_count=int(raw.get("cold_or_switch_load_count") or 0),
+            last_generation_residency_classification=raw.get("last_generation_residency_classification"),
+            hot_since=raw.get("hot_since"),
+        )
         return {
-            **dict(self._status),
+            **raw,
+            **diagnostics,
             "online": process_online,
             "pid": self.process.pid if process_online else None,
             "started_at_unix": self._started_at_unix,
@@ -119,7 +183,7 @@ class ResidentModelRuntimeClient:
             "current_command_id": self._current_command_id,
             "current_command_name": self._current_command_name,
             "current_command_model_path": self._current_command_model_path,
-            "current_job_id": self._current_job_id or self._status.get("current_job_id"),
+            "current_job_id": self._current_job_id or raw.get("current_job_id"),
         }
 
     def _environment(self) -> dict[str, str]:
@@ -365,13 +429,31 @@ class ResidentModelRuntimeClient:
         runtime_settings: dict[str, Any] | None = None,
         on_line: Callable[[str], Any] | None = None,
     ) -> dict[str, Any]:
+        settings = dict(runtime_settings or {})
+        self.set_residency_mode_requested(settings.get("model_residency_mode"))
         return await self.execute(
             {
                 "command": "activate",
                 "model_path": str(model_path),
-                "runtime_settings": dict(runtime_settings or {}),
+                "runtime_settings": settings,
             },
             on_line=on_line,
+        )
+
+    async def apply_residency_mode(
+        self,
+        value: Any,
+        *,
+        runtime_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        mode = self.set_residency_mode_requested(value)
+        settings = dict(runtime_settings or {})
+        settings["model_residency_mode"] = mode
+        return await self.execute(
+            {
+                "command": "set_residency_mode",
+                "runtime_settings": settings,
+            }
         )
 
     async def unload(self) -> dict[str, Any]:
@@ -414,6 +496,8 @@ class ResidentModelRuntimeClient:
                 await process.wait()
         await self._mark_dead(None, stage="recovering")
         self._status["last_cancellation"] = self._cancel_reason
+        self._status["last_residency_reason"] = "cancelled_worker_deferred_reactivation"
+        self._status["automatic_hot_reactivation_deferred"] = True
         self._cancel_requested = False
         self._cancel_reason = None
 
@@ -453,8 +537,17 @@ class ResidentModelRuntimeClient:
                 "current_model_path": None,
                 "cpu_loaded": False,
                 "gpu_loaded": False,
+                "hot_gpu_ready": False,
                 "current_job_id": None,
                 "last_error": error,
+                "residency_state_effective": "recovering" if (stage == "recovering") else "empty",
+                "hot_model_path": None,
+                "hot_model_identity": None,
+                "hot_composition_sha256": None,
+                "hot_load_variant_fingerprint": None,
+                "hot_since": None,
+                "retention_suppressed_for_hot": False,
+                "automatic_hot_reactivation_deferred": bool(stage == "recovering"),
             }
         )
 

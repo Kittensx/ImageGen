@@ -105,6 +105,13 @@ class Txt2ImgRunner(
         self._loaded_model_cache: dict[tuple[str, str, str, int, int], Any] = {}
         self.last_loaded_model: Any | None = None
         self.lora_runtime_manager = LoRARuntimeManager(self.project_context)
+        # CNRR-06 execution lease state is process-local and intentionally never
+        # serialized into requests/manifests. The executor is created lazily only
+        # when a planned multi-composition schedule asks for background warming.
+        self._composition_execution_lease: Any | None = None
+        self._composition_lease_generation: int = 0
+        self._composition_warm_executor: Any | None = None
+        self._composition_warm_futures: dict[int, Any] = {}
 
     def reset_runtime_state(self) -> None:
         """Reset request-scoped mutable state while retaining loaded components."""

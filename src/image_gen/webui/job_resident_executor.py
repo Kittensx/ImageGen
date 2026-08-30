@@ -11,11 +11,14 @@ import torch
 from image_gen.webui.job_request_normalization import _coerce_boolean, _coerce_top_level_number
 from image_gen.webui.job_store import _utc_now
 from image_gen.webui.model_runtime import ModelRuntimeUnavailable
+from image_gen.runtime.residency_policy import normalize_model_residency_mode
 from image_gen.runtime.model_load_variant import (
     MODEL_LOAD_VARIANT_FIELDS,
     sanitize_model_load_runtime_settings,
 )
 from image_gen.webui.randomization import apply_parameter_ranges, iter_seed_plan, parse_seed_plan
+from image_gen.webui.output_execution import build_image_execution_record, persist_image_execution_record
+from image_gen.webui.residency_telemetry import merge_runtime_into_memory_status
 
 
 class ResidentJobExecutorMixin:
@@ -82,6 +85,38 @@ class ResidentJobExecutorMixin:
     async def supersede_model_activation(self, model_path: str) -> bool:
         return await self.model_runtime.supersede_activation(str(model_path or ""))
 
+    async def apply_model_residency_mode(self, value: Any) -> dict[str, Any]:
+        requested = normalize_model_residency_mode(value)
+        status = self.model_runtime.status()
+        setter = getattr(self.model_runtime, "set_residency_mode_requested", None)
+        if not status.get("online"):
+            if callable(setter):
+                setter(requested)
+            return {
+                "deferred": False,
+                "reason": "runtime_offline",
+                "status": self.model_runtime.status(),
+            }
+        if status.get("current_job_id"):
+            if callable(setter):
+                setter(requested)
+            return {
+                "deferred": True,
+                "reason": "active_generation",
+                "status": self.model_runtime.status(),
+            }
+        completion = await self.model_runtime.apply_residency_mode(
+            requested,
+            runtime_settings=self._model_runtime_settings(),
+        )
+        if not completion.get("ok"):
+            raise RuntimeError(str(completion.get("error") or "Model residency policy change failed."))
+        return {
+            "deferred": False,
+            "result": dict(completion.get("result") or {}),
+            "status": self.model_runtime.status(),
+        }
+
     async def unload_model(self) -> dict[str, Any]:
         completion = await self.model_runtime.unload()
         if not completion.get("ok"):
@@ -89,7 +124,15 @@ class ResidentJobExecutorMixin:
         return dict(completion.get("result") or {})
 
     def model_runtime_status(self) -> dict[str, Any]:
-        return self.model_runtime.status()
+        settings = self._application_settings()
+        requested = normalize_model_residency_mode(settings.get("model_residency_mode"))
+        setter = getattr(self.model_runtime, "set_residency_mode_requested", None)
+        if callable(setter):
+            setter(requested)
+        status = self.model_runtime.status()
+        if "residency_mode_requested" not in status:
+            status = {**status, "residency_mode_requested": requested}
+        return status
 
     async def _restore_resident_runtime_after_skip(self, job: GenerationJob) -> None:
         model_path = str(
@@ -183,6 +226,12 @@ class ResidentJobExecutorMixin:
         request_path, console_path, preview_values = self._prepare_job_request(job)
         job_root = Path(job.job_root or request_path.parent)
         base_request = json.loads(request_path.read_text(encoding="utf-8"))
+        requested_residency_mode = normalize_model_residency_mode(
+            base_request.get("model_residency_mode")
+        )
+        setter = getattr(self.model_runtime, "set_residency_mode_requested", None)
+        if callable(setter):
+            setter(requested_residency_mode)
         requested_batch_count = max(
             1,
             int(_coerce_top_level_number(base_request.get("batch_count"), integer=True, default=1) or 1),
@@ -514,6 +563,46 @@ class ResidentJobExecutorMixin:
                     )
                     break
 
+                runtime_status = dict(runtime_result.get("status") or self.model_runtime.status() or {})
+                new_output_paths = list(job.output_paths[output_count_before:])
+                for produced_path in new_output_paths:
+                    execution_record = build_image_execution_record(
+                        runtime_status,
+                        job_id=job.job_id,
+                        output_path=produced_path,
+                        image_number=image_number,
+                    )
+                    if not execution_record:
+                        continue
+                    job.image_execution_reports.append(dict(execution_record))
+                    job.image_execution_reports = job.image_execution_reports[-64:]
+                    persistence = persist_image_execution_record(produced_path, execution_record)
+                    execution_record["sidecar_persistence"] = persistence
+                    self._persist_job(job)
+                    recent_output = self._recent_output_payload(produced_path)
+                    if recent_output is not None:
+                        # Preserve timing in the live session even when JSON sidecars
+                        # were disabled. Durable output browsing recovers the same
+                        # fields from existing sidecars when they are available.
+                        recent_output = {
+                            **recent_output,
+                            "image_execution": dict(execution_record),
+                            "execution_time_ms": execution_record.get("execution_time_ms"),
+                            "generation_residency_classification": execution_record.get(
+                                "generation_residency_classification"
+                            ),
+                            "residency_state_effective": execution_record.get(
+                                "residency_state_effective"
+                            ),
+                        }
+                        self._publish_event(
+                            job,
+                            "job-output-timing-updated",
+                            latest_output_path=str(produced_path),
+                            recent_output=recent_output,
+                            image_execution=dict(execution_record),
+                        )
+
                 attempted_images += 1
                 completed_images += 1
                 job.batch_seed_history.append(int(image_seed))
@@ -602,16 +691,25 @@ class ResidentJobExecutorMixin:
         job.completed_at = _utc_now()
         job.updated_at = job.completed_at
         final_status = self.model_runtime.status()
-        final_memory = dict(final_status.get("memory") or {})
-        if final_memory:
-            job.memory_status = {
-                **final_memory,
-                "event": "model_runtime_final_status",
-                "stage": final_status.get("stage"),
-                "active_stage": final_status.get("active_stage"),
-                "updated_at": job.completed_at,
-            }
+        job.memory_status = merge_runtime_into_memory_status(
+            job.memory_status,
+            final_status,
+            updated_at=job.completed_at,
+        )
+        job.memory_status["event"] = "model_runtime_final_status"
         job.model_diagnostics["live_preview"] = self.diagnostics_payload(job)["phase09h_validation"]
+        residency_policy = dict(job.model_runtime_diagnostics.get("residency_policy") or {})
+        residency_policy.update({
+            "residency_mode_requested": final_status.get(
+                "residency_mode_requested",
+                residency_policy.get("residency_mode_requested", "managed"),
+            ),
+            "residency_state_effective_at_job_end": final_status.get("residency_state_effective", "empty"),
+            "last_generation_residency_classification": final_status.get("last_generation_residency_classification"),
+            "hot_reuse_count": final_status.get("hot_reuse_count", 0),
+            "cold_or_switch_load_count": final_status.get("cold_or_switch_load_count", 0),
+        })
+        job.model_runtime_diagnostics["residency_policy"] = residency_policy
         job.model_diagnostics["resident_model"] = {
             **dict(job.model_runtime_diagnostics),
             "final_status": final_status,

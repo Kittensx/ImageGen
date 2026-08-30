@@ -28,6 +28,23 @@ function formatSize(bytes, sizeMb = 0) {
   return `${(value / 1024 ** 2).toFixed(0)} MB`;
 }
 
+
+function residencyLabel(runtime = {}) {
+  const effective = String(runtime.residency_state_effective || "empty").trim().toLowerCase();
+  const stage = String(runtime.stage || "").trim().toLowerCase();
+  if (["preparing_model", "loading_tokenizer", "loading_checkpoint", "applying_retention_policy"].includes(stage)) return "LOADING";
+  if (["unloading", "superseded"].includes(stage) || effective === "switching") return "SWITCHING";
+  if (stage === "recovering" || effective === "recovering") return "RECOVERING";
+  if (effective === "hot_gpu") return "HOT - GPU";
+  if (effective === "hot_staged") return "HOT - STAGED";
+  if (effective === "managed_resident") return "MANAGED - RESIDENT";
+  return "UNLOADED";
+}
+
+function formatGiB(value) {
+  const bytes = Number(value || 0);
+  return Number.isFinite(bytes) && bytes > 0 ? `${(bytes / (1024 ** 3)).toFixed(2)} GiB` : "0 GiB";
+}
 function familyLabel(value) {
   const token = String(value || "").trim().toLowerCase();
   if (token.includes("sd1") || token.includes("1.x") || token.includes("1.5")) return "SD 1.x";
@@ -276,13 +293,24 @@ export function bindCheckpointWorkspace({
     const active = state.activeModel;
     const catalogModel = matchedCatalogModel(active?.resolved_path);
     const runtime = state.bootstrap?.model_runtime || {};
-    $("#currentCheckpointBadge").textContent = active ? "Loaded" : "None";
-    $("#currentCheckpointBadge").classList.toggle("ready", Boolean(active));
+    const runtimeResidency = residencyLabel(runtime);
+    $("#currentCheckpointBadge").textContent = runtimeResidency === "UNLOADED" ? (active ? "Selected" : "None") : runtimeResidency;
+    $("#currentCheckpointBadge").classList.toggle("ready", runtimeResidency.startsWith("HOT") || runtimeResidency === "MANAGED - RESIDENT");
     $("#currentCheckpointName").textContent = active?.model_name || "No model loaded";
     $("#currentCheckpointArchitecture").textContent = active?.architecture_summary || active?.architecture || catalogModel?.architecture || "—";
     $("#currentCheckpointSize").textContent = active ? formatSize(active.size_bytes, catalogModel?.size_mb) : "—";
     const devices = runtime.component_devices || {};
-    $("#currentCheckpointDevice").textContent = devices.unet || (runtime.gpu_loaded ? "cuda" : (runtime.cpu_loaded ? "cpu" : "—"));
+    $("#currentCheckpointDevice").textContent = devices.unet || devices.transformer || (runtime.gpu_loaded ? "cuda" : (runtime.cpu_loaded ? "cpu" : "—"));
+    const residency = residencyLabel(runtime);
+    $("#currentCheckpointResidency").textContent = residency;
+    const memory = runtime.memory || {};
+    const memoryText = memory.free_bytes == null
+      ? `${formatGiB(memory.allocated_bytes)} allocated`
+      : `${formatGiB(memory.allocated_bytes)} allocated · ${formatGiB(memory.free_bytes)} free`;
+    $("#currentCheckpointMemory").textContent = runtime.current_model_path ? memoryText : "—";
+    $("#currentCheckpointReuse").textContent = String(runtime.last_generation_residency_classification || "—").replaceAll("_", " ");
+    const activationMs = Number(runtime.timings?.activate_time_ms ?? runtime.timings?.initial_activation_time_ms);
+    $("#currentCheckpointActivation").textContent = Number.isFinite(activationMs) ? `${activationMs.toFixed(0)} ms` : "—";
     const tags = $("#currentCheckpointTags");
     tags.replaceChildren();
     if (active) addTag(tags, familyLabel(active.architecture || catalogModel?.model_family), "is-family");
@@ -665,6 +693,12 @@ export function bindCheckpointWorkspace({
   $("#checkpointAutoApplyDefaults")?.addEventListener("change", async (event) => {
     try { await saveDefaultAssetBehavior(event.target.checked); }
     catch (error) { notify(`Unable to save default-asset behavior: ${error.message}`, "error"); }
+  });
+
+  window.addEventListener("image-gen-model-runtime-status", (event) => {
+    const runtime = event.detail || {};
+    if (state.bootstrap) state.bootstrap.model_runtime = runtime;
+    renderCurrentModel();
   });
   $("#checkpointRefreshButton")?.addEventListener("click", () => refreshCatalog().catch((error) => notify(error.message, "error")));
   $("#checkpointFetchCivitaiButton")?.addEventListener("click", () => runCivitaiMetadataFetch("missing"));

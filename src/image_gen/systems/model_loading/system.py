@@ -15,6 +15,7 @@ from image_gen.systems.memory.telemetry import MemoryTelemetry
 from image_gen.contracts.vae_provenance import attach_vae_provenance
 from image_gen.systems.model_loading.vae_override import apply_external_vae_override
 from modules.advanced_model_composition import apply_advanced_component_composition
+from modules.registry.composition_projection import project_runtime_composition
 
 if TYPE_CHECKING:
     from modules.load_safetensors_model import LoadModel
@@ -96,19 +97,31 @@ class ModelLoadingSystem:
         explicit_sd2_profile = str(extras.get("sd2_runtime_profile_override") or "").strip() or None
         explicit_sdxl_profile = str(extras.get("sdxl_runtime_profile_override") or "").strip() or None
         explicit_sd3_profile = str(extras.get("sd3_runtime_profile_override") or "").strip() or None
-        plan = self.loader.prepare_load_plan(
-            model_path,
-            require_generation_support=not allow_validation_generation,
-            explicit_sd2_runtime_profile=explicit_sd2_profile,
-            explicit_sdxl_runtime_profile=explicit_sdxl_profile,
-            explicit_sd3_runtime_profile=explicit_sd3_profile,
-        )
+        prepare_method = self.loader.prepare_load_plan
+        prepare_kwargs: dict[str, Any] = {
+            "require_generation_support": not allow_validation_generation,
+            "explicit_sd2_runtime_profile": explicit_sd2_profile,
+            "explicit_sdxl_runtime_profile": explicit_sdxl_profile,
+            "explicit_sd3_runtime_profile": explicit_sd3_profile,
+        }
+        try:
+            prepare_parameters = inspect.signature(prepare_method).parameters
+        except (TypeError, ValueError):
+            prepare_parameters = {}
+        if (
+            "request_extras" in prepare_parameters
+            or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in prepare_parameters.values())
+        ):
+            prepare_kwargs["request_extras"] = extras
+        plan = prepare_method(model_path, **prepare_kwargs)
         advanced_composition = apply_advanced_component_composition(
             plan,
             extras.get("_advanced_model_resolved"),
             inspector=getattr(self.loader, "inspector", None),
             mapper=getattr(self.loader, "mapper", None),
+            runtime_source_plan=extras.get("_runtime_component_source_plan"),
         )
+        extras["_advanced_model_applied_composition"] = dict(advanced_composition)
         # Preserve SD3-12 whole-checkpoint behavior: embedded T5 is optional and
         # remains disabled unless the user explicitly selects a T5 component in
         # Advanced Models. The builder can hydrate T5, but selection is authoritative.
@@ -250,6 +263,7 @@ class ModelLoadingSystem:
                 )
         built_tokenizer = getattr(built, "tokenizer", None)
         built_tokenizer_2 = getattr(built, "tokenizer_2", None)
+        sd2_contract = getattr(plan, "sd2_contract", None)
         sdxl_contract = getattr(plan, "sdxl_contract", None)
         sd3_contract = getattr(plan, "sd3_contract", None)
         if sd3_contract is not None:
@@ -262,6 +276,8 @@ class ModelLoadingSystem:
                 model_runtime_profile["t5_device"] = str(advanced_composition.get("t5_device") or "off")
         elif sdxl_contract is not None:
             model_runtime_profile = dict(sdxl_contract.profile.to_dict())
+        elif sd2_contract is not None:
+            model_runtime_profile = dict(sd2_contract.profile.to_dict())
         else:
             model_runtime_profile = {}
         vae_scaling_factor = float(
@@ -306,6 +322,32 @@ class ModelLoadingSystem:
         setattr(active_vae, "_image_gen_latent_vae_contract", latent_vae_contract.to_serializable_dict())
 
         architecture = str(getattr(checkpoint_report, "architecture", "") or "")
+        composition_projection = project_runtime_composition(
+            plan,
+            registry=getattr(self.loader, "asset_registry", None),
+            advanced_composition=advanced_composition,
+            sd3_text_encoder_sources=dict(getattr(built, "sd3_text_encoder_sources", {}) or {}),
+            vae_provenance=vae_provenance,
+            text_encoder_3_device=extras.get("text_encoder_3_device") or advanced_composition.get("t5_device") or "auto",
+        )
+        composition_projection_payload = composition_projection.to_dict()
+        composition_contract = dict(composition_projection_payload.get("composition_contract") or {})
+        composition_sha256_unified = str(composition_projection_payload.get("composition_sha256") or "")
+        advanced_model_composition_sha256 = str(advanced_composition.get("composition_sha256") or "")
+        component_transition_report = dict(extras.get("component_transition_report") or {})
+        if component_transition_report:
+            component_transition_report["requested_composition_sha256"] = composition_sha256_unified
+            component_transition_report["loaded_component_count"] = sum(
+                1
+                for item in dict(component_transition_report.get("role_diff") or {}).values()
+                if str(item.get("action") or "") in {"replace", "add", "cannot_reuse"}
+            )
+            component_transition_report["released_component_count"] = sum(
+                1
+                for item in dict(component_transition_report.get("role_diff") or {}).values()
+                if str(item.get("action") or "") in {"replace", "remove", "cannot_reuse"}
+            )
+            extras["component_transition_report"] = component_transition_report
         return LoadedModel(
             components=PipelineComponents(
                 unet=built.unet,
@@ -331,6 +373,17 @@ class ModelLoadingSystem:
                 model_identity=model_identity,
                 model_hash=checkpoint_hash,
                 vae_provenance=vae_provenance,
+                composition_sha256=composition_sha256_unified,
+                composition_identity_version=str(composition_contract.get("identity_version") or ""),
+                composition_contract=composition_contract,
+                component_sources={
+                    str(role): dict(source)
+                    for role, source in dict(composition_projection_payload.get("component_sources") or {}).items()
+                },
+                composition_projection=composition_projection_payload,
+                advanced_model_composition_sha256=advanced_model_composition_sha256,
+                component_transition_report=component_transition_report,
+                runtime_component_source_plan=dict(extras.get("_runtime_component_source_plan") or getattr(plan, "runtime_source_plan", {}) or {}),
                 denoiser=getattr(built, "denoiser", None),
                 denoiser_kind=str(getattr(built, "denoiser_kind", "unet") or "unet"),
             ),
