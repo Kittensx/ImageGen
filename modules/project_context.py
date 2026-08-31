@@ -232,6 +232,23 @@ def _resolve_path(value: str | os.PathLike[str], project_root: Path) -> Path:
     return path.resolve()
 
 
+def _path_values(value: Any) -> list[str]:
+    """Normalize a path setting that may be one path or an ordered list.
+
+    Lists are intentionally accepted for every entry in ``paths``.  The first
+    entry remains the compatibility/primary path while discovery consumers can
+    use all entries.  Missing removable-drive paths are configuration, not
+    configuration errors.
+    """
+    raw = value if isinstance(value, (list, tuple)) else [value]
+    output: list[str] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if text and text not in output:
+            output.append(text)
+    return output
+
+
 @dataclass(frozen=True)
 class ProjectContext:
     """Authoritative project, configuration, and runtime path context.
@@ -275,6 +292,7 @@ class ProjectContext:
     temporary_root: Path
     diagnostics_root: Path
     default_model_path: Path | None
+    path_roots: dict[str, tuple[Path, ...]] = field(default_factory=dict)
 
     @classmethod
     def default_project_root(cls) -> Path:
@@ -325,12 +343,16 @@ class ProjectContext:
         configured_paths = config.get("paths") or {}
         if not isinstance(configured_paths, Mapping):
             raise ProjectConfigurationError("The top-level 'paths' section must be a mapping.")
-        path_values = dict(_DEFAULT_PATHS)
+        path_values: dict[str, Any] = dict(_DEFAULT_PATHS)
         for key, value in configured_paths.items():
-            if value is not None and str(value).strip():
-                path_values[str(key)] = str(value)
+            if _path_values(value):
+                path_values[str(key)] = value
 
-        resolved = {key: _resolve_path(value, root) for key, value in path_values.items()}
+        resolved_lists = {
+            key: tuple(_resolve_path(value, root) for value in _path_values(values))
+            for key, values in path_values.items()
+        }
+        resolved = {key: values[0] for key, values in resolved_lists.items()}
 
         defaults = config.get("defaults") or {}
         if not isinstance(defaults, Mapping):
@@ -376,10 +398,19 @@ class ProjectContext:
             temporary_root=resolved["temporary_dir"],
             diagnostics_root=resolved["diagnostics_dir"],
             default_model_path=default_model_path,
+            path_roots=resolved_lists,
         )
 
     def resolve_project_path(self, value: str | os.PathLike[str]) -> Path:
         return _resolve_path(value, self.project_root)
+
+    def roots_for(self, path_key: str) -> tuple[Path, ...]:
+        """Return all configured roots for a path key, preserving user order."""
+        roots = self.path_roots.get(str(path_key), ())
+        if roots:
+            return roots
+        value = getattr(self, str(path_key), None)
+        return (Path(value),) if value is not None else ()
 
     def generation_defaults(self) -> dict[str, Any]:
         generation = self.config.get("generation") or {}

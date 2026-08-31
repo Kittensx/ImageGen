@@ -46,7 +46,9 @@ class AssetScanner:
         root = Path(root_dir)
 
         if not root.exists():
-            result.errors.append(f"Directory does not exist: {root}")
+            # A configured removable/network root may legitimately be offline.
+            # Absence is an availability state and must not become diagnostics
+            # or a GitHub-reportable application error.
             return result
 
         excluded = exclude_dir_names or {
@@ -113,7 +115,9 @@ class AssetScanner:
 
             try:
                 if not path.exists() or not path.is_file():
-                    result.errors.append(f"Missing file: {path}")
+                    # Imported files remain registered and can return when their
+                    # drive is reconnected; do not treat temporary absence as a
+                    # scanner failure.
                     continue
 
                 if path.suffix.lower() not in self.supported_extensions:

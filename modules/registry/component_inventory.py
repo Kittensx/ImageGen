@@ -8,6 +8,7 @@ import json
 
 from modules.checkpoint_inspector import CheckpointInspector
 from modules.project_context import ProjectContext
+from image_gen.runtime.lora_inspector import inspect_lora_file
 from .asset_registry import AssetRegistry
 from .component_refresh import ComponentRegistryRefresher
 from .component_snapshot import SafetensorsComponentSnapshotter
@@ -90,8 +91,6 @@ class ComponentInventoryScanner:
             return None
         parts = {part.casefold().replace("-", "_").replace(" ", "_") for part in relative.parts[:-1]}
         excluded = {
-            "lora": "lora",
-            "loras": "lora",
             "controlnet": "controlnet",
             "controlnets": "controlnet",
             "vae_approx": "vae_approx",
@@ -104,6 +103,10 @@ class ComponentInventoryScanner:
             "upscalers": "upscalers",
             "upscaler": "upscalers",
         }
+        # LoRA-looking folders are still structurally inspected. Folder names
+        # are hints only and never establish that a file is an adapter.
+        if parts & {"lora", "loras"}:
+            return "auto"
         for token, label in excluded.items():
             if token in parts:
                 return f"excluded:{label}"
@@ -112,7 +115,8 @@ class ComponentInventoryScanner:
         if parts & {"vae", "vaes"}:
             return "vae"
         if parts & {"checkpoint", "checkpoints", "check_points"}:
-            return "checkpoint"
+            # A conventional folder name is not classification evidence.
+            return "auto"
         return None
 
     def _classify_discovered_path(self, path: Path, *, repository_root: Path | None = None) -> str:
@@ -351,7 +355,10 @@ class ComponentInventoryScanner:
 
     def _scan_candidate(self, candidate: InventoryCandidate, *, force: bool, strength: str = "structural") -> dict[str, Any]:
         path = candidate.path
-        asset = self.registry.register_file(str(path), compute_sha256=False)
+        # Import is the authoritative first read of a newly discovered file.
+        # Persist its strong whole-file identity now so later classification,
+        # duplicate detection, and component reuse never hash it twice.
+        asset = self.registry.register_file(str(path), compute_sha256=True)
 
         if candidate.asset_kind.startswith("excluded:"):
             return self._result_payload(
@@ -363,6 +370,54 @@ class ComponentInventoryScanner:
 
         report = None
         if candidate.asset_kind == "auto":
+            lora_report = inspect_lora_file(path, include_compatibility_hash=False)
+            adapter_format = str(lora_report.get("adapter_format") or "")
+            if adapter_format not in {"", "invalid", "unknown_adapter", "non_adapter_full_model"}:
+                snapshot = self.snapshotter.snapshot_standalone_component(
+                    path,
+                    component_role="lora_adapter",
+                )
+                stored = self.registry.store_component_snapshots(
+                    asset.id,
+                    {"lora_adapter": snapshot},
+                    source_file_sha256=asset.sha256,
+                    source_quick_fingerprint=asset.quick_fingerprint,
+                    metadata_extra={
+                        "classification_basis": "adapter_tensor_structure",
+                        "adapter_format": adapter_format,
+                        "model_family": str(lora_report.get("detected_model_family") or ""),
+                    },
+                )
+                self.registry.store_inspection(
+                    asset.id,
+                    {
+                        "asset_type": "lora",
+                        "format_type": "safetensors",
+                        "architecture": str(lora_report.get("detected_model_family") or ""),
+                        "checkpoint_kind": "adapter",
+                        "key_count": int(lora_report.get("tensor_key_count") or 0),
+                        "prefix_summary": {"target_scopes": list(lora_report.get("target_scopes") or [])},
+                        "example_keys": [],
+                        "dtype_summary": {},
+                        "tensor_shape_summary": {},
+                        "metadata": {
+                            "classification_basis": "adapter_tensor_structure",
+                            "adapter_format": adapter_format,
+                            "adapter_format_evidence": list(lora_report.get("adapter_format_evidence") or []),
+                            "network_type": str(lora_report.get("network_type") or ""),
+                        },
+                        "inspector_version": "component_inventory_lora_v1",
+                    },
+                )
+                refreshed = self.registry.get_asset_by_id(asset.id) or asset
+                return self._result_payload(
+                    InventoryCandidate(path, "lora", candidate.source_root, candidate.source_scope),
+                    refreshed,
+                    stored,
+                    status="hashed",
+                    architecture=str(lora_report.get("detected_model_family") or ""),
+                    checkpoint_kind="adapter",
+                )
             report = self.inspector.inspect(str(path), compute_sha256=False)
             eligibility = self.refresher.checkpoint_snapshot_eligibility(path, report=report)
             if eligibility["eligible"]:

@@ -344,6 +344,7 @@ function sortLoras(items, mode) {
 function modelMatchesFilter(model, filter) {
   if (filter === "all" || filter === "recent") return true;
   if (filter === "favorite") return model.favorite === true;
+  if (filter === "offline") return Boolean(model.is_offline);
   if (filter === "compatible") return compatibilityFor(model).compatible;
   const category = String(model.category || "").trim().toLowerCase();
   const tags = (model.tags || []).map((item) => String(item || "").trim().toLowerCase());
@@ -764,6 +765,7 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     card.dataset.assetId = model.asset_id;
     card.classList.toggle("is-selected", selectedId === model.asset_id);
     card.classList.toggle("is-active", Boolean(activeRecordFor(model)));
+    card.classList.toggle("is-offline", Boolean(model.is_offline));
     const compatibility = compatibilityFor(model);
     card.classList.toggle("is-incompatible", !compatibility.compatible);
 
@@ -778,7 +780,12 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
     image.decoding = "async";
     const badgeWrap = document.createElement("div");
     badgeWrap.className = "lora-card-badges";
-    if (activeRecordFor(model)) {
+    if (model.is_offline) {
+      const badge = document.createElement("span");
+      badge.className = "lora-state-badge is-offline";
+      badge.textContent = "Offline";
+      badgeWrap.append(badge);
+    } else if (activeRecordFor(model)) {
       const badge = document.createElement("span");
       badge.className = "lora-state-badge is-active";
       badge.textContent = "Currently active";
@@ -872,10 +879,11 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
         else notify("No source URL is saved for this LoRA.", "error");
       }),
     );
+    if (model.is_offline) actions.querySelectorAll("button").forEach((button) => { button.disabled = true; });
     card.append(previewWrap, body, actions);
     card.addEventListener("click", (event) => {
       if (event.target.closest("button,a,input,textarea,select,label")) return;
-      openDetails(model);
+      if (!model.is_offline) openDetails(model);
     });
     queueMicrotask(() => {
       if (image.isConnected) setPreview(image, fallback, model);
@@ -1426,6 +1434,11 @@ Leave the field blank to continue without activation text. Press Cancel to stop 
   renderActive();
   renderCards();
   renderScanSummary(loras);
+
+  window.setInterval(() => {
+    if (!loras.some((item) => item.is_offline)) return;
+    void refreshCatalog({ announce: false }).catch(() => {});
+  }, 20000);
 
   return {
     show,

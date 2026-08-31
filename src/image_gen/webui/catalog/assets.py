@@ -42,6 +42,7 @@ from image_gen.webui.output_details import load_image_file_details, load_output_
 from image_gen.webui.schema_utils import normalize_config_schema
 from modules.checkpoint_inspector import CheckpointInspector, detect_model_name
 from modules.project_context import ProjectContext
+from modules.registry import AssetRegistry
 from modules.txt2img.model_selector import MODEL_EXTENSIONS
 from image_gen.runtime.lora_inventory import discover_lora_library_roots, scan_lora_library_files, summarize_lora_scan_roots
 
@@ -56,6 +57,124 @@ from .contracts import (
 
 
 class AssetCatalogMixin:
+    _PATH_KEYS_BY_ASSET_TYPE = {
+        "checkpoint": "checkpoints_dir",
+        "lora": "lora_dir",
+        "vae": "vae_dir",
+        "textual_inversion": "embeddings_dir",
+    }
+
+    def _configured_path_roots(self, asset_type: str) -> list[Path]:
+        key = self._PATH_KEYS_BY_ASSET_TYPE[asset_type]
+        roots = list(self.context.roots_for(key))
+        if asset_type == "checkpoint":
+            roots.extend(self._additional_roots())
+        output: list[Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            resolved = Path(root).expanduser().resolve(strict=False)
+            token = os.path.normcase(str(resolved))
+            if token not in seen:
+                seen.add(token)
+                output.append(resolved)
+        return output
+
+    def _availability_cache_path(self) -> Path:
+        return Path(self.context.data_root) / "asset_location_cache.json"
+
+    def _load_availability_cache(self) -> dict[str, list[dict[str, Any]]]:
+        path = self._availability_cache_path()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        return payload.get("assets", {}) if isinstance(payload, dict) and isinstance(payload.get("assets"), dict) else {}
+
+    def _save_availability_cache(self, cache: dict[str, list[dict[str, Any]]]) -> None:
+        path = self._availability_cache_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f".{path.name}.tmp")
+            temporary.write_text(json.dumps({"version": 1, "assets": cache}, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        except OSError:
+            # Availability caching is best-effort. A read-only data directory
+            # must not turn model discovery into a UI error.
+            return
+
+    @staticmethod
+    def _is_under(path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
+
+    def _merge_offline_entries(
+        self,
+        asset_type: str,
+        online: list[dict[str, Any]],
+        roots: list[Path],
+    ) -> list[dict[str, Any]]:
+        """Retain assets only while their configured root is disconnected.
+
+        If a root is reachable and a former file is gone, the stale entry is
+        removed.  If the root itself is unavailable, the entry is preserved as
+        offline and automatically returns online on a later refresh.
+        """
+        cache = self._load_availability_cache()
+        previous = list(cache.get(asset_type) or [])
+        online_by_path = {os.path.normcase(str(item.get("path") or "")): item for item in online}
+        merged = list(online)
+        for item in merged:
+            item["availability_state"] = "online"
+            item["is_offline"] = False
+        for prior in previous:
+            raw_path = str(prior.get("path") or "")
+            if not raw_path or os.path.normcase(raw_path) in online_by_path:
+                continue
+            path = Path(raw_path).expanduser().resolve(strict=False)
+            owner = next((root for root in roots if self._is_under(path, root)), None)
+            if owner is None or owner.exists():
+                continue
+            retained = dict(prior)
+            retained["availability_state"] = "offline"
+            retained["is_offline"] = True
+            retained["has_preview"] = False
+            retained["preview_url"] = ""
+            merged.append(retained)
+        cache[asset_type] = merged
+        self._save_availability_cache(cache)
+        return merged
+
+    def _approved_pickle_paths(self, asset_type: str) -> set[str]:
+        path = Path(self.context.data_root) / "pickle_asset_quarantine.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return set()
+        return {
+            os.path.normcase(str(item.get("path") or ""))
+            for item in payload.get("files", [])
+            if item.get("state") == "approved" and item.get("asset_type") == asset_type
+        }
+
+    def _filter_classified_items(self, items: list[dict[str, Any]], asset_type: str) -> list[dict[str, Any]]:
+        """Use persisted file evidence, never names/folders, when it exists."""
+        approved_pickle = self._approved_pickle_paths(asset_type)
+        registry = AssetRegistry(str(Path(self.context.registry_db_path).resolve()))
+        output: list[dict[str, Any]] = []
+        for item in items:
+            path = Path(str(item.get("path") or "")).expanduser().resolve(strict=False)
+            if path.suffix.lower() != ".safetensors":
+                if os.path.normcase(str(path)) in approved_pickle:
+                    output.append(item)
+                continue
+            record = registry.get_asset_by_path(str(path))
+            classified = str(record.asset_type or "") if record is not None else ""
+            if classified in {"", "unknown", "safetensors_asset", "unclassified_asset"} or classified == asset_type:
+                output.append(item)
+        return output
     def _additional_roots(self) -> list[Path]:
         model_library = self.context.config.get("model_library") or {}
         raw_roots = model_library.get("additional_scan_roots") or []
@@ -316,15 +435,15 @@ class AssetCatalogMixin:
 
     def _asset_scan_config(self, asset_type: str) -> tuple[list[Path], set[str]]:
         if asset_type == "checkpoint":
-            return [self.context.checkpoints_dir, *self._additional_roots()], set(MODEL_EXTENSIONS)
+            return self._configured_path_roots(asset_type), set(MODEL_EXTENSIONS)
         if asset_type == "lora":
             root_report = discover_lora_library_roots(self.context)
             roots = [Path(str(item.get("path") or "")).expanduser().resolve(strict=False) for item in root_report.get("roots") or []]
             return roots, set(_LORA_EXTENSIONS)
         if asset_type == "vae":
-            return [self.context.vae_dir], set(MODEL_EXTENSIONS)
+            return self._configured_path_roots(asset_type), set(MODEL_EXTENSIONS)
         if asset_type == "textual_inversion":
-            return [self.context.embeddings_dir], set(_TEXTUAL_INVERSION_EXTENSIONS)
+            return self._configured_path_roots(asset_type), set(_TEXTUAL_INVERSION_EXTENSIONS)
         raise KeyError(asset_type)
 
     def _bump_catalog_revision(self, asset_type: str) -> None:
@@ -370,6 +489,7 @@ class AssetCatalogMixin:
         if asset_type == "lora":
             root_report = discover_lora_library_roots(self.context)
             items = scan_lora_library_files(root_report.get("roots") or [])
+            items = self._filter_classified_items(items, asset_type)
             for item in items:
                 path = Path(str(item.get("path") or "")).expanduser().resolve()
                 item["embedded_name"] = self._embedded_safetensors_name(path, asset_type)
@@ -378,20 +498,24 @@ class AssetCatalogMixin:
                 **scan_root_summary,
                 "diagnostics": list(root_report.get("diagnostics") or []),
             }
+            roots = [Path(str(item.get("path") or "")).expanduser().resolve(strict=False) for item in root_report.get("roots") or []]
             with self._catalog_lock:
                 self._bump_catalog_revision(asset_type)
                 records = self._catalog_entries(items, asset_type=asset_type)
+                records = self._merge_offline_entries(asset_type, records, roots)
                 setattr(self, self._collection_attribute(asset_type), records)
             return self.asset_payload(asset_type)
 
         roots, extensions = self._asset_scan_config(asset_type)
         items = self._scan_files(roots, extensions)
+        items = self._filter_classified_items(items, asset_type)
         for item in items:
             path = Path(str(item.get("path") or "")).expanduser().resolve()
             item["embedded_name"] = self._embedded_safetensors_name(path, asset_type)
         with self._catalog_lock:
             self._bump_catalog_revision(asset_type)
             records = self._catalog_entries(items, asset_type=asset_type)
+            records = self._merge_offline_entries(asset_type, records, roots)
             setattr(self, self._collection_attribute(asset_type), records)
         return self.asset_payload(asset_type)
 

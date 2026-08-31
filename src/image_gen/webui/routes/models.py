@@ -238,6 +238,46 @@ def build_models_router(*, context, catalog, component_registry, component_selec
                 status_code=400,
             ) from exc
 
+    @router.get("/api/model-library/drives")
+    async def connected_model_library_drives() -> dict[str, Any]:
+        return await asyncio.to_thread(component_registry.connected_storage_roots)
+
+    @router.post("/api/model-library/discover")
+    async def discover_model_library_locations(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = dict(payload or {})
+        return await asyncio.to_thread(
+            component_registry.discover_asset_locations,
+            list(request.get("roots") or []),
+            max_files=int(request.get("max_files") or 10000),
+        )
+
+    @router.post("/api/model-library/import")
+    async def import_model_library_locations(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = dict(payload or {})
+        result = await asyncio.to_thread(
+            component_registry.import_asset_locations,
+            list(request.get("roots") or []),
+            force=bool(request.get("force", False)),
+        )
+        await asyncio.to_thread(catalog.refresh_models)
+        return result
+
+    @router.get("/api/model-library/quarantine")
+    async def model_library_quarantine() -> dict[str, Any]:
+        return await asyncio.to_thread(component_registry.pickle_quarantine)
+
+    @router.post("/api/model-library/quarantine/approve")
+    async def approve_model_library_quarantine(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = dict(payload or {})
+        result = await asyncio.to_thread(
+            component_registry.approve_pickle_asset,
+            str(request.get("path") or ""),
+            str(request.get("sha256") or ""),
+            str(request.get("asset_type") or ""),
+        )
+        await asyncio.to_thread(catalog.refresh_models)
+        return result
+
 
     @router.post("/api/models/unload")
     async def unload_model() -> dict[str, Any]:

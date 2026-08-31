@@ -208,9 +208,7 @@ The output location and model directories can be changed through ImageGen config
 | Queue, replay, batch import/export, and variation tools | **Available** |
 | Queue persistence across application sessions | **Available** |
 | Structured prompt-parser semantics and inspection | **Available — alpha** |
-| Existing brace grouping `{...}` | **Experimental control — behavior under review** |
-| Cohesive grouping `⦃...⦄` | **Experimental — active A/B image testing** |
-| Attribute binding `^` / `*` | **Experimental — active A/B image testing** |
+| Brace-based semantic grouping | **Experimental — behavior under revision** |
 | PNG output | **Available** |
 | Lossless WebP output | **Available** |
 | Embedded full-replay / compatibility metadata | **Available** |
@@ -222,12 +220,6 @@ The output location and model directories can be changed through ImageGen config
 | ControlNet | **Not active in the current runtime** |
 
 For the detailed feature inventory, see [Current Features](features/CURRENT.md). For implemented features that remain under active qualification or bug testing, see [Experimental Features](features/EXPERIMENTAL.md).
-
-### Prompt Parser grouping/binding experiment
-
-The current alpha includes an explicit A/B experiment for prompt grouping and attribute binding. Existing `{...}` grouping remains available as the comparison/control behavior while a second cohesive-group syntax, `⦃...⦄`, is tested against it. Two binding operators are also available for qualification: `modifier^target` binds a modifier only to its target, while `modifier*target` establishes an inheriting modifier for the target and its structural descendants.
-
-These semantics are **experimental, not final language guarantees**. They are being judged with fixed-seed multi-image comparisons for attribute attachment, color/concept leakage, composition stability, and diversity. Prompt Inspector can expose the parsed group/binding structure so the text-side interpretation can be compared with actual image behavior.
 
 ## Canvas Expansion Is an Intermediate Workflow
 

@@ -147,6 +147,20 @@ export const api = {
     method: "POST",
     body: JSON.stringify({ force: Boolean(force), strength }),
   }),
+  connectedModelLibraryDrives: () => request("/api/model-library/drives"),
+  discoverModelLibraryLocations: (roots, maxFiles = 10000) => request("/api/model-library/discover", {
+    method: "POST",
+    body: JSON.stringify({ roots, max_files: maxFiles }),
+  }),
+  importModelLibraryLocations: (roots, force = false) => request("/api/model-library/import", {
+    method: "POST",
+    body: JSON.stringify({ roots, force }),
+  }),
+  modelLibraryQuarantine: () => request("/api/model-library/quarantine"),
+  approveModelLibraryQuarantine: (path, sha256, assetType) => request("/api/model-library/quarantine/approve", {
+    method: "POST",
+    body: JSON.stringify({ path, sha256, asset_type: assetType }),
+  }),
   generationCapabilities: (payload = {}) => request("/api/generation/capabilities", {
     method: "POST",
     body: JSON.stringify(payload || {}),

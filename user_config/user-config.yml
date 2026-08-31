@@ -3,10 +3,17 @@ project:
 
 paths:
   models_root: "models/StableDiffusion"
-  checkpoints_dir: "models/StableDiffusion/CheckPoints"
+  checkpoints_dir: [
+    "models/StableDiffusion/CheckPoints",
+    'E:\sd_models\Stable-diffusion'
+  ]
   vae_dir: "models/StableDiffusion/VAE"
   vae_approx_dir: "models/StableDiffusion/VAE_approx"
-  lora_dir: "models/StableDiffusion/Lora"
+  lora_dir: [
+    "models/StableDiffusion/Lora",
+    'F:\Loras',
+    'E:\sd_models\Lora'
+  ]
   blip_dir: "models/StableDiffusion/BLIP"
   codeformer_dir: "models/StableDiffusion/Codeformer"
   esrgan_dir: "models/StableDiffusion/ESRGAN"
@@ -106,3 +113,11 @@ diagnostics:
     export_txt_summary: true
     capture_latents: false
     capture_latent_every_n: 0
+
+asset_hub:
+  downloads:
+    max_active_downloads: 2
+    max_queued_downloads: 65
+    bandwidth_limit_mib_per_second: 0
+    provider_min_request_interval_seconds: 0.25
+    retry_attempts: 3

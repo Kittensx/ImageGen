@@ -156,6 +156,7 @@ function modelMatchesFilter(model, filter) {
   if (filter === "sd1.x") return family.includes("sd1") || family.includes("1.x") || family.includes("1.5");
   if (filter === "sd2.x") return family.includes("sd2") || family.includes("2.x") || family.includes("2.1");
   if (filter === "favorite") return model.favorite === true;
+  if (filter === "offline") return Boolean(model.is_offline);
   if (filter === "recent") return true;
   return tags.includes(filter) || String(model.category || "").toLowerCase() === filter;
 }
@@ -402,6 +403,7 @@ export function bindCheckpointWorkspace({
     card.dataset.assetId = model.asset_id;
     card.classList.toggle("is-current", isCurrent(model));
     card.classList.toggle("is-selected", selectedId === model.asset_id);
+    card.classList.toggle("is-offline", Boolean(model.is_offline));
 
     const previewWrap = document.createElement("div");
     previewWrap.className = "checkpoint-card-preview-wrap";
@@ -419,6 +421,11 @@ export function bindCheckpointWorkspace({
       const badge = document.createElement("span");
       badge.className = "checkpoint-state-badge is-current";
       badge.textContent = "Currently loaded";
+      badges.append(badge);
+    } else if (model.is_offline) {
+      const badge = document.createElement("span");
+      badge.className = "checkpoint-state-badge is-offline";
+      badge.textContent = "Offline";
       badges.append(badge);
     } else if (isPinnedDefault(model)) {
       const badge = document.createElement("span");
@@ -439,6 +446,7 @@ export function bindCheckpointWorkspace({
     favorite.type = "button";
     favorite.textContent = model.favorite ? "★" : "☆";
     favorite.title = model.favorite ? "Remove favorite" : "Add favorite";
+    favorite.disabled = Boolean(model.is_offline);
     favorite.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleFavorite(model);
@@ -472,23 +480,25 @@ export function bindCheckpointWorkspace({
     load.className = "primary-button compact-button";
     load.type = "button";
     load.textContent = isCurrent(model) ? "Loaded" : "Load Model";
-    load.disabled = isCurrent(model);
+    load.disabled = isCurrent(model) || Boolean(model.is_offline);
     load.addEventListener("click", () => activate(model));
     const startup = document.createElement("button");
     startup.className = "secondary-button compact-button";
     startup.type = "button";
     startup.textContent = isPinnedDefault(model) ? "★ Startup Default" : "☆ Set as Startup";
+    startup.disabled = Boolean(model.is_offline);
     startup.addEventListener("click", () => setPinnedDefault(model, !isPinnedDefault(model)));
     const details = document.createElement("button");
     details.className = "secondary-button compact-button";
     details.type = "button";
     details.textContent = "ⓘ View Details";
+    details.disabled = Boolean(model.is_offline);
     details.addEventListener("click", () => openDetails(model));
     actions.append(load, startup, details);
     card.append(previewWrap, body, actions);
     card.addEventListener("click", (event) => {
       if (event.target.closest("button,a,input,textarea,select,label")) return;
-      openDetails(model);
+      if (!model.is_offline) openDetails(model);
     });
     return card;
   };
@@ -701,6 +711,88 @@ export function bindCheckpointWorkspace({
     renderCurrentModel();
   });
   $("#checkpointRefreshButton")?.addEventListener("click", () => refreshCatalog().catch((error) => notify(error.message, "error")));
+  const renderLocationChoices = (container, rows, prefix) => {
+    container.replaceChildren();
+    rows.forEach((row, index) => {
+      const label = document.createElement("label");
+      label.className = "checkpoint-switch-row";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = row.path;
+      input.dataset.locationChoice = prefix;
+      const text = document.createElement("span");
+      text.textContent = row.file_count ? `${row.path} (${row.file_count} files)` : row.path;
+      label.append(text, input);
+      container.append(label);
+    });
+  };
+  const renderPickleQuarantine = async () => {
+    const payload = await api.modelLibraryQuarantine();
+    const container = $("#modelPickleQuarantineList");
+    container.replaceChildren();
+    (payload.files || []).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "model-quarantine-row";
+      const name = document.createElement("span");
+      name.textContent = `${item.filename || item.path} — ${item.state === "approved" ? `Approved as ${item.asset_type}` : "Awaiting approval"}`;
+      row.append(name);
+      if (item.state !== "approved") {
+        const type = document.createElement("select");
+        [["checkpoint", "Checkpoint"], ["lora", "LoRA"], ["upscaler", "Upscaler"], ["embedding", "Embedding"]].forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          type.append(option);
+        });
+        const approve = document.createElement("button");
+        approve.type = "button";
+        approve.className = "secondary-button compact-button";
+        approve.textContent = "Approve exact file";
+        approve.addEventListener("click", async () => {
+          await api.approveModelLibraryQuarantine(item.path, item.sha256, type.value);
+          await renderPickleQuarantine();
+          await refreshCatalog({ announce: false });
+          notify(`${item.filename} approved as ${type.value}.`);
+        });
+        row.append(type, approve);
+      }
+      container.append(row);
+    });
+    if (!(payload.files || []).length) container.textContent = "No quarantined files.";
+  };
+  const detectConnectedDrives = async () => {
+    const payload = await api.connectedModelLibraryDrives();
+    renderLocationChoices($("#modelDriveRootList"), payload.roots || [], "drive");
+    $("#modelLocationStatus").textContent = `${payload.count || 0} connected storage roots detected.`;
+  };
+  $("#modelDetectDrivesButton")?.addEventListener("click", () => detectConnectedDrives().catch((error) => notify(`Unable to detect drives: ${error.message}`, "error")));
+  window.addEventListener("image-gen-open-model-location-scanner", (event) => {
+    const panel = $("#modelLocationPanel");
+    panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (event.detail?.detectDrives !== false) {
+      void detectConnectedDrives().catch((error) => notify(`Unable to detect drives: ${error.message}`, "error"));
+    }
+  });
+  $("#modelSearchDrivesButton")?.addEventListener("click", async () => {
+    const roots = [...document.querySelectorAll('[data-location-choice="drive"]:checked')].map((item) => item.value);
+    if (!roots.length) return notify("Select at least one connected drive or folder.", "warning");
+    $("#modelLocationStatus").textContent = "Searching connected storage…";
+    const payload = await api.discoverModelLibraryLocations(roots);
+    renderLocationChoices($("#modelDiscoveredLocationList"), payload.locations || [], "location");
+    $("#modelLocationCount").textContent = String(payload.location_count || 0);
+    $("#modelLocationStatus").textContent = `${payload.candidate_file_count || 0} candidate files found; ${payload.quarantined_count || 0} legacy files quarantined.`;
+    await renderPickleQuarantine();
+  });
+  void renderPickleQuarantine().catch(() => {});
+  $("#modelImportLocationsButton")?.addEventListener("click", async () => {
+    const roots = [...document.querySelectorAll('[data-location-choice="location"]:checked')].map((item) => item.value);
+    if (!roots.length) return notify("Select at least one discovered location.", "warning");
+    $("#modelLocationStatus").textContent = "Classifying, hashing, and registering safetensors…";
+    const payload = await api.importModelLibraryLocations(roots);
+    await refreshCatalog({ announce: false });
+    $("#modelLocationStatus").textContent = `${payload.candidate_count || 0} safetensors processed. Legacy formats remain quarantined.`;
+    notify("External model locations imported.");
+  });
   $("#checkpointFetchCivitaiButton")?.addEventListener("click", () => runCivitaiMetadataFetch("missing"));
   $("#closeCheckpointDetailsButton")?.addEventListener("click", clearDetails);
   $("#checkpointUseCurrentButton")?.addEventListener("click", () => showGenerationWorkspace?.());
@@ -889,6 +981,13 @@ export function bindCheckpointWorkspace({
   renderStartupSettings();
   renderCards();
   renderCurrentModel();
+
+  // A disconnected root is retried quietly while the application remains
+  // open. Reconnecting a drive therefore restores cards without a restart.
+  window.setInterval(() => {
+    if (!models.some((item) => item.is_offline)) return;
+    void refreshCatalog({ announce: false }).catch(() => {});
+  }, 20000);
 
   return {
     show,

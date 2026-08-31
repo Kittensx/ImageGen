@@ -172,6 +172,29 @@
   font-size: 0.7rem;
 }
 
+.home-model-location-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--charcoal-900) 58%, transparent);
+}
+
+.home-model-location-action > div {
+  display: grid;
+  gap: 2px;
+}
+
+.home-model-location-action span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .home-component-actions {
   display: flex;
   flex-wrap: wrap;
@@ -225,6 +248,11 @@
 
 .home-workspace[data-workspace-width-class="narrow"] .home-asset-summary {
   grid-template-columns: 1fr;
+}
+
+.home-workspace[data-workspace-width-class="narrow"] .home-model-location-action {
+  align-items: stretch;
+  flex-direction: column;
 }
 
 /* Home changelog: compact newest-first feed with an in-app Markdown reader. */

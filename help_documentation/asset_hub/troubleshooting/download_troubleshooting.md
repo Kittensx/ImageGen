@@ -22,17 +22,9 @@ Recreate the download plan and retry. Repeated mismatches should be treated as a
 
 The provider metadata or HTTP response described a different size than IMAGE_GEN received. The job fails rather than accepting an ambiguous file.
 
-## Provider closed the connection
-
-A provider or CDN can close a long transfer before the advertised file body is complete. IMAGE_GEN preserves the staged partial file, retries transient transfer failures automatically, and uses a byte-range request on the next attempt. If automatic retries are exhausted, use **Resume**; it should continue from the preserved byte count rather than silently starting over.
-
 ## Resume restarted from zero
 
-IMAGE_GEN can resume even when a provider omits `ETag` and `Last-Modified`, provided the provider identity and returned `Content-Range` remain compatible and the final integrity checks succeed. A restart from zero is reserved for cases where safe append cannot be established, such as a changed validator/file identity, an invalid range response, or a provider that explicitly ignores the Range request and sends a complete `200` response. The Downloads panel records this decision in the job note.
-
-## Find the asset behind a download
-
-Recent download rows remain in the Downloads panel after they finish or fail. Click a row to reopen the matching provider model and reselect its version/file in Asset Browser. Use **Save** on a download row, or **Save for later** on the asset detail card, to keep a browser bookmark for later.
+This is expected when a saved partial file can no longer be proven to represent the same remote object. Common causes include a changed `ETag`, changed `Last-Modified`, changed provider file metadata, or a server that does not honor byte-range requests.
 
 ## Redirect blocked
 

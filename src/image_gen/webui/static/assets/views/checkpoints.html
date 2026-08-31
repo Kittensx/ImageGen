@@ -13,6 +13,7 @@
         <button class="filter-chip" type="button" data-checkpoint-filter="sd2.x">SD 2.x</button>
         <button class="filter-chip" type="button" data-checkpoint-filter="favorite">Favorites</button>
         <button class="filter-chip" type="button" data-checkpoint-filter="recent">Recent</button>
+        <button class="filter-chip" type="button" data-checkpoint-filter="offline">Offline Files</button>
         <button class="filter-chip" type="button" data-checkpoint-filter="character">Character</button>
         <button class="filter-chip" type="button" data-checkpoint-filter="general">General</button>
         <button class="filter-chip" type="button" data-checkpoint-filter="realistic">Realistic</button>
@@ -28,6 +29,23 @@
           <option value="favorites">Favorites first</option>
         </select>
       </label>
+    </section>
+
+    <section class="panel checkpoint-control-panel model-location-panel" id="modelLocationPanel">
+      <div class="panel-heading"><h2>External Model Locations</h2><span class="status-badge" id="modelLocationCount">0</span></div>
+      <p class="field-status subtle">Search connected storage for model files. Disconnected locations remain in the Offline category without generating errors.</p>
+      <div id="modelDriveRootList" class="model-location-list"><small class="subtle">Select Detect Drives to begin.</small></div>
+      <div class="checkpoint-current-actions">
+        <button class="secondary-button compact-button" id="modelDetectDrivesButton" type="button">Detect Drives</button>
+        <button class="secondary-button compact-button" id="modelSearchDrivesButton" type="button">Search Selected</button>
+      </div>
+      <div id="modelDiscoveredLocationList" class="model-location-list"></div>
+      <button class="primary-button compact-button" id="modelImportLocationsButton" type="button">Import Selected Locations</button>
+      <details>
+        <summary>Quarantined pickle files</summary>
+        <div id="modelPickleQuarantineList" class="model-location-list"><small class="subtle">Legacy files require per-file approval.</small></div>
+      </details>
+      <small class="field-status subtle" id="modelLocationStatus">Safetensors are structurally classified and hashed during import.</small>
     </section>
 
     <section class="panel checkpoint-control-panel checkpoint-startup-panel">

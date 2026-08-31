@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
+import json
+import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -82,7 +85,15 @@ class ComponentRegistryService:
     def configured_library_roots(self) -> dict[str, Any]:
         """Return configured extra model-library roots split by current accessibility."""
         model_library = self.context.config.get("model_library") or {}
-        raw_roots = model_library.get("additional_scan_roots") or []
+        raw_roots = list(model_library.get("additional_scan_roots") or [])
+        # Every multi-path project asset directory participates in the unified
+        # structural registry refresh, including removable-drive roots.
+        for key in (
+            "checkpoints_dir", "vae_dir", "lora_dir", "text_encoders_dir",
+            "controlnet_dir", "control_lora_dir", "embeddings_dir",
+            "upscalers_comfyui_dir",
+        ):
+            raw_roots.extend(str(path) for path in self.context.roots_for(key))
         accessible: list[str] = []
         unavailable: list[dict[str, str]] = []
         seen: set[str] = set()
@@ -118,6 +129,207 @@ class ComponentRegistryService:
             "accessible_count": len(accessible),
             "unavailable_count": len(unavailable),
         }
+
+    def connected_storage_roots(self) -> dict[str, Any]:
+        """Enumerate currently mounted roots without reporting absent drives."""
+        candidates: list[Path] = []
+        if os.name == "nt":
+            candidates = [Path(f"{letter}:\\") for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+        else:
+            candidates = [Path("/")]
+            for parent in (Path("/mnt"), Path("/media"), Path("/run/media")):
+                try:
+                    candidates.extend(path for path in parent.glob("**/*") if path.is_dir())
+                except OSError:
+                    continue
+        roots: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+                if not resolved.is_dir():
+                    continue
+            except OSError:
+                continue
+            token = str(resolved).casefold()
+            if token in seen:
+                continue
+            seen.add(token)
+            roots.append({"path": str(resolved), "label": candidate.name or str(candidate)})
+        return {"roots": roots, "count": len(roots)}
+
+    def discover_asset_locations(
+        self,
+        roots: Iterable[str | Path],
+        *,
+        max_files: int = 10000,
+    ) -> dict[str, Any]:
+        """Find candidate model directories on connected storage.
+
+        This stage reads directory entries only. Tensor inspection and hashing
+        happen during import, keeping drive search quick and cancellable by the
+        request boundary.
+        """
+        extensions = {".safetensors", ".pth", ".pt", ".ckpt", ".bin"}
+        excluded = {"$recycle.bin", "system volume information", "windows", "program files", "program files (x86)", "node_modules", ".git"}
+        locations: dict[str, dict[str, Any]] = {}
+        quarantine: list[dict[str, Any]] = []
+        candidate_count = 0
+        truncated = False
+        for raw in roots:
+            root = Path(raw).expanduser().resolve(strict=False)
+            if not root.is_dir():
+                continue
+            try:
+                for directory, directory_names, filenames in os.walk(root, topdown=True, onerror=lambda _error: None, followlinks=False):
+                    directory_names[:] = [name for name in directory_names if name.casefold() not in excluded and not name.startswith(".")]
+                    for filename in filenames:
+                        path = Path(directory) / filename
+                        if path.suffix.lower() not in extensions:
+                            continue
+                        candidate_count += 1
+                        parent = str(path.parent.resolve(strict=False))
+                        row = locations.setdefault(parent, {"path": parent, "file_count": 0, "extensions": {}})
+                        row["file_count"] += 1
+                        suffix = path.suffix.lower()
+                        row["extensions"][suffix] = int(row["extensions"].get(suffix, 0)) + 1
+                        if suffix != ".safetensors":
+                            try:
+                                digest = hashlib.sha256()
+                                with path.open("rb") as handle:
+                                    for block in iter(lambda: handle.read(1024 * 1024), b""):
+                                        digest.update(block)
+                                quarantine.append({
+                                    "path": str(path.resolve(strict=False)),
+                                    "filename": path.name,
+                                    "extension": suffix,
+                                    "sha256": digest.hexdigest(),
+                                    "size_bytes": int(path.stat().st_size),
+                                    "state": "awaiting_user_verification",
+                                    "reason": "pickle_bearing_format",
+                                })
+                            except OSError:
+                                pass
+                        if candidate_count >= max(1, int(max_files)):
+                            truncated = True
+                            break
+                    if truncated:
+                        break
+                if truncated:
+                    break
+            except OSError:
+                continue
+        rows = sorted(locations.values(), key=lambda item: (-int(item["file_count"]), item["path"].casefold()))
+        self._save_pickle_quarantine(quarantine)
+        return {"locations": rows, "location_count": len(rows), "candidate_file_count": candidate_count, "truncated": truncated, "quarantined_files": quarantine, "quarantined_count": len(quarantine)}
+
+    def _pickle_quarantine_path(self) -> Path:
+        return Path(self.context.data_root) / "pickle_asset_quarantine.json"
+
+    def _save_pickle_quarantine(self, discovered: list[dict[str, Any]]) -> None:
+        path = self._pickle_quarantine_path()
+        previous: dict[str, dict[str, Any]] = {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            previous = {str(item.get("path") or "").casefold(): item for item in payload.get("files", [])}
+        except (OSError, ValueError, TypeError):
+            pass
+        for item in discovered:
+            prior = previous.get(str(item["path"]).casefold())
+            if prior and prior.get("sha256") == item.get("sha256") and prior.get("state") == "approved":
+                item.update({"state": "approved", "asset_type": prior.get("asset_type", "checkpoint")})
+            previous[str(item["path"]).casefold()] = item
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f".{path.name}.tmp")
+            temporary.write_text(json.dumps({"version": 1, "files": list(previous.values())}, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        except OSError:
+            return
+
+    def pickle_quarantine(self) -> dict[str, Any]:
+        try:
+            payload = json.loads(self._pickle_quarantine_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            payload = {"version": 1, "files": []}
+        files = list(payload.get("files") or [])
+        return {"files": files, "count": len(files), "awaiting_count": sum(1 for item in files if item.get("state") != "approved")}
+
+    def approve_pickle_asset(self, path_value: str, expected_sha256: str, asset_type: str) -> dict[str, Any]:
+        selected_type = str(asset_type or "").strip().lower()
+        if selected_type not in {"checkpoint", "lora", "upscaler", "embedding"}:
+            raise ValueError("A quarantined file requires an explicit asset_type.")
+        path = Path(path_value).expanduser().resolve(strict=False)
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        actual = digest.hexdigest()
+        if actual.casefold() != str(expected_sha256 or "").strip().casefold():
+            raise ValueError("The file changed after discovery and must be reviewed again.")
+        payload = self.pickle_quarantine()
+        matched = False
+        for item in payload["files"]:
+            if str(item.get("path") or "").casefold() == str(path).casefold():
+                item.update({"sha256": actual, "state": "approved", "asset_type": selected_type})
+                matched = True
+        if not matched:
+            raise ValueError("The file is not in the quarantine catalog.")
+        self._pickle_quarantine_path().write_text(json.dumps({"version": 1, "files": payload["files"]}, indent=2), encoding="utf-8")
+        if selected_type == "upscaler":
+            upscaling = self.context.config.setdefault("upscaling", {})
+            roots = list(upscaling.get("additional_roots") or [])
+            if str(path.parent).casefold() not in {str(item).casefold() for item in roots}:
+                roots.append(str(path.parent))
+            upscaling["additional_roots"] = roots
+            import yaml
+            config_path = Path(self.context.config_path)
+            user_payload = yaml.safe_load(config_path.read_text(encoding="utf-8-sig")) or {}
+            user_payload.setdefault("upscaling", {})["additional_roots"] = roots
+            temporary = config_path.with_name(f".{config_path.name}.tmp")
+            temporary.write_text(yaml.safe_dump(user_payload, sort_keys=False), encoding="utf-8", newline="\n")
+            temporary.replace(config_path)
+        return {"approved": True, "path": str(path), "sha256": actual, "asset_type": selected_type}
+
+    def import_asset_locations(self, roots: Iterable[str | Path], *, force: bool = False) -> dict[str, Any]:
+        """Persist selected roots and run evidence-based structural import."""
+        model_library = self.context.config.setdefault("model_library", {})
+        configured = list(model_library.get("additional_scan_roots") or [])
+        known = {
+            str(self.context.resolve_project_path(item if isinstance(item, str) else item.get("path", "")).resolve(strict=False)).casefold()
+            for item in configured if isinstance(item, (str, Mapping))
+        }
+        imported: list[str] = []
+        for raw in roots:
+            path = Path(raw).expanduser().resolve(strict=False)
+            if not path.is_dir():
+                continue
+            token = str(path).casefold()
+            if token not in known:
+                configured.append({"path": str(path), "mode": "scan_only"})
+                known.add(token)
+            imported.append(str(path))
+        model_library["additional_scan_roots"] = configured
+
+        # Persist only the user-owned config, never the generated system file.
+        import yaml
+        config_path = Path(self.context.config_path)
+        user_payload = yaml.safe_load(config_path.read_text(encoding="utf-8-sig")) or {}
+        user_payload.setdefault("model_library", {})["additional_scan_roots"] = configured
+        temporary = config_path.with_name(f".{config_path.name}.tmp")
+        temporary.write_text(yaml.safe_dump(user_payload, sort_keys=False), encoding="utf-8", newline="\n")
+        temporary.replace(config_path)
+
+        result = self.run_scan({
+            "scope": SCAN_SCOPE_EXTERNAL_REPOSITORY_REFRESH,
+            "strength": SCAN_STRENGTH_STRUCTURAL,
+            "analysis_strength": ANALYSIS_STRENGTH_NONE,
+            "force": bool(force),
+            "repository_roots": imported,
+        }) if imported else {"candidate_count": 0, "results": [], "errors": []}
+        result["imported_roots"] = imported
+        result["location_catalog"] = self.location_catalog()
+        return result
 
     def refresh_configured_library(
         self,

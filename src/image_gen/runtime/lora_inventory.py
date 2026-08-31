@@ -231,15 +231,9 @@ def discover_lora_library_roots(context: ProjectContext) -> dict[str, Any]:
         seen_paths[token] = root
         unique.append(root)
 
-    for root in unique:
-        if not root.exists:
-            diagnostics.append({
-                "severity": "warning",
-                "code": "missing_root",
-                "message": f"Configured LoRA root does not exist on disk: {root.path}",
-                "path": str(root.path),
-                "root_id": root.root_id,
-            })
+    # Missing configured roots are normal removable-storage availability, not
+    # diagnostics. They remain in the root catalog and are retried silently on
+    # every refresh.
 
     for index, left in enumerate(unique):
         for right in unique[index + 1:]:

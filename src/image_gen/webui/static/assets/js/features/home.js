@@ -69,6 +69,14 @@ export function bindHomeWorkspace(catalogs = {}) {
   $("#homeQuickCheckpoints")?.addEventListener("click", () => requestWorkspace("checkpoints"));
   $("#homeQuickLoras")?.addEventListener("click", () => requestWorkspace("loras"));
   $("#homeQuickSettings")?.addEventListener("click", requestSettings);
+  $("#homeScanModelFilesButton")?.addEventListener("click", () => {
+    requestWorkspace("checkpoints");
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("image-gen-open-model-location-scanner", {
+        detail: { source: "home", detectDrives: true },
+      }));
+    }, 0);
+  });
 
   window.addEventListener("image-gen-asset-catalog-refreshed", (event) => {
     renderReadiness(event.detail || {});
